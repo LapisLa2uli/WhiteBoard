@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app.branding import APP_NAME, asset_path, project_root, window_icon_path
+from app.branding import APP_NAME, SETUP_MARKER, asset_path, project_root, window_icon_path
 
 
 def is_packaged() -> bool:
@@ -18,6 +18,12 @@ def is_packaged() -> bool:
         return True
     bundle = macos_app_bundle()
     return bundle is not None
+
+
+def installed_by_setup(exe_dir: Path | None = None) -> bool:
+    """True when this copy was laid down by WhiteBoard-Setup (stable install path)."""
+    root = exe_dir or Path(sys.executable).resolve().parent
+    return (root / SETUP_MARKER).is_file()
 
 
 def macos_app_bundle() -> Path | None:

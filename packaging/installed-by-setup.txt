@@ -1,0 +1,2 @@
+This copy of WhiteBoard was installed by WhiteBoard-Setup.
+Leave this file in place so upgrades keep the Desktop and Start menu shortcuts.

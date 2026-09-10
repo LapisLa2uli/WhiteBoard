@@ -56,7 +56,8 @@ def build_settings(ctrl: AppController) -> ft.Control:
                     [
                         muted(
                             "Create a Desktop shortcut and add WhiteBoard to search "
-                            f"({shortcut_labels()[1]})."
+                            f"({shortcut_labels()[1]}). The Windows installer keeps these "
+                            "shortcuts when you upgrade."
                         ),
                         ft.Row(
                             [

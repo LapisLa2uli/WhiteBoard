@@ -832,6 +832,16 @@ def _resolve_assignment_status(snapshot: Snapshot, assignment: Assignment) -> As
     return "todo"
 
 
+def _is_manually_submitted(snapshot: Snapshot, assignment: Assignment) -> bool:
+    keys = snapshot.manual_submitted_keys
+    if not keys:
+        return False
+    if assignment.id and assignment.id in keys:
+        return True
+    token = f"{assignment.course_id}::{(assignment.title or '').strip().lower()}"
+    return token in keys
+
+
 def _norm_title(text: str) -> str:
     cleaned = "".join(ch.lower() if ch.isalnum() or ch.isspace() else " " for ch in (text or ""))
     return " ".join(cleaned.split())
@@ -998,6 +1008,8 @@ def _check_live_submissions(
 
 
 def _has_submission(snapshot: Snapshot, assignment: Assignment) -> bool:
+    if _is_manually_submitted(snapshot, assignment):
+        return True
     if assignment.has_attempt or assignment.status == "submitted":
         return True
     aid = str(assignment.id or "")

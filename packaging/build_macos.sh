@@ -2,11 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-python3 packaging/generate_icons.py
+python3 -c "import PyInstaller" >/dev/null 2>&1 || python3 -m pip install --default-timeout=120 -r packaging/requirements-build.txt
+python3 -c "import PIL" >/dev/null 2>&1 || python3 -m pip install --default-timeout=120 pillow
 
-if ! python3 -c "import PyInstaller" >/dev/null 2>&1; then
-  python3 -m pip install --default-timeout=120 pyinstaller
-fi
+python3 packaging/generate_icons.py
 
 echo "Packaging WhiteBoard for macOS..."
 python3 -m PyInstaller --noconfirm --clean --distpath dist --workpath build packaging/whiteboard.spec

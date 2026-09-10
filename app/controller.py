@@ -196,6 +196,7 @@ class AppController:
         from app.views.login import build_login
         from app.views.shell import build_shell
 
+        self._sync_manual_submitted()
         self._ui_thread = threading.current_thread()
         self.reset_countdowns()
 
@@ -712,6 +713,92 @@ class AppController:
         self.persist()
         self.refresh_assignment_list()
 
+    def marked_submitted_keys(self) -> set[str]:
+        keys: set[str] = set()
+        for item in self.settings.get("marked_submitted_assignments") or []:
+            if isinstance(item, str) and item:
+                keys.add(item)
+            elif isinstance(item, dict):
+                if item.get("id"):
+                    keys.add(str(item["id"]))
+                course_id = str(item.get("course_id") or "")
+                title = str(item.get("title") or "").strip().lower()
+                if course_id or title:
+                    keys.add(f"{course_id}::{title}")
+        return keys
+
+    def is_marked_submitted(self, assignment) -> bool:
+        keys = self.marked_submitted_keys()
+        return assignment.id in keys or f"{assignment.course_id}::{assignment.title.lower()}" in keys
+
+    def _sync_manual_submitted(self) -> None:
+        from blackboard.api import _apply_assignment_status
+
+        self.store.snapshot.manual_submitted_keys = self.marked_submitted_keys()
+        _apply_assignment_status(self.store.snapshot)
+
+    def _refresh_after_assignment_change(self) -> None:
+        self._sync_manual_submitted()
+        if self.assignment_list_column is None or is_detail_route(self.route):
+            self.rebuild()
+        else:
+            self.refresh_assignment_list()
+
+    def mark_assignments_submitted(self, assignments: list) -> None:
+        raw = [item for item in (self.settings.get("marked_submitted_assignments") or []) if item]
+        keys = self.marked_submitted_keys()
+        for assignment in assignments:
+            token = f"{assignment.course_id}::{assignment.title.lower()}"
+            if assignment.id in keys or token in keys:
+                continue
+            raw.append(
+                {
+                    "id": assignment.id,
+                    "course_id": assignment.course_id,
+                    "title": assignment.title,
+                }
+            )
+            keys.add(assignment.id)
+            keys.add(token)
+        self.settings["marked_submitted_assignments"] = raw
+        self.selected_assignment_ids.clear()
+        self.persist()
+        self._refresh_after_assignment_change()
+
+    def unmark_assignments_submitted(self, assignments: list) -> None:
+        drop_ids = {item.id for item in assignments}
+        drop_tokens = {f"{item.course_id}::{item.title.lower()}" for item in assignments}
+        kept = []
+        for item in self.settings.get("marked_submitted_assignments") or []:
+            if isinstance(item, str):
+                if item in drop_ids or item in drop_tokens:
+                    continue
+            elif isinstance(item, dict):
+                token = f"{item.get('course_id') or ''}::{str(item.get('title') or '').strip().lower()}"
+                if str(item.get("id") or "") in drop_ids or token in drop_tokens:
+                    continue
+            kept.append(item)
+        self.settings["marked_submitted_assignments"] = kept
+        for assignment in self.store.snapshot.assignments:
+            token = f"{assignment.course_id}::{assignment.title.lower()}"
+            if assignment.id in drop_ids or token in drop_tokens:
+                if not assignment.has_attempt:
+                    assignment.status = "todo"
+        self.selected_assignment_ids.clear()
+        self.persist()
+        self._refresh_after_assignment_change()
+
+    def mark_selected_assignments_submitted(self) -> None:
+        from app.views.assignments import visible_assignments
+
+        chosen = [
+            item
+            for item in visible_assignments(self, forced_status=self.assignment_list_forced_status)
+            if item.id in self.selected_assignment_ids and item.status != "submitted"
+        ]
+        if chosen:
+            self.mark_assignments_submitted(chosen)
+
     def toggle_assignment_select_mode(self) -> None:
         self.assignment_select_mode = not self.assignment_select_mode
         if not self.assignment_select_mode:
@@ -869,9 +956,11 @@ class AppController:
         )
 
     def maybe_prompt_shortcuts(self) -> None:
-        from app.shortcuts import is_packaged
-
         if self._shortcut_prompt_shown or self.settings.get("shortcut_prompt_done"):
+            return
+        from app.shortcuts import installed_by_setup, is_packaged
+
+        if installed_by_setup():
             return
         if not is_packaged():
             return

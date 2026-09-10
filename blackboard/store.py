@@ -76,6 +76,7 @@ def load_settings() -> dict:
         "active_custom_filter": "",
         "hide_overdue": "off",
         "ignored_assignments": [],
+        "marked_submitted_assignments": [],
         "hide_filtered_assignments": False,
         "load_filter_courses_only": False,
         "load_course_ids": [],
@@ -94,6 +95,8 @@ def load_settings() -> dict:
             merged["custom_filters"] = []
         if not isinstance(merged.get("ignored_assignments"), list):
             merged["ignored_assignments"] = []
+        if not isinstance(merged.get("marked_submitted_assignments"), list):
+            merged["marked_submitted_assignments"] = []
         if not isinstance(merged.get("load_course_ids"), list):
             merged["load_course_ids"] = []
         merged["hide_filtered_assignments"] = bool(merged.get("hide_filtered_assignments"))
@@ -118,6 +121,7 @@ def save_settings(settings: dict) -> None:
         "active_custom_filter": settings.get("active_custom_filter") or "",
         "hide_overdue": settings.get("hide_overdue") or "off",
         "ignored_assignments": settings.get("ignored_assignments") or [],
+        "marked_submitted_assignments": settings.get("marked_submitted_assignments") or [],
         "hide_filtered_assignments": bool(settings.get("hide_filtered_assignments")),
         "load_filter_courses_only": bool(settings.get("load_filter_courses_only")),
         "load_course_ids": [

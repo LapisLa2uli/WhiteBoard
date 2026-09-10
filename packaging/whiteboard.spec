@@ -28,6 +28,12 @@ for package in ("playwright",):
     hiddenimports += pkg_hidden
 
 icon = str(ROOT / ("assets/logo.icns" if sys.platform == "darwin" else "assets/logo.ico"))
+version_file = ROOT / "packaging" / "file_version_info.txt"
+sys.path.insert(0, str(ROOT))
+try:
+    from app.branding import APP_VERSION
+except Exception:
+    APP_VERSION = "0.1.0"
 
 a = Analysis(
     [str(ROOT / "run_whiteboard.py")],
@@ -57,6 +63,7 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     icon=icon,
+    version=str(version_file) if version_file.exists() else None,
 )
 coll = COLLECT(
     exe,
@@ -78,6 +85,8 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleDisplayName": "WhiteBoard",
             "CFBundleName": "WhiteBoard",
+            "CFBundleShortVersionString": APP_VERSION,
+            "CFBundleVersion": APP_VERSION,
             "NSHighResolutionCapable": True,
         },
     )

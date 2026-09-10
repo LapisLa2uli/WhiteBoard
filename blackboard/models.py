@@ -212,6 +212,7 @@ class Snapshot:
     content_nodes: list[ContentNode] = field(default_factory=list)
     fetched_at: datetime | None = None
     errors: dict[str, str] = field(default_factory=dict)
+    manual_submitted_keys: set[str] = field(default_factory=set)
 
     def course_by_id(self, course_id: str) -> Course | None:
         return next((c for c in self.courses if c.id == course_id), None)

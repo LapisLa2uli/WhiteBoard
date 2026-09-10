@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import flet as ft
 
+from app import theme
 from app.controller import AppController
 from app.widgets import assignment_card, card, format_dt, heading, muted, page_scroll, status_chip
 
@@ -74,7 +75,7 @@ def build_assignment_detail(ctrl: AppController, assignment_id: str) -> ft.Contr
     ]
     if assignment.description:
         blocks.append(card(ft.Column([muted("Description"), ft.Text(assignment.description)], spacing=6)))
-    blocks.append(
+    actions = [
         ft.OutlinedButton(
             "Open in Blackboard",
             on_click=lambda e: ctrl.open_work_in_blackboard(
@@ -83,7 +84,24 @@ def build_assignment_detail(ctrl: AppController, assignment_id: str) -> ft.Contr
                 assignment_id=assignment.id,
             ),
         )
-    )
+    ]
+    if ctrl.is_marked_submitted(assignment):
+        actions.append(
+            ft.TextButton(
+                "Undo submitted mark",
+                on_click=lambda e: ctrl.unmark_assignments_submitted([assignment]),
+            )
+        )
+    elif assignment.status != "submitted":
+        actions.append(
+            ft.FilledButton(
+                "Mark as submitted",
+                on_click=lambda e: ctrl.mark_assignments_submitted([assignment]),
+                bgcolor=theme.OK,
+                color="white",
+            )
+        )
+    blocks.append(ft.Row(actions, spacing=8, wrap=True))
     return page_scroll(blocks)
 
 
@@ -108,9 +126,35 @@ def _deadline_panel(ctrl: AppController, deadline) -> ft.Control:
     rows.extend(
         [
             ft.Row([muted("Course"), ft.Text(course or "—")]),
-            ft.Row([muted("Type"), status_chip(deadline.kind)]),
+            ft.Row([muted("Type"), status_chip(deadline.kind)]            ),
         ]
     )
+    actions = [
+        ft.OutlinedButton(
+            "Open in Blackboard",
+            on_click=lambda e: ctrl.open_work_in_blackboard(
+                url=deadline.blackboard_url,
+                course_id=deadline.course_id,
+                assignment_id=deadline.id,
+            ),
+        )
+    ]
+    if ctrl.is_marked_submitted(deadline):
+        actions.append(
+            ft.TextButton(
+                "Undo submitted mark",
+                on_click=lambda e: ctrl.unmark_assignments_submitted([deadline]),
+            )
+        )
+    elif status != "submitted":
+        actions.append(
+            ft.FilledButton(
+                "Mark as submitted",
+                on_click=lambda e: ctrl.mark_assignments_submitted([deadline]),
+                bgcolor=theme.OK,
+                color="white",
+            )
+        )
     return page_scroll(
         [
             ft.TextButton("Back", icon=ft.Icons.ARROW_BACK, on_click=lambda e: ctrl.back()),
@@ -128,14 +172,7 @@ def _deadline_panel(ctrl: AppController, deadline) -> ft.Control:
                     assignment_id=deadline.id,
                 ),
             ),
-            ft.OutlinedButton(
-                "Open in Blackboard",
-                on_click=lambda e: ctrl.open_work_in_blackboard(
-                    url=deadline.blackboard_url,
-                    course_id=deadline.course_id,
-                    assignment_id=deadline.id,
-                ),
-            ),
+            ft.Row(actions, spacing=8, wrap=True),
         ]
     )
 

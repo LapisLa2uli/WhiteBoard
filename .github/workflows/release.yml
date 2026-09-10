@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (for example v0.1.0)"
+        required: true
+        default: "v0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r packaging/requirements-build.txt
+          python -m playwright install chromium
+      - name: Build Windows installer
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging/build_windows.ps1
+      - name: Rename installer
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ github.event.inputs.tag }}"
+            version="${version#v}"
+          fi
+          mv dist/WhiteBoard-Setup.exe "dist/WhiteBoard-${version}-Setup.exe"
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/WhiteBoard-*-Setup.exe
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r packaging/requirements-build.txt
+          python -m playwright install chromium
+      - name: Build macOS disk image
+        run: bash packaging/build_macos.sh
+      - name: Rename disk image
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ github.event.inputs.tag }}"
+            version="${version#v}"
+          fi
+          mv dist/WhiteBoard.dmg "dist/WhiteBoard-${version}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: dist/WhiteBoard-*.dmg
+          if-no-files-found: error
+
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-files
+          merge-multiple: true
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          fi
+          version="${tag#v}"
+          notes="$(cat <<EOF
+          ## WhiteBoard ${version}
+
+          Personal Blackboard desktop dashboard.
+
+          ### Downloads
+          - **Windows:** \`WhiteBoard-${version}-Setup.exe\` — install or upgrade. Shortcuts for Desktop and Windows Search keep working.
+          - **macOS:** \`WhiteBoard-${version}.dmg\` — open the disk image and drag WhiteBoard into Applications.
+          - **Source:** GitHub attaches a source code zip to this release automatically.
+
+          ### Notes
+          Sign in with your own school Blackboard account. Course data stays on Blackboard.
+          EOF
+          )"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release-files/* --clobber
+            gh release edit "$tag" --title "WhiteBoard ${version}" --notes "$notes"
+          else
+            gh release create "$tag" release-files/* \
+              --title "WhiteBoard ${version}" \
+              --notes "$notes"
+          fi

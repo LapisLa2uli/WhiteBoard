@@ -819,6 +819,101 @@ class FilterTests(unittest.TestCase):
         ignored = visible_assignments(ctrl, forced_status="ignored")
         self.assertEqual([item.id for item in ignored], ["drop"])
 
+    def test_mark_assignment_submitted_is_saved(self) -> None:
+        from datetime import timedelta
+
+        from app.controller import AppController
+        from app.views.assignments import visible_assignments
+        from blackboard.models import Assignment, Snapshot
+
+        class FakePage:
+            controls: list = []
+
+            def update(self) -> None:
+                return None
+
+            def run_task(self, handler, *args, **kwargs):
+                return None
+
+        now = datetime.now(timezone.utc)
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
+        persisted: list = []
+
+        def persist() -> None:
+            persisted.append(list(ctrl.settings.get("marked_submitted_assignments") or []))
+
+        ctrl.persist = persist  # type: ignore[method-assign]
+        ctrl.rebuild = lambda: None  # type: ignore[method-assign]
+        ctrl.refresh_assignment_list = lambda: None  # type: ignore[method-assign]
+        ctrl.settings = {
+            "ignored_assignments": [],
+            "marked_submitted_assignments": [],
+            "hide_filtered_assignments": False,
+            "inactivity": "all",
+        }
+        item = Assignment(
+            id="lab",
+            course_id="chem",
+            title="Lab 5",
+            due_at=now + timedelta(days=2),
+            status="todo",
+        )
+        ctrl.store.snapshot = Snapshot(assignments=[item])
+        ctrl.mark_assignments_submitted([item])
+        self.assertTrue(ctrl.is_marked_submitted(item))
+        self.assertEqual(persisted[-1][0]["id"], "lab")
+        self.assertEqual(
+            [row.id for row in visible_assignments(ctrl, forced_status="submitted")],
+            ["lab"],
+        )
+        self.assertEqual(visible_assignments(ctrl, forced_status="todo"), [])
+
+        ctrl.unmark_assignments_submitted([item])
+        self.assertFalse(ctrl.is_marked_submitted(item))
+        self.assertEqual(persisted[-1], [])
+        self.assertEqual(
+            [row.id for row in visible_assignments(ctrl, forced_status="todo")],
+            ["lab"],
+        )
+
+    def test_marked_submitted_survives_new_snapshot(self) -> None:
+        from datetime import timedelta
+
+        from app.controller import AppController
+        from blackboard.api import _resolve_assignment_status
+        from blackboard.models import Assignment, Snapshot
+
+        class FakePage:
+            controls: list = []
+
+            def update(self) -> None:
+                return None
+
+            def run_task(self, handler, *args, **kwargs):
+                return None
+
+        now = datetime.now(timezone.utc)
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
+        ctrl.persist = lambda: None  # type: ignore[method-assign]
+        ctrl.rebuild = lambda: None  # type: ignore[method-assign]
+        ctrl.refresh_assignment_list = lambda: None  # type: ignore[method-assign]
+        ctrl.settings = {
+            "marked_submitted_assignments": [
+                {"id": "lab", "course_id": "chem", "title": "Lab 5"}
+            ]
+        }
+        refreshed = Assignment(
+            id="lab",
+            course_id="chem",
+            title="Lab 5",
+            due_at=now + timedelta(days=2),
+            status="todo",
+        )
+        ctrl.store.snapshot = Snapshot(assignments=[refreshed])
+        ctrl._sync_manual_submitted()
+        self.assertEqual(_resolve_assignment_status(ctrl.store.snapshot, refreshed), "submitted")
+        self.assertEqual(refreshed.status, "submitted")
+
     def test_all_page_lists_submitted_after_unsubmitted(self) -> None:
         from datetime import timedelta
 
@@ -1354,11 +1449,15 @@ class FilterTests(unittest.TestCase):
                         "username": "student",
                         "password": "should-not-be-saved",
                         "base_url": "https://shs.blackboardchina.cn",
+                        "marked_submitted_assignments": [
+                            {"id": "a1", "course_id": "chem", "title": "Lab 5"}
+                        ],
                     }
                 )
             data = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(data["username"], "student")
         self.assertNotIn("password", data)
+        self.assertEqual(data["marked_submitted_assignments"][0]["id"], "a1")
 
     def test_start_login_requires_credentials(self) -> None:
         from app.controller import AppController
@@ -1377,6 +1476,42 @@ class FilterTests(unittest.TestCase):
         ctrl.start_login("", "")
         self.assertEqual(ctrl.login_status, "failed")
         self.assertIn("required", ctrl.login_message.lower())
+
+    def test_installer_layout_skips_first_run_shortcut_prompt(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from app.branding import SETUP_MARKER
+        from app.controller import AppController
+        from app.shortcuts import installed_by_setup
+
+        class FakePage:
+            controls: list = []
+
+            def update(self) -> None:
+                return None
+
+            def run_task(self, handler, *args, **kwargs):
+                return None
+
+            def show_dialog(self, dialog) -> None:
+                raise AssertionError("installer copies should not prompt for shortcuts")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertFalse(installed_by_setup(root))
+            (root / SETUP_MARKER).write_text("installed", encoding="utf-8")
+            self.assertTrue(installed_by_setup(root))
+
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
+        ctrl.settings["shortcut_prompt_done"] = False
+        from unittest.mock import patch
+
+        with patch("app.shortcuts.installed_by_setup", return_value=True), patch(
+            "app.shortcuts.is_packaged", return_value=True
+        ):
+            ctrl.maybe_prompt_shortcuts()
+        self.assertFalse(ctrl._shortcut_prompt_shown)
 
 
 class ViewBuilderTests(unittest.TestCase):

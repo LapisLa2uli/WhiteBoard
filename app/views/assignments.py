@@ -218,9 +218,23 @@ def assignment_toolbar_controls(
                     color="white",
                 )
             )
+            markable = sum(
+                1
+                for item in items
+                if item.id in ctrl.selected_assignment_ids and item.status != "submitted"
+            )
+            if markable:
+                actions.append(
+                    ft.FilledButton(
+                        f"Mark submitted ({markable})",
+                        on_click=lambda e: ctrl.mark_selected_assignments_submitted(),
+                        bgcolor=theme.OK,
+                        color="white",
+                    )
+                )
     return [
         ft.Row(actions, spacing=8, wrap=True),
-        muted("Use Ignore on a card, or select several and ignore them together.")
+        muted("Mark a card submitted, ignore it, or select several to update them together.")
         if not ignored_page
         else muted("Restore a card to put it back on Assignments."),
     ]
@@ -308,9 +322,25 @@ def assignment_list_controls(
                 on_click=lambda e, item=assignment: ctrl.ignore_assignments([item]),
             )
         )
+        status_action: ft.Control = ft.Container(width=0, height=0)
+        if not ignored_page:
+            if ctrl.is_marked_submitted(assignment):
+                status_action = ft.IconButton(
+                    icon=ft.Icons.UNDO,
+                    tooltip="Undo submitted mark",
+                    icon_color=theme.MUTED,
+                    on_click=lambda e, item=assignment: ctrl.unmark_assignments_submitted([item]),
+                )
+            elif assignment.status != "submitted":
+                status_action = ft.IconButton(
+                    icon=ft.Icons.TASK_ALT,
+                    tooltip="Mark as submitted",
+                    icon_color=theme.OK,
+                    on_click=lambda e, item=assignment: ctrl.mark_assignments_submitted([item]),
+                )
         rows.append(
             ft.Row(
-                [*leading, ft.Container(content=card, expand=True), action],
+                [*leading, ft.Container(content=card, expand=True), status_action, action],
                 spacing=8,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )

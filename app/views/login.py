@@ -53,10 +53,6 @@ def build_login(ctrl: AppController) -> ft.Control:
     ]
     if ctrl.busy:
         actions.append(ft.TextButton("Cancel", on_click=lambda e: ctrl.cancel_login()))
-    else:
-        actions.append(
-            ft.TextButton("Preview with sample data", on_click=lambda e: ctrl.enter_demo())
-        )
 
     return ft.Container(
         expand=True,

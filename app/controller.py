@@ -11,7 +11,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from blackboard.api import content_id_for_work, work_launch_url
-from blackboard.auth import DEFAULT_BASE_URL, BlackboardSession, resolve_url
+from blackboard.auth import (
+    AuthExpiredError,
+    DEFAULT_BASE_URL,
+    BlackboardSession,
+    SESSION_EXPIRED_MESSAGE,
+    is_auth_error,
+    resolve_url,
+)
 from blackboard.store import Store, load_settings, save_settings
 
 from app.filters import INACTIVITY_OPTIONS, sidebar_courses, visible_course_ids
@@ -22,9 +29,8 @@ if TYPE_CHECKING:
 
 
 class AppController:
-    def __init__(self, page: ft.Page, *, demo: bool = False) -> None:
+    def __init__(self, page: ft.Page) -> None:
         self.page = page
-        self.demo = demo
         self.session: BlackboardSession | None = None
         self.store = Store()
         self.route = "/login"
@@ -294,16 +300,9 @@ class AppController:
             try:
                 if gen != self._login_gen:
                     return
-                self._close_session()
-                session = BlackboardSession(
-                    self.base_url,
-                    headless=True,
-                    on_progress=self._on_fetch_progress,
-                    on_status=lambda msg: self._on_fetch_progress(msg),
-                )
-                self.session = session
-                session.start()
-                if gen != self._login_gen:
+                self._open_browser_session()
+                session = self.session
+                if session is None or gen != self._login_gen:
                     self._close_session()
                     return
                 signed_in = session.login_with_credentials(user, secret)
@@ -314,7 +313,6 @@ class AppController:
                     raise RuntimeError("Sign-in did not finish. Check username, password, and school URL.")
                 if session.base_url != self.base_url:
                     self.base_url = session.base_url
-                self._login_password = ""
                 self._on_fetch_progress("Signed in. Loading your dashboard…", 0.12)
                 session.prepare_origin()
                 self.store.refresh(
@@ -416,21 +414,10 @@ class AppController:
 
         self.ui(apply)
 
-    def enter_demo(self) -> None:
-        self._close_session()
-        self.store.load_demo()
-        self.route = "/home"
-        self.stack.clear()
-        self.rebuild()
-
     def refresh(self) -> None:
         if self.busy:
             return
-        if self.demo and not self.session:
-            self.store.load_demo()
-            self.rebuild()
-            return
-        if not self.session:
+        if not self.session and not self._can_relogin():
             return
         self._login_gen += 1
         gen = self._login_gen
@@ -442,21 +429,43 @@ class AppController:
 
         def work() -> None:
             try:
-                assert self.session is not None
-                self.store.refresh(
-                    self.session,
-                    quick=False,
-                    on_progress=self._on_fetch_progress,
-                    course_ids=self.fetch_course_ids(),
-                )
+                retried = False
+                while True:
+                    try:
+                        self._ensure_fresh_session(force=retried)
+                        if gen != self._login_gen:
+                            return
+                        assert self.session is not None
+                        self.store.refresh(
+                            self.session,
+                            quick=False,
+                            on_progress=self._on_fetch_progress,
+                            course_ids=self.fetch_course_ids(),
+                        )
+                        break
+                    except AuthExpiredError:
+                        if retried or not self._can_relogin():
+                            raise
+                        retried = True
+                        self._on_fetch_progress(
+                            "Session expired. Signing in again…", 0.05
+                        )
                 if gen != self._login_gen:
                     return
+                self.store.snapshot.errors.pop("refresh", None)
                 self._on_fetch_progress("Ready.", 1.0)
                 self.route = self.loading_return_route or "/home"
                 self.login_status = "idle"
                 self.login_message = ""
+            except AuthExpiredError as exc:
+                if gen != self._login_gen:
+                    return
+                self._handle_session_expired(str(exc))
             except Exception as exc:
                 if gen != self._login_gen:
+                    return
+                if is_auth_error(exc):
+                    self._handle_session_expired(SESSION_EXPIRED_MESSAGE)
                     return
                 self.store.snapshot.errors["refresh"] = str(exc)
                 self.route = self.loading_return_route or "/home"
@@ -467,6 +476,60 @@ class AppController:
                     self.ui(self.rebuild)
 
         threading.Thread(target=work, daemon=True, name="bb-refresh").start()
+
+    def _can_relogin(self) -> bool:
+        return bool((self.login_username or "").strip() and self._login_password)
+
+    def _open_browser_session(self) -> BlackboardSession:
+        self._close_session()
+        session = BlackboardSession(
+            self.base_url,
+            headless=True,
+            on_progress=self._on_fetch_progress,
+            on_status=lambda msg: self._on_fetch_progress(msg),
+        )
+        self.session = session
+        session.start()
+        return session
+
+    def _ensure_fresh_session(self, *, force: bool = False) -> None:
+        session = self.session
+        if session is None or not getattr(session, "is_open", False):
+            if not self._can_relogin():
+                raise AuthExpiredError(SESSION_EXPIRED_MESSAGE)
+            session = self._open_browser_session()
+            force = True
+
+        if not force:
+            try:
+                if session.confirm_login():
+                    return
+            except Exception:
+                if not self._can_relogin():
+                    raise AuthExpiredError(SESSION_EXPIRED_MESSAGE)
+                session = self._open_browser_session()
+
+        if not self._can_relogin():
+            raise AuthExpiredError(SESSION_EXPIRED_MESSAGE)
+        self._on_fetch_progress("Session expired. Signing in again…", 0.06)
+        signed_in = session.login_with_credentials(
+            self.login_username, self._login_password
+        )
+        if not signed_in:
+            raise AuthExpiredError(
+                "Could not sign in again. Check username and password."
+            )
+        if session.base_url != self.base_url:
+            self.base_url = session.base_url
+        session.prepare_origin()
+
+    def _handle_session_expired(self, message: str) -> None:
+        self.login_status = "failed"
+        self.login_message = message or SESSION_EXPIRED_MESSAGE
+        self.route = "/login"
+        self.stack.clear()
+        self.store.signed_in = False
+        self.loading_kind = ""
 
     def set_grades_section(self, key: str, expanded: bool) -> None:
         if key == "graded":
@@ -959,7 +1022,7 @@ class AppController:
                     if child.id not in seen:
                         files.append(child)
                         seen.add(child.id)
-        files = [node for node in files if node.download_path or node.open_url or self.demo]
+        files = [node for node in files if node.download_path or node.open_url]
         if not files:
             self.contents_status = "Selected items have no downloadable file."
             self.rebuild()
@@ -1036,10 +1099,6 @@ class AppController:
             if not path:
                 raise RuntimeError("No download URL")
             return self.session.get_bytes(path)
-        if self.demo:
-            return (
-                f"This is a WhiteBoard demo placeholder for {node.display_name()}.\n"
-            ).encode("utf-8")
         raise RuntimeError("Sign in to download course files.")
 
     def refresh_course_list(self) -> None:

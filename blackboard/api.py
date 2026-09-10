@@ -9,7 +9,14 @@ from typing import Any, Iterable, Literal
 
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 
-from blackboard.auth import ApiRequestError, BlackboardSession, resolve_url
+from blackboard.auth import (
+    ApiRequestError,
+    AuthExpiredError,
+    BlackboardSession,
+    SESSION_EXPIRED_MESSAGE,
+    is_auth_error,
+    resolve_url,
+)
 from blackboard.models import (
     Announcement,
     Assignment,
@@ -109,6 +116,8 @@ def fetch_snapshot(
     session._tell("Loading your profile…", 0.04)
 
     user = _try_paths(session, USER_PATHS[:2], snapshot, "profile")
+    if not user and is_auth_error(snapshot.errors.get("profile")):
+        raise AuthExpiredError(SESSION_EXPIRED_MESSAGE)
     if user:
         snapshot.user_id = str(_pick(user, "id", "uuid", "userId") or "")
         snapshot.user_name = str(

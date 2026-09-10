@@ -3,11 +3,267 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from blackboard.api import _parse_calendar, _parse_courses, _parse_grades, upcoming, work_launch_url
-from blackboard.auth import candidate_base_urls, url_looks_logged_in
+from blackboard.auth import (
+    ApiRequestError,
+    AuthExpiredError,
+    candidate_base_urls,
+    is_auth_error,
+    url_looks_logged_in,
+)
+from blackboard.models import (
+    Announcement,
+    Assignment,
+    ContentNode,
+    Course,
+    Deadline,
+    Grade,
+    Snapshot,
+)
 from blackboard.store import Store
+
+
+def load_sample(store: Store | None = None) -> Snapshot:
+    store = store or Store()
+    now = datetime.now(timezone.utc)
+    store.snapshot = Snapshot(
+        user_name="Sample Student",
+        user_id="sample",
+        fetched_at=now,
+        courses=[
+            Course(
+                id="eng",
+                name="English Literature",
+                term="Fall 2026",
+                instructor="Ms. Chen",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/eng/outline",
+                last_activity=now - timedelta(days=2),
+            ),
+            Course(
+                id="math",
+                name="Mathematics",
+                term="Fall 2026",
+                instructor="Mr. Liu",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/math/outline",
+                last_activity=now - timedelta(days=20),
+            ),
+            Course(
+                id="chem",
+                name="Chemistry",
+                term="Fall 2026",
+                instructor="Dr. Wang",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/chem/outline",
+                last_activity=now - timedelta(days=80),
+            ),
+            Course(
+                id="phy",
+                name="Physics",
+                term="Fall 2026",
+                instructor="Ms. Zhou",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/phy/outline",
+                last_activity=now - timedelta(days=200),
+            ),
+            Course(
+                id="hist",
+                name="World History",
+                term="Fall 2025",
+                instructor="Mr. Gao",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/hist/outline",
+                last_activity=now - timedelta(days=250),
+            ),
+            Course(
+                id="art",
+                name="Studio Art",
+                term="Spring 2025",
+                instructor="Ms. Lin",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/art/outline",
+                last_activity=now - timedelta(days=400),
+            ),
+        ],
+        assignments=[
+            Assignment(
+                id="a1",
+                course_id="eng",
+                title="Essay 3",
+                due_at=now + timedelta(days=1, hours=6),
+                status="todo",
+                description="Compare two poems from this week's reading.",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/eng/outline",
+            ),
+            Assignment(
+                id="a2",
+                course_id="math",
+                title="Quiz 2",
+                due_at=now + timedelta(days=3),
+                status="todo",
+                description="Short quiz on quadratic functions.",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/math/outline",
+            ),
+            Assignment(
+                id="a3",
+                course_id="chem",
+                title="Lab 5 report",
+                due_at=now - timedelta(days=1),
+                status="late",
+                description="Write up titration results.",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/chem/outline",
+            ),
+            Assignment(
+                id="a4",
+                course_id="phy",
+                title="Problem set 1",
+                due_at=now - timedelta(days=4),
+                status="submitted",
+                description="Mechanics problems 1–12.",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/phy/outline",
+            ),
+        ],
+        grades=[
+            Grade(
+                id="g1",
+                course_id="chem",
+                title="Lab 4",
+                score="18/20",
+                posted_at=now - timedelta(days=2),
+                assignment_id="g1",
+            ),
+            Grade(
+                id="g2",
+                course_id="phy",
+                title="Quiz 1",
+                score="9/10",
+                posted_at=now - timedelta(days=5),
+            ),
+            Grade(
+                id="g4",
+                course_id="eng",
+                title="Draft workshop",
+                score="Submitted",
+            ),
+            Grade(
+                id="g3",
+                course_id="eng",
+                title="Reading response 2",
+                score="A-",
+                posted_at=now - timedelta(days=8),
+            ),
+        ],
+        announcements=[
+            Announcement(
+                id="n1",
+                course_id="eng",
+                title="Bring annotated poems on Monday",
+                body="We will discuss imagery in class.",
+                posted_at=now - timedelta(days=1),
+            )
+        ],
+        deadlines=[
+            Deadline(
+                id="a1",
+                title="Essay 3",
+                when=now + timedelta(days=1, hours=6),
+                course_id="eng",
+                kind="assignment",
+                assignment_id="a1",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/eng/outline",
+            ),
+            Deadline(
+                id="a2",
+                title="Quiz 2",
+                when=now + timedelta(days=3),
+                course_id="math",
+                kind="test",
+                assignment_id="a2",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/math/outline",
+            ),
+            Deadline(
+                id="a3",
+                title="Lab 5 report",
+                when=now - timedelta(days=1),
+                course_id="chem",
+                kind="assignment",
+                assignment_id="a3",
+                blackboard_url="https://shs.blackboard.cn/ultra/courses/chem/outline",
+            ),
+        ],
+        content_nodes=[
+            ContentNode(
+                id="eng-readings",
+                course_id="eng",
+                title="Readings",
+                kind="folder",
+                modified_at=now - timedelta(days=10),
+            ),
+            ContentNode(
+                id="eng-sonnet",
+                course_id="eng",
+                parent_id="eng-readings",
+                title="Sonnet 18",
+                filename="Sonnet 18.pdf",
+                kind="file",
+                extension="pdf",
+                mime="application/pdf",
+                size_bytes=248_320,
+                modified_at=now - timedelta(days=8),
+                open_url="https://shs.blackboard.cn/ultra/courses/eng/outline",
+                download_path="",
+            ),
+            ContentNode(
+                id="eng-notes",
+                course_id="eng",
+                parent_id="eng-readings",
+                title="Annotation notes",
+                filename="Annotation notes.docx",
+                kind="file",
+                extension="docx",
+                size_bytes=1_204_224,
+                modified_at=now - timedelta(days=6),
+                open_url="https://shs.blackboard.cn/ultra/courses/eng/outline",
+            ),
+            ContentNode(
+                id="eng-slides",
+                course_id="eng",
+                title="Slides",
+                kind="folder",
+                modified_at=now - timedelta(days=4),
+            ),
+            ContentNode(
+                id="eng-week1",
+                course_id="eng",
+                parent_id="eng-slides",
+                title="Week 1 imagery",
+                filename="Week 1 imagery.pptx",
+                kind="file",
+                extension="pptx",
+                size_bytes=3_412_992,
+                modified_at=now - timedelta(days=4),
+                open_url="https://shs.blackboard.cn/ultra/courses/eng/outline",
+            ),
+            ContentNode(
+                id="chem-labs",
+                course_id="chem",
+                title="Labs",
+                kind="folder",
+                modified_at=now - timedelta(days=12),
+            ),
+            ContentNode(
+                id="chem-lab4",
+                course_id="chem",
+                parent_id="chem-labs",
+                title="Lab 4 procedure",
+                filename="Lab 4 procedure.pdf",
+                kind="file",
+                extension="pdf",
+                size_bytes=512_000,
+                modified_at=now - timedelta(days=12),
+                open_url="https://shs.blackboard.cn/ultra/courses/chem/outline",
+            ),
+        ],
+    )
+    store.signed_in = True
+    return store.snapshot
 
 
 class ParserTests(unittest.TestCase):
@@ -308,6 +564,53 @@ class ParserTests(unittest.TestCase):
         )
         self.assertFalse(_is_soft_http_error("HTTP 401 for /learn/api/v1/users/me"))
 
+    def test_auth_error_detection(self) -> None:
+        self.assertTrue(is_auth_error("HTTP 401 for /learn/api/v1/users/me"))
+        self.assertTrue(is_auth_error(ApiRequestError(401, "/learn/api/v1/users/me")))
+        self.assertFalse(is_auth_error("HTTP 405 for /learn/api/v1/streams/ultra"))
+
+    def test_profile_401_raises_auth_expired(self) -> None:
+        from blackboard.api import fetch_snapshot
+
+        class FakeSession:
+            base_url = "https://shs.blackboardchina.cn"
+
+            def _tell(self, message: str, progress: float | None = None) -> None:
+                return None
+
+            def get_json(self, path: str):
+                raise ApiRequestError(401, path)
+
+        with self.assertRaises(AuthExpiredError):
+            fetch_snapshot(FakeSession())  # type: ignore[arg-type]
+
+    def test_store_keeps_snapshot_when_session_expired(self) -> None:
+        from unittest.mock import patch
+
+        from blackboard import store as store_mod
+        from blackboard.models import Course, Snapshot
+
+        store = Store()
+        store.signed_in = True
+        store.snapshot = Snapshot(
+            user_name="Ada",
+            courses=[Course(id="math", name="Math")],
+        )
+
+        class FakeSession:
+            on_progress = None
+
+        with patch.object(
+            store_mod,
+            "fetch_snapshot",
+            side_effect=AuthExpiredError("HTTP 401 for /learn/api/v1/users/me"),
+        ):
+            with self.assertRaises(AuthExpiredError):
+                store.refresh(FakeSession())  # type: ignore[arg-type]
+        self.assertEqual(store.snapshot.user_name, "Ada")
+        self.assertEqual(store.snapshot.courses[0].name, "Math")
+        self.assertTrue(store.signed_in)
+
 
 class ColorTests(unittest.TestCase):
     def test_deadline_border_urgency(self) -> None:
@@ -412,7 +715,7 @@ class FilterTests(unittest.TestCase):
         from app.filters import sidebar_courses
 
         store = Store()
-        snap = store.load_demo()
+        snap = load_sample(store)
         rows = sidebar_courses(snap, query="", inactivity="1w", custom_filter=None)
         names = {course.name for course, hidden in rows if not hidden}
         self.assertIn("English Literature", names)
@@ -500,7 +803,7 @@ class FilterTests(unittest.TestCase):
             def run_task(self, handler, *args, **kwargs):
                 return None
 
-        ctrl = AppController(FakePage(), demo=True)  # type: ignore[arg-type]
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
         ctrl.persist = lambda: None  # type: ignore[method-assign]
         ctrl.refresh_assignment_list = lambda: None  # type: ignore[method-assign]
         ctrl.settings = {"ignored_assignments": []}
@@ -533,7 +836,7 @@ class FilterTests(unittest.TestCase):
                 return None
 
         now = datetime.now(timezone.utc)
-        ctrl = AppController(FakePage(), demo=True)  # type: ignore[arg-type]
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
         ctrl.persist = lambda: None  # type: ignore[method-assign]
         ctrl.assignment_filter = "all"
         ctrl.settings = {
@@ -724,7 +1027,7 @@ class FilterTests(unittest.TestCase):
         from app.filters import sidebar_courses
 
         store = Store()
-        snap = store.load_demo()
+        snap = load_sample(store)
         custom = {"id": "stem", "name": "STEM", "course_ids": ["math", "chem"]}
         rows = sidebar_courses(snap, query="", inactivity="all", custom_filter=custom)
         ids = {course.id for course, hidden in rows if not hidden}
@@ -744,7 +1047,7 @@ class FilterTests(unittest.TestCase):
             def run_task(self, handler, *args, **kwargs):
                 return None
 
-        ctrl = AppController(FakePage(), demo=True)  # type: ignore[arg-type]
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
         ctrl.persist = lambda: None  # type: ignore[method-assign]
         ctrl.refresh_assignment_list = lambda: None  # type: ignore[method-assign]
         ctrl.store.snapshot = Snapshot(
@@ -784,7 +1087,7 @@ class FilterTests(unittest.TestCase):
             def run_task(self, handler, *args, **kwargs):
                 return None
 
-        ctrl = AppController(FakePage(), demo=True)  # type: ignore[arg-type]
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
         ctrl.persist = lambda: None  # type: ignore[method-assign]
         ctrl.refresh_course_list = lambda: None  # type: ignore[method-assign]
         ctrl.store.snapshot = Snapshot(
@@ -818,11 +1121,17 @@ class FilterTests(unittest.TestCase):
             def run_task(self, handler, *args, **kwargs):
                 return None
 
+        class FakeSession:
+            is_open = True
+
+            def confirm_login(self) -> bool:
+                return True
+
         started = threading.Event()
         release = threading.Event()
-        ctrl = AppController(FakePage(), demo=True)  # type: ignore[arg-type]
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
         ctrl.store.signed_in = True
-        ctrl.session = object()  # type: ignore[assignment]
+        ctrl.session = FakeSession()  # type: ignore[assignment]
         ctrl.route = "/grades"
         ctrl._ui_thread = threading.current_thread()
 
@@ -839,6 +1148,192 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(ctrl.route, "/grades")
         self.assertFalse(ctrl.busy)
         release.set()
+
+    def test_refresh_relogs_in_when_session_expired(self) -> None:
+        import threading
+        import time
+
+        from app.controller import AppController
+        from blackboard.models import Course, Snapshot
+
+        class FakePage:
+            controls: list = []
+
+            def update(self) -> None:
+                return None
+
+            def run_task(self, handler, *args, **kwargs):
+                return None
+
+        class FakeSession:
+            is_open = True
+            base_url = "https://shs.blackboardchina.cn"
+
+            def confirm_login(self) -> bool:
+                return False
+
+            def login_with_credentials(self, username: str, password: str, timeout_sec: float = 90) -> bool:
+                self.logged_in_as = (username, password)
+                return True
+
+            def prepare_origin(self) -> None:
+                return None
+
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
+        ctrl.store.signed_in = True
+        ctrl.store.snapshot = Snapshot(
+            user_name="Ada",
+            courses=[Course(id="math", name="Math")],
+        )
+        ctrl.session = FakeSession()  # type: ignore[assignment]
+        ctrl.route = "/home"
+        ctrl.login_username = "student"
+        ctrl._login_password = "secret"
+        ctrl.persist = lambda: None  # type: ignore[method-assign]
+        ctrl._ui_thread = threading.current_thread()
+        refreshed = threading.Event()
+
+        def fake_refresh(*args, **kwargs):
+            refreshed.set()
+            return ctrl.store.snapshot
+
+        ctrl.store.refresh = fake_refresh  # type: ignore[method-assign]
+        ctrl.refresh()
+        self.assertTrue(refreshed.wait(timeout=2))
+        deadline = time.time() + 2
+        while ctrl.busy and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertFalse(ctrl.busy)
+        self.assertEqual(ctrl.session.logged_in_as, ("student", "secret"))  # type: ignore[attr-defined]
+        self.assertEqual(ctrl.route, "/home")
+        self.assertTrue(ctrl.store.signed_in)
+        self.assertEqual(ctrl._login_password, "secret")
+
+    def test_refresh_retries_after_expired_fetch(self) -> None:
+        import threading
+        import time
+
+        from app.controller import AppController
+        from blackboard.auth import AuthExpiredError
+        from blackboard.models import Snapshot
+
+        class FakePage:
+            controls: list = []
+
+            def update(self) -> None:
+                return None
+
+            def run_task(self, handler, *args, **kwargs):
+                return None
+
+        class FakeSession:
+            is_open = True
+            base_url = "https://shs.blackboardchina.cn"
+
+            def confirm_login(self) -> bool:
+                return True
+
+            def login_with_credentials(self, username: str, password: str, timeout_sec: float = 90) -> bool:
+                self.relogged = True
+                return True
+
+            def prepare_origin(self) -> None:
+                return None
+
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
+        ctrl.store.signed_in = True
+        ctrl.store.snapshot = Snapshot(user_name="Ada")
+        ctrl.session = FakeSession()  # type: ignore[assignment]
+        ctrl.route = "/home"
+        ctrl.login_username = "student"
+        ctrl._login_password = "secret"
+        ctrl.persist = lambda: None  # type: ignore[method-assign]
+        ctrl._ui_thread = threading.current_thread()
+        calls = {"n": 0}
+        done = threading.Event()
+
+        def fake_refresh(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise AuthExpiredError("HTTP 401 for /learn/api/v1/users/me")
+            done.set()
+            return ctrl.store.snapshot
+
+        ctrl.store.refresh = fake_refresh  # type: ignore[method-assign]
+        ctrl.refresh()
+        self.assertTrue(done.wait(timeout=2))
+        deadline = time.time() + 2
+        while ctrl.busy and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertFalse(ctrl.busy)
+        self.assertEqual(calls["n"], 2)
+        self.assertTrue(getattr(ctrl.session, "relogged", False))
+        self.assertEqual(ctrl.route, "/home")
+
+    def test_refresh_prompts_login_when_password_missing(self) -> None:
+        import threading
+        import time
+
+        from app.controller import AppController
+        from blackboard.models import Course, Snapshot
+
+        class FakePage:
+            controls: list = []
+
+            def update(self) -> None:
+                return None
+
+            def run_task(self, handler, *args, **kwargs):
+                return None
+
+        class FakeSession:
+            is_open = True
+
+            def confirm_login(self) -> bool:
+                return False
+
+            def login_with_credentials(self, *args, **kwargs):
+                raise AssertionError("should not attempt login without a password")
+
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
+        ctrl.store.signed_in = True
+        ctrl.store.snapshot = Snapshot(
+            user_name="Ada",
+            courses=[Course(id="math", name="Math")],
+        )
+        ctrl.session = FakeSession()  # type: ignore[assignment]
+        ctrl.route = "/home"
+        ctrl.login_username = "student"
+        ctrl._login_password = ""
+        ctrl._ui_thread = threading.current_thread()
+        ctrl.refresh()
+        deadline = time.time() + 2
+        while ctrl.busy and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertFalse(ctrl.busy)
+        self.assertEqual(ctrl.route, "/login")
+        self.assertIn("expired", ctrl.login_message.lower())
+        self.assertEqual(ctrl.store.snapshot.user_name, "Ada")
+        self.assertFalse(ctrl.store.signed_in)
+
+    def test_logout_clears_password(self) -> None:
+        from app.controller import AppController
+
+        class FakePage:
+            controls: list = []
+
+            def update(self) -> None:
+                return None
+
+            def run_task(self, handler, *args, **kwargs):
+                return None
+
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
+        ctrl._login_password = "secret"
+        ctrl.store.signed_in = True
+        ctrl.logout()
+        self.assertEqual(ctrl._login_password, "")
+        self.assertEqual(ctrl.route, "/login")
 
     def test_settings_never_store_password(self) -> None:
         import json
@@ -877,15 +1372,15 @@ class FilterTests(unittest.TestCase):
             def run_task(self, handler, *args, **kwargs):
                 return None
 
-        ctrl = AppController(FakePage(), demo=True)  # type: ignore[arg-type]
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
         ctrl.persist = lambda: None  # type: ignore[method-assign]
         ctrl.start_login("", "")
         self.assertEqual(ctrl.login_status, "failed")
         self.assertIn("required", ctrl.login_message.lower())
 
 
-class DemoViewTests(unittest.TestCase):
-    def test_demo_snapshot_and_views(self) -> None:
+class ViewBuilderTests(unittest.TestCase):
+    def test_views_build_with_sample_snapshot(self) -> None:
         import flet as ft
 
         from app.controller import AppController
@@ -919,12 +1414,12 @@ class DemoViewTests(unittest.TestCase):
                 return None
 
         store = Store()
-        snap = store.load_demo()
+        snap = load_sample(store)
         self.assertTrue(store.signed_in)
         self.assertGreaterEqual(len(snap.courses), 3)
         self.assertTrue(upcoming(snap, 14))
 
-        ctrl = AppController(FakePage(), demo=True)  # type: ignore[arg-type]
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
         ctrl.store = store
         ctrl.route = "/home"
         for builder in (
@@ -987,11 +1482,11 @@ class ContentsNavTests(unittest.TestCase):
         self.assertEqual(path_after_open(["A", "B", "C"], "A", "X"), ["A", "X"])
         self.assertEqual(path_after_open(["A"], "A", "B"), ["A", "B"])
 
-    def test_explorer_items_demo_tree(self) -> None:
+    def test_explorer_items_sample_tree(self) -> None:
         from app.contents_nav import explorer_items
 
         store = Store()
-        snap = store.load_demo()
+        snap = load_sample(store)
         roots = explorer_items(snap.courses, snap.content_nodes, None)
         self.assertTrue(any(item.key == "course:eng" for item in roots))
         readings = explorer_items(snap.courses, snap.content_nodes, "eng-readings")

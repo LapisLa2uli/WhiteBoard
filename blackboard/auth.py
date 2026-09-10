@@ -29,6 +29,24 @@ class SessionError(RuntimeError):
     pass
 
 
+class AuthExpiredError(SessionError):
+    """The Blackboard session is no longer authenticated."""
+
+
+SESSION_EXPIRED_MESSAGE = "Your Blackboard session expired. Sign in again to refresh."
+
+
+def is_auth_error(message: str | BaseException | None) -> bool:
+    status = getattr(message, "status", None)
+    if status in (401, 403):
+        return True
+    text = str(message or "").lower()
+    return any(
+        token in text
+        for token in ("http 401", "http 403", "unauthorized", "session expired")
+    )
+
+
 def url_looks_logged_in(url: str) -> bool:
     url = url.lower()
     if _url_looks_like_auth(url):
@@ -172,6 +190,10 @@ class BlackboardSession:
         self._page = None
         self._context = None
         self._browser = None
+
+    @property
+    def is_open(self) -> bool:
+        return not self._closed and self._thread.is_alive()
 
     def _tell(self, message: str, progress: float | None = None) -> None:
         if self.on_progress:
@@ -327,9 +349,17 @@ class BlackboardSession:
             except Exception:
                 pass
             _dismiss_consent(page)
+            if looks_logged_in(page) or _session_api_ok(page, self.base_url):
+                self.logged_in = True
+                self.needs_manual_login = False
+                return True
             user_box = page.locator('input#user_id, input[name="user_id"]')
             pwd_box = page.locator('input#password, input[name="password"]')
             if user_box.count() == 0 or pwd_box.count() == 0:
+                if looks_logged_in(page) or _session_api_ok(page, self.base_url):
+                    self.logged_in = True
+                    self.needs_manual_login = False
+                    return True
                 raise SessionError("Could not find the Blackboard username and password fields.")
             user_box.first.fill(user)
             pwd_box.first.fill(secret)
@@ -395,7 +425,9 @@ class BlackboardSession:
                 wait_until="domcontentloaded",
                 timeout=25_000,
             )
-            self.logged_in = True
+            self.logged_in = looks_logged_in(self._page) or _session_api_ok(
+                self._page, self.base_url
+            )
 
         self.call(work, timeout=35)
 
@@ -414,7 +446,12 @@ class BlackboardSession:
             url = resolve_url(self.base_url, path).replace("/.learn/", "/learn/")
             if not same_site(self.base_url, url):
                 raise SessionError(f"Refusing to request a different site: {url}")
-            return _in_page_get_json(self._page, url)
+            try:
+                return _in_page_get_json(self._page, url)
+            except ApiRequestError as exc:
+                if exc.status in (401, 403):
+                    self.logged_in = False
+                raise
 
         return self.call(work, timeout=20)
 

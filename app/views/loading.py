@@ -57,8 +57,9 @@ def build_loading(ctrl: AppController) -> ft.Control:
                         "and submission status."
                         if not refreshing
                         else (
-                            "The app is collecting courses, assignment links, and "
-                            "submission status."
+                            "Collecting courses, assignment links, and submission "
+                            "status. If the Blackboard session expired, the app "
+                            "signs you back in."
                         )
                     ),
                     ft.Column(

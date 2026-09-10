@@ -1,0 +1,79 @@
+# Secrets and local credentials
+credentials.txt
+credentials*.txt
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*_login_probe.json
+storage_state.json
+*storage_state*.json
+
+# Local Blackboard dumps and session data
+.blackboard_dashboard/
+snapshot.json
+settings.json
+blackboard_page.html
+*.html.save
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Tests and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.cache/
+
+# PyInstaller / packaged app output (hundreds of MB)
+dist/
+build/
+*.dmg
+*.msi
+*.app/
+
+# Playwright
+playwright-report/
+blob-report/
+test-results/
+playwright/.cache/
+.playwright/
+
+# Logs
+*.log
+pip-log.txt
+pip-delete-this-directory.txt
+
+# OS junk
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/

@@ -1,0 +1,1 @@
+"""WhiteBoard desktop dashboard."""

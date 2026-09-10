@@ -33,7 +33,7 @@ sys.path.insert(0, str(ROOT))
 try:
     from app.branding import APP_VERSION
 except Exception:
-    APP_VERSION = "0.1.0"
+    APP_VERSION = "0.1.1"
 
 a = Analysis(
     [str(ROOT / "run_whiteboard.py")],
@@ -87,6 +87,7 @@ if sys.platform == "darwin":
             "CFBundleName": "WhiteBoard",
             "CFBundleShortVersionString": APP_VERSION,
             "CFBundleVersion": APP_VERSION,
+            "LSMinimumSystemVersion": "11.0",
             "NSHighResolutionCapable": True,
         },
     )

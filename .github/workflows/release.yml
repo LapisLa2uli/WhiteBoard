@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (for example v0.1.0)"
+        description: "Tag to release (for example v0.1.1)"
         required: true
-        default: "v0.1.0"
+        default: "v0.1.1"
 
 permissions:
   contents: write
@@ -39,7 +39,6 @@ jobs:
             version="${version#v}"
           fi
           mv dist/WhiteBoard-Setup.exe "dist/WhiteBoard-${version}-Setup.exe"
-          echo "VERSION=${version}" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer
@@ -47,19 +46,38 @@ jobs:
           if-no-files-found: error
 
   build-macos:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            python_arch: arm64
+            expected_arch: arm64
+            dmg_suffix: macOS-AppleSilicon
+          - runner: macos-15-intel
+            python_arch: x64
+            expected_arch: x86_64
+            dmg_suffix: macOS-Intel
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+          architecture: ${{ matrix.python_arch }}
+      - name: Confirm CPU architecture
+        run: |
+          echo "runner=$(uname -m)"
+          python -c "import platform, sys; print('python', sys.executable); print('machine', platform.machine())"
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r packaging/requirements-build.txt
           python -m playwright install chromium
       - name: Build macOS disk image
+        env:
+          EXPECTED_ARCH: ${{ matrix.expected_arch }}
         run: bash packaging/build_macos.sh
       - name: Rename disk image
         run: |
@@ -68,10 +86,11 @@ jobs:
             version="${{ github.event.inputs.tag }}"
             version="${version#v}"
           fi
-          mv dist/WhiteBoard.dmg "dist/WhiteBoard-${version}.dmg"
+          mv "dist/WhiteBoard-${{ matrix.expected_arch }}.dmg" \
+             "dist/WhiteBoard-${version}-${{ matrix.dmg_suffix }}.dmg"
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-installer
+          name: macos-${{ matrix.dmg_suffix }}
           path: dist/WhiteBoard-*.dmg
           if-no-files-found: error
 
@@ -94,6 +113,7 @@ jobs:
             tag="${{ github.event.inputs.tag }}"
           fi
           version="${tag#v}"
+          ls -lah release-files
           notes="$(cat <<EOF
           ## WhiteBoard ${version}
 
@@ -101,8 +121,11 @@ jobs:
 
           ### Downloads
           - **Windows:** \`WhiteBoard-${version}-Setup.exe\` — install or upgrade. Shortcuts for Desktop and Windows Search keep working.
-          - **macOS:** \`WhiteBoard-${version}.dmg\` — open the disk image and drag WhiteBoard into Applications.
+          - **macOS Apple Silicon (M1/M2/M3/M4):** \`WhiteBoard-${version}-macOS-AppleSilicon.dmg\`
+          - **macOS Intel:** \`WhiteBoard-${version}-macOS-Intel.dmg\` — use this on Intel MacBooks, including Ventura.
           - **Source:** GitHub attaches a source code zip to this release automatically.
+
+          Open the matching \`.dmg\` and drag WhiteBoard into Applications.
 
           ### Notes
           Sign in with your own school Blackboard account. Course data stays on Blackboard.

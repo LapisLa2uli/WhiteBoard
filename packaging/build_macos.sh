@@ -29,7 +29,6 @@ fi
 "$PYTHON" -c "import flet_desktop.version as v; print('flet-desktop', v.version)"
 "$PYTHON" packaging/release_notes.py --check
 
-export PLAYWRIGHT_BROWSERS_PATH="$(pwd)/packaging/.cache/playwright-browsers"
 "$PYTHON" packaging/bundle_runtime.py prepare
 
 "$PYTHON" -m PyInstaller --noconfirm --clean --distpath dist --workpath build packaging/whiteboard.spec

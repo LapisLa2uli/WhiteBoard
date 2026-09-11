@@ -4,6 +4,18 @@ Summarized major changes for each WhiteBoard release, compared with the version 
 Write for someone using the app, not for developers. Every version needs the three
 headings below. Packaging and GitHub Releases copy this text.
 
+## [0.2.0] - 2026-09-11
+
+### Added features
+- If neither Microsoft Edge nor Google Chrome is installed, WhiteBoard now explains what is needed instead of only reporting that its browser could not start.
+
+### Bugfixes
+- Release checks now prevent a second browser from being included accidentally and making future downloads much larger.
+
+### Other changes
+- Windows and Mac downloads are substantially smaller because WhiteBoard now uses Microsoft Edge or Google Chrome already installed on your computer.
+- Microsoft Edge or Google Chrome is now required before you sign in. The browser is no longer included inside WhiteBoard.
+
 ## [0.1.3] - 2026-09-11
 
 ### Added features

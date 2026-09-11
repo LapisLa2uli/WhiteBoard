@@ -16,15 +16,16 @@ HEADING = re.compile(r"^## \[([^\]]+)\](?:\s*-\s*\S+)?\s*$", re.MULTILINE)
 APP_VERSION_RE = re.compile(r'^APP_VERSION\s*=\s*"([^"]+)"', re.MULTILINE)
 SECTION_HEADINGS = ("Added features", "Bugfixes", "Other changes")
 BROKEN_RELEASES = {
-    "0.1.0": "This release is known not to work. The app closes as soon as you open it, and the Mac file does not run on Intel computers. Please use 0.1.3 or later.",
-    "0.1.1": "This release is known not to work. The app closes as soon as you open it. Please use 0.1.3 or later.",
-    "0.1.2": "This release is known not to work. The Windows app closes as soon as you open it, and Mac installers were not included. Please use 0.1.3 or later.",
+    "0.1.0": "This release is known not to work. The app closes as soon as you open it, and the Mac file does not run on Intel computers. Please use 0.2.0 or later.",
+    "0.1.1": "This release is known not to work. The app closes as soon as you open it. Please use 0.2.0 or later.",
+    "0.1.2": "This release is known not to work. The Windows app closes as soon as you open it, and Mac installers were not included. Please use 0.2.0 or later.",
 }
 REQUIRED_ASSETS = (
     "WhiteBoard-{version}-Setup.exe",
     "WhiteBoard-{version}-macOS-AppleSilicon.dmg",
     "WhiteBoard-{version}-macOS-Intel.dmg",
 )
+MAX_INSTALLER_BYTES = 160 * 1024 * 1024
 
 
 def app_version(text: str | None = None) -> str:
@@ -99,13 +100,25 @@ def required_asset_names(version: str) -> tuple[str, ...]:
 
 
 def verify_release_assets(folder: Path, version: str) -> None:
-    names = {path.name for path in folder.iterdir() if path.is_file()}
+    files = {path.name: path for path in folder.iterdir() if path.is_file()}
+    names = set(files)
     missing = [name for name in required_asset_names(version) if name not in names]
     if missing:
         raise SystemExit(
             "GitHub release is missing installer(s): "
             + ", ".join(missing)
             + ". Do not publish until Windows, Intel Mac, and Apple Silicon Mac files are all present."
+        )
+    oversized = [
+        f"{name} ({files[name].stat().st_size / 1024 / 1024:.1f} MB)"
+        for name in required_asset_names(version)
+        if files[name].stat().st_size > MAX_INSTALLER_BYTES
+    ]
+    if oversized:
+        raise SystemExit(
+            "Installer size regression: "
+            + ", ".join(oversized)
+            + ". Each installer must stay at or below 160 MB."
         )
 
 
@@ -143,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "version",
         nargs="?",
-        help="Version to extract, for example 0.1.3. Defaults to APP_VERSION.",
+        help="Version to extract, for example 0.2.0. Defaults to APP_VERSION.",
     )
     parser.add_argument(
         "--github",

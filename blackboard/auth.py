@@ -35,6 +35,10 @@ class AuthExpiredError(SessionError):
 
 
 SESSION_EXPIRED_MESSAGE = "Your Blackboard session expired. Sign in again to refresh."
+BROWSER_REQUIRED_MESSAGE = (
+    "WhiteBoard needs Microsoft Edge or Google Chrome to sign in. "
+    "Install one of those browsers, then reopen WhiteBoard."
+)
 
 
 def is_auth_error(message: str | BaseException | None) -> bool:
@@ -235,7 +239,7 @@ class BlackboardSession:
     def _loop(self) -> None:
         if sync_playwright is None:
             self._start_error = SessionError(
-                "Playwright is not installed. Run: pip install playwright && playwright install chromium"
+                "The browser controller is missing from WhiteBoard. Reinstall the app."
             )
             self._started.set()
             return
@@ -572,11 +576,10 @@ def _session_api_ok(page, base_url: str) -> bool:
 
 
 def _chromium_launch_attempts(*, headless: bool) -> tuple[dict[str, Any], ...]:
-    bundled = {"headless": headless, "timeout": 12_000}
     edge = {"headless": headless, "channel": "msedge", "timeout": 12_000}
     chrome = {"headless": headless, "channel": "chrome", "timeout": 12_000}
     if getattr(sys, "frozen", False):
-        return (bundled, edge, chrome)
+        return (edge, chrome)
     return (edge, chrome, {"headless": headless, "timeout": 6_000})
 
 
@@ -589,7 +592,8 @@ def _launch_chromium(playwright, *, headless: bool = True):
             errors.append(str(exc))
     if getattr(sys, "frozen", False):
         raise SessionError(
-            "Could not start the bundled browser. Last error: "
+            BROWSER_REQUIRED_MESSAGE
+            + " Last error: "
             + (errors[-1] if errors else "unknown")
         )
     raise SessionError(

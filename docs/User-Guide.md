@@ -266,7 +266,7 @@ There is no custom shortcut map beyond ordinary text-field behavior (Enter submi
 |---|---|
 | “Not supported on this Mac” | You opened the Apple Silicon `.dmg` on an Intel Mac. Use `*-macOS-Intel.dmg`. |
 | Developer cannot be verified | Control-click the app → Open. |
-| Could not start a browser | Reinstall the latest packaged app (it includes Chromium). From source: install Chrome/Edge or run `python -m playwright install chromium`. |
+| Could not start a browser | Install Microsoft Edge or Google Chrome, then reopen WhiteBoard. From source, you can instead run `python -m playwright install chromium`. |
 | Empty dashboard after idle | Click **Refresh**. WhiteBoard re-signs in if the password is still in memory; otherwise Log out and Sign in. |
 | Contents Download fails | Stay signed in, then try again. Links with no file skip download. |
 | Wrong courses | Clear the Activity dropdown, turn off the custom filter chip, uncheck “only load this filter,” then Refresh. |

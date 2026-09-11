@@ -63,9 +63,8 @@ if ($LASTEXITCODE -ne 0) { throw "CHANGELOG.md must summarize major changes for 
 python -c "import flet, flet_desktop.version as v; print('flet', flet.version.flet_version, 'flet-desktop', v.version); raise SystemExit(0 if flet.version.flet_version == v.version else 1)"
 if ($LASTEXITCODE -ne 0) { throw "flet and flet-desktop versions must match" }
 
-$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $PSScriptRoot ".cache\playwright-browsers"
 python packaging/bundle_runtime.py prepare
-if ($LASTEXITCODE -ne 0) { throw "Failed to stage Flet client and Playwright Chromium" }
+if ($LASTEXITCODE -ne 0) { throw "Failed to stage the Flet desktop client" }
 
 python -m PyInstaller --noconfirm --clean --distpath dist --workpath build packaging/whiteboard.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
@@ -79,7 +78,7 @@ if (-not $toc -or -not (Select-String -Path $toc.FullName -Pattern "flet_desktop
 }
 
 python packaging/bundle_runtime.py verify
-if ($LASTEXITCODE -ne 0) { throw "Packaged tree is missing a bundled runtime dependency" }
+if ($LASTEXITCODE -ne 0) { throw "Packaged tree has missing or unexpected runtime files" }
 
 $iscc = Get-Iscc
 $rootIss = $Root.Replace("\", "/")

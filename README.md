@@ -4,7 +4,7 @@ WhiteBoard is a personal desktop dashboard for your own Blackboard account. It s
 
 This README covers **distribution (installer) setup** and **development (source) setup**. For a full map of features, screens, and buttons, see the [wiki](https://github.com/LapisLa2uli/WhiteBoard/wiki) or the copies in [`docs/`](docs/Home.md) ([Features](docs/Features.md), [User Guide](docs/User-Guide.md)).
 
-Current release: **[0.1.3](https://github.com/LapisLa2uli/WhiteBoard/releases/tag/v0.1.3)** · [Changelog](CHANGELOG.md)
+Current release: **[0.2.0](https://github.com/LapisLa2uli/WhiteBoard/releases/tag/v0.2.0)** · [Changelog](CHANGELOG.md)
 
 ---
 
@@ -14,10 +14,10 @@ Current release: **[0.1.3](https://github.com/LapisLa2uli/WhiteBoard/releases/ta
 |---|---|---|
 | OS | Windows 10/11 (64-bit), or macOS 11+ | Same |
 | Python | Not required | **Python 3.10** or newer |
-| Browser | Bundled Chromium (Chrome/Edge optional) | Chrome, Edge, or `playwright install chromium` |
+| Browser | Microsoft Edge or Google Chrome | Edge, Chrome, or `playwright install chromium` |
 | Network | Access to your school's Blackboard site | Same |
 
-The packaged app ships its own Chromium. From source, WhiteBoard prefers an installed **Edge** or **Chrome** copy, or a Playwright Chromium download.
+The packaged app controls an installed **Microsoft Edge** or **Google Chrome** in the background while it signs in and loads Blackboard data. From source, WhiteBoard can also use a Playwright Chromium download.
 
 The app is for **your own account only**. Follow your school's rules for automated access. Course materials stay on Blackboard; do not republish them.
 
@@ -50,7 +50,7 @@ Using the Apple Silicon disk image on an Intel Mac produces *“this application
 
 **Uninstall:** Windows Settings → Apps → WhiteBoard → Uninstall, or use *Uninstall WhiteBoard* from the Start menu.
 
-**First launch (Windows):** Sign in with your school URL, username, and password. Chromium is included in the installer.
+**First launch (Windows):** Make sure Microsoft Edge or Google Chrome is installed, then sign in with your school URL, username, and password.
 
 ### macOS
 
@@ -204,8 +204,6 @@ You only need this if you are producing a release yourself. Follow [`RELEASE_TIP
 
 ```powershell
 python -m pip install -r requirements.txt -r packaging/requirements-build.txt
-$env:PLAYWRIGHT_BROWSERS_PATH = "$PWD\packaging\.cache\playwright-browsers"
-python -m playwright install chromium
 powershell -NoProfile -ExecutionPolicy Bypass -File packaging/build_windows.ps1
 ```
 
@@ -215,8 +213,6 @@ Output: `dist/WhiteBoard-Setup.exe`.
 
 ```bash
 python3 -m pip install -r requirements.txt -r packaging/requirements-build.txt
-export PLAYWRIGHT_BROWSERS_PATH="$PWD/packaging/.cache/playwright-browsers"
-python3 -m playwright install chromium
 bash packaging/build_macos.sh
 ```
 

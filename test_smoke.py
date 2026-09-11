@@ -9,7 +9,9 @@ from blackboard.api import _parse_calendar, _parse_courses, _parse_grades, upcom
 from blackboard.auth import (
     ApiRequestError,
     AuthExpiredError,
+    BROWSER_REQUIRED_MESSAGE,
     _chromium_launch_attempts,
+    _launch_chromium,
     candidate_base_urls,
     is_auth_error,
     url_looks_logged_in,
@@ -1711,7 +1713,7 @@ class BrowserLaunchTests(unittest.TestCase):
             ["msedge", "chrome", None],
         )
 
-    def test_frozen_prefers_bundled_chromium(self) -> None:
+    def test_frozen_uses_installed_browsers_only(self) -> None:
         import sys
 
         previous = getattr(sys, "frozen", None)
@@ -1725,14 +1727,35 @@ class BrowserLaunchTests(unittest.TestCase):
                 sys.frozen = previous
         self.assertEqual(
             [item.get("channel") for item in attempts],
-            [None, "msedge", "chrome"],
+            ["msedge", "chrome"],
         )
+
+    def test_frozen_missing_browser_error_is_actionable(self) -> None:
+        import sys
+
+        class Chromium:
+            def launch(self, **_kwargs):
+                raise RuntimeError("browser executable was not found")
+
+        class Playwright:
+            chromium = Chromium()
+
+        previous = getattr(sys, "frozen", None)
+        sys.frozen = True
+        try:
+            with self.assertRaisesRegex(RuntimeError, "needs Microsoft Edge or Google Chrome"):
+                _launch_chromium(Playwright())
+        finally:
+            if previous is None:
+                delattr(sys, "frozen")
+            else:
+                sys.frozen = previous
+        self.assertIn("reopen WhiteBoard", BROWSER_REQUIRED_MESSAGE)
 
 
 class BundleRuntimeTests(unittest.TestCase):
-    def test_verify_bundle_requires_flet_playwright_and_chromium(self) -> None:
+    def test_verify_bundle_requires_runtimes_and_rejects_browsers(self) -> None:
         import importlib.util
-        import tarfile
         import tempfile
         from pathlib import Path
 
@@ -1748,31 +1771,42 @@ class BundleRuntimeTests(unittest.TestCase):
             app = dist / "WhiteBoard" / "_internal"
             (app / "flet_desktop" / "app").mkdir(parents=True)
             (app / "playwright" / "driver").mkdir(parents=True)
-            (app / "playwright" / "driver" / "package" / ".local-browsers" / "chromium-1" / "chrome-win").mkdir(
-                parents=True
-            )
             (app / "flet_desktop" / "app" / "flet-windows.zip").write_bytes(b"archive")
             (app / "playwright" / "driver" / "node.exe").write_bytes(b"node")
-            (app / "playwright" / "driver" / "package" / "playwright-chromium.tar.gz").write_bytes(b"archive")
             verify_bundle(dist)
 
-            (app / "playwright" / "driver" / "package" / "playwright-chromium.tar.gz").unlink()
-            (app / "playwright" / "driver" / "package" / ".local-browsers" / "chromium-1" / "chrome-win" / "chrome.exe").write_bytes(
-                b"chrome"
+            local_browsers = (
+                app
+                / "playwright"
+                / "driver"
+                / "package"
+                / ".local-browsers"
+                / "chromium-1"
             )
-            verify_bundle(dist)
+            local_browsers.mkdir(parents=True)
+            with self.assertRaisesRegex(SystemExit, "browser payload"):
+                verify_bundle(dist)
 
-            (app / "playwright" / "driver" / "package" / ".local-browsers" / "chromium-1" / "chrome-win" / "chrome.exe").unlink()
-            with self.assertRaises(SystemExit):
+            import shutil
+
+            shutil.rmtree(app / "playwright" / "driver" / "package" / ".local-browsers")
+            browser_archive = (
+                app
+                / "playwright"
+                / "driver"
+                / "package"
+                / "playwright-chromium.tar.gz"
+            )
+            browser_archive.write_bytes(b"archive")
+            with self.assertRaisesRegex(SystemExit, "browser payload"):
                 verify_bundle(dist)
 
         kept, datas = module.demote_nested_runtime_binaries(
             [
                 ("playwright/driver/node.exe", "/tmp/node.exe", "BINARY"),
-                ("playwright/driver/package/.local-browsers/chromium-1/chrome", "/tmp/chrome", "BINARY"),
                 (
-                    "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-                    "/tmp/chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+                    "Flet.app/Contents/MacOS/Flet",
+                    "/tmp/Flet.app/Contents/MacOS/Flet",
                     "BINARY",
                 ),
             ],
@@ -1780,61 +1814,8 @@ class BundleRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(len(kept), 1)
         self.assertEqual(kept[0][0], "playwright/driver/node.exe")
-        self.assertEqual(len(datas), 2)
+        self.assertEqual(len(datas), 1)
         self.assertEqual(datas[0][2], "DATA")
-
-        with tempfile.TemporaryDirectory() as raw:
-            cache = Path(raw) / "cache"
-            chromium = Path(raw) / "chromium-1"
-            (chromium / "chrome-mac").mkdir(parents=True)
-            (chromium / "chrome-mac" / "chrome").write_bytes(b"chrome")
-            ffmpeg = Path(raw) / "ffmpeg-1"
-            ffmpeg.mkdir()
-            (ffmpeg / "ffmpeg").write_bytes(b"ff")
-            module.CACHE = cache
-            archive = module.playwright_browser_archive(
-                {"chromium-1": chromium, "ffmpeg-1": ffmpeg}
-            )
-            self.assertGreater(archive.stat().st_size, 0)
-            with tarfile.open(archive, "r:gz") as tf:
-                names = tf.getnames()
-            self.assertTrue(any(name.startswith("chromium-1/") for name in names))
-            self.assertTrue(any(name.startswith("ffmpeg-1/") for name in names))
-
-        rthook = Path(__file__).resolve().parent / "packaging" / "rthooks" / "pyi_rth_whiteboard.py"
-        spec = importlib.util.spec_from_file_location("whiteboard_rthook", rthook)
-        assert spec and spec.loader
-        hook = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(hook)
-        with tempfile.TemporaryDirectory() as raw:
-            import os
-            import sys
-            from unittest import mock
-
-            home = Path(raw) / "home"
-            bundle = Path(raw) / "bundle"
-            package = bundle / "playwright" / "driver" / "package"
-            package.mkdir(parents=True)
-            source = Path(raw) / "src" / "chromium-9"
-            source.mkdir(parents=True)
-            (source / "chrome").write_bytes(b"chrome")
-            with tarfile.open(package / "playwright-chromium.tar.gz", "w:gz") as tf:
-                tf.add(source, arcname="chromium-9")
-            previous = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
-            try:
-                with mock.patch.object(hook.Path, "home", return_value=home):
-                    hook._extract_playwright_browsers(bundle)
-                dest = home / "AppData" / "Local" / "WhiteBoard" / "ms-playwright"
-                if sys.platform == "darwin":
-                    dest = home / "Library" / "Application Support" / "WhiteBoard" / "ms-playwright"
-                self.assertTrue((dest / ".ready").is_file())
-                self.assertTrue((dest / "chromium-9" / "chrome").is_file())
-                self.assertEqual(os.environ["PLAYWRIGHT_BROWSERS_PATH"], str(dest))
-            finally:
-                if previous is None:
-                    os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
-                else:
-                    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = previous
 
 
 class ReleaseNotesTests(unittest.TestCase):
@@ -1871,12 +1852,17 @@ class ReleaseNotesTests(unittest.TestCase):
             )
         with tempfile.TemporaryDirectory() as raw:
             folder = Path(raw)
-            (folder / "WhiteBoard-0.1.3-Setup.exe").write_text("x")
+            (folder / "WhiteBoard-0.2.0-Setup.exe").write_text("x")
             with self.assertRaises(SystemExit):
-                module.verify_release_assets(folder, "0.1.3")
-            (folder / "WhiteBoard-0.1.3-macOS-AppleSilicon.dmg").write_text("x")
-            (folder / "WhiteBoard-0.1.3-macOS-Intel.dmg").write_text("x")
-            module.verify_release_assets(folder, "0.1.3")
+                module.verify_release_assets(folder, "0.2.0")
+            (folder / "WhiteBoard-0.2.0-macOS-AppleSilicon.dmg").write_text("x")
+            (folder / "WhiteBoard-0.2.0-macOS-Intel.dmg").write_text("x")
+            module.verify_release_assets(folder, "0.2.0")
+            (folder / "WhiteBoard-0.2.0-macOS-Intel.dmg").write_bytes(b"")
+            with (folder / "WhiteBoard-0.2.0-macOS-Intel.dmg").open("r+b") as installer:
+                installer.truncate(module.MAX_INSTALLER_BYTES + 1)
+            with self.assertRaisesRegex(SystemExit, "size regression"):
+                module.verify_release_assets(folder, "0.2.0")
 
 
 if __name__ == "__main__":

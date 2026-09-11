@@ -13,7 +13,7 @@ Download from [Releases](https://github.com/LapisLa2uli/WhiteBoard/releases).
 | `WhiteBoard-<version>-macOS-AppleSilicon.dmg` | Apple Silicon (M1–M4) |
 | Source code zip / tar | Development only |
 
-Packaged installers include Chromium and the Flet desktop runtime. Chrome or Edge is optional. From source you still need one of those browsers or `python -m playwright install chromium`.
+Packaged installers include the WhiteBoard desktop runtime but not a second web browser. Install Microsoft Edge or Google Chrome before signing in. From source you can instead use `python -m playwright install chromium`.
 
 ### Windows
 

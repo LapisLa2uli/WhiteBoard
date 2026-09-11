@@ -31,9 +31,7 @@ hiddenimports = [
     "flet_desktop.version",
     "playwright",
     "playwright.sync_api",
-    "playwright.async_api",
     "greenlet",
-    "rich",
 ]
 hookspath = [str(ROOT / "packaging" / "hooks")]
 
@@ -50,7 +48,7 @@ sys.path.insert(0, str(ROOT))
 try:
     from app.branding import APP_VERSION
 except Exception:
-    APP_VERSION = "0.1.3"
+    APP_VERSION = "0.2.0"
 
 a = Analysis(
     [str(ROOT / "run_whiteboard.py")],

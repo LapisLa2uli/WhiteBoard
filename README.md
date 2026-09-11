@@ -198,7 +198,7 @@ Session cookies stay in memory for the running process and are not saved to disk
 
 ## Building installers from source
 
-You only need this if you are producing a release yourself. Bump `APP_VERSION` in `app/branding.py` and add a `## [x.y.z]` section to [`CHANGELOG.md`](CHANGELOG.md) that lists the major changes from the previous release. Packaging and the GitHub release job both require that section.
+You only need this if you are producing a release yourself. Follow [`RELEASE_TIPS.txt`](RELEASE_TIPS.txt): bump `APP_VERSION`, add a `CHANGELOG.md` section with **Added features**, **Bugfixes**, and **Other changes**, and do not publish until Windows plus both Mac disk images are on the GitHub release.
 
 **Windows** (PyInstaller + Inno Setup; the script downloads Inno Setup into `packaging/tools/` if needed):
 

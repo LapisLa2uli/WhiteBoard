@@ -23,6 +23,7 @@ CHROMIUM_MARKERS = (
     "chrome.exe",
     "chrome",
     "Chromium.app",
+    "Google Chrome for Testing.app",
 )
 
 
@@ -65,9 +66,22 @@ def _is_chromium_binary(path: Path) -> bool:
     name = path.name
     if "headless" in path.as_posix().lower():
         return False
-    if name in CHROMIUM_MARKERS:
-        return path.is_file() or name.endswith(".app")
+    if name in CHROMIUM_MARKERS or (name.endswith(".app") and "chrome" in name.lower()):
+        return path.exists()
     return name == "Chromium" and (path.is_file() or path.is_dir())
+
+
+def demote_nested_runtime_binaries(binaries, datas):
+    """Keep bundled Chromium/Flet apps as data so macOS codesign does not rewrite them."""
+    kept = []
+    extra_datas = list(datas)
+    for entry in binaries:
+        dest = str(entry[0]).replace("\\", "/")
+        if ".local-browsers" in dest or "Flet.app" in dest or dest.endswith(".app"):
+            extra_datas.append((entry[0], entry[1], "DATA"))
+        else:
+            kept.append(entry)
+    return kept, extra_datas
 
 
 def _default_playwright_cache() -> Path:
@@ -151,11 +165,11 @@ def collect_runtime_datas() -> list[tuple[str, str]]:
 
 def find_bundle_root(dist_root: Path | None = None) -> Path:
     dist = dist_root or (ROOT / "dist")
-    candidates = (
-        dist / "WhiteBoard",
-        dist / "WhiteBoard.app",
-    )
-    for path in candidates:
+    app = dist / "WhiteBoard.app"
+    onedir = dist / "WhiteBoard"
+    if sys.platform == "darwin" and app.exists():
+        return app
+    for path in (onedir, app):
         if path.exists():
             return path
     raise SystemExit(f"No packaged app found under {dist}")

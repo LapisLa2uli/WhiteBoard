@@ -8,7 +8,7 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 ROOT = Path(SPECPATH).resolve().parent
 sys.path.insert(0, str(ROOT / "packaging"))
-from bundle_runtime import collect_runtime_datas  # noqa: E402
+from bundle_runtime import collect_runtime_datas, demote_nested_runtime_binaries  # noqa: E402
 
 block_cipher = None
 
@@ -74,6 +74,7 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+a.binaries, a.datas = demote_nested_runtime_binaries(a.binaries, a.datas)
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(

@@ -1,0 +1,60 @@
+WhiteBoard release and commit tips
+==================================
+
+Read this file before every commit that is part of a release, and before
+tagging or publishing on GitHub. These rules stay here so they are not lost
+when chat history is summarized.
+
+Changelogs
+----------
+- Write for a person who just downloaded the app, not for developers.
+- Say what they will notice: new buttons, new screens, "the app opens now",
+  "sign-in no longer fails", and similar.
+- Do not use packaging jargon (PyInstaller, Playwright, Flet, Chromium
+  revisions, wheels, hooks, CI job names) unless a sentence is impossible
+  without a short plain-language gloss.
+- Every version in CHANGELOG.md must have these three headings, in this order:
+
+    ### Added features
+    ### Bugfixes
+    ### Other changes
+
+- Put those same three headings on the GitHub release under the version title.
+  GitHub release notes are generated from CHANGELOG.md. If a heading has
+  nothing to say, write a single line such as "- None in this release."
+- Packaging fails if the current app version has no CHANGELOG section or is
+  missing those headings.
+
+Installers on every GitHub release
+----------------------------------
+- Every release must include all three launchers:
+    1. Windows setup (.exe)
+    2. macOS Apple Silicon (.dmg)
+    3. macOS Intel (.dmg)
+- Do not publish if any of the three is missing. Do not let a Windows-only
+  build go out as a full release.
+- After a tag is pushed, wait for GitHub Actions and confirm all three files
+  are listed on the release page before telling anyone it is done.
+
+Broken releases
+---------------
+- If a shipped version has a fatal bug (for example it quits as soon as you
+  open it), mark that GitHub release as known not to work:
+    Title: "WhiteBoard x.y.z (known not to work)"
+    First line of the notes: a plain warning, plus which version to use instead.
+- 0.1.0, 0.1.1, and 0.1.2 are in that category (they do not start). Do not
+  un-mark them.
+
+Re-tagging
+----------
+- Only move an existing version tag (for example re-release 0.1.3) when the
+  user asked to re-release that same version.
+- Do not force-push the master branch.
+
+How to cut a release
+--------------------
+1. Bump APP_VERSION (app/branding.py and packaging/whiteboard.iss).
+2. Add CHANGELOG.md notes using the three headings above.
+3. Commit, push master, tag vX.Y.Z, push the tag.
+4. Confirm GitHub Actions built Windows + both Mac disk images.
+5. Confirm the GitHub release lists all three files and readable notes.

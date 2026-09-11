@@ -47,7 +47,6 @@ jobs:
           if-no-files-found: error
 
   build-macos:
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -99,7 +98,7 @@ jobs:
 
   release:
     needs: [build-windows, build-macos]
-    if: ${{ always() && needs.build-windows.result == 'success' }}
+    if: ${{ success() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -118,7 +117,9 @@ jobs:
           fi
           version="${tag#v}"
           ls -lah release-files
+          python3 packaging/release_notes.py "$version" --verify-assets release-files
           python3 packaging/release_notes.py "$version" --github > release-notes.md
+          python3 packaging/release_notes.py --sync-broken-releases || true
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" release-files/* --clobber
             gh release edit "$tag" --title "WhiteBoard ${version}" --notes-file release-notes.md

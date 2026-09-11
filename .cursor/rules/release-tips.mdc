@@ -1,0 +1,11 @@
+---
+description: Read RELEASE_TIPS.txt before commits and GitHub releases
+alwaysApply: true
+---
+
+# Release and changelog rules
+
+Before committing release work, tagging, or publishing, read and follow
+`RELEASE_TIPS.txt` at the repository root. That file is the source of truth
+for changelog wording, the three GitHub installer files, and marking broken
+releases.

@@ -1761,10 +1761,22 @@ class BundleRuntimeTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 verify_bundle(dist)
 
+        kept, datas = module.demote_nested_runtime_binaries(
+            [
+                ("playwright/driver/node.exe", "/tmp/node.exe", "BINARY"),
+                ("playwright/driver/package/.local-browsers/chromium-1/chrome", "/tmp/chrome", "BINARY"),
+            ],
+            [],
+        )
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0][0], "playwright/driver/node.exe")
+        self.assertEqual(datas[0][2], "DATA")
+
 
 class ReleaseNotesTests(unittest.TestCase):
     def test_changelog_has_notes_for_app_version(self) -> None:
         import importlib.util
+        import tempfile
         from pathlib import Path
 
         helper = Path(__file__).resolve().parent / "packaging" / "release_notes.py"
@@ -1775,11 +1787,32 @@ class ReleaseNotesTests(unittest.TestCase):
         version = module.app_version()
         body = module.changelog_body(version)
         self.assertTrue(body)
-        self.assertIn("What's new", module.github_notes(version))
+        self.assertIn("Added features", body)
+        self.assertIn("Bugfixes", body)
+        self.assertIn("Other changes", body)
+        notes = module.github_notes(version)
+        self.assertIn("### Added features", notes)
+        self.assertIn("### Bugfixes", notes)
+        self.assertIn("### Other changes", notes)
+        self.assertEqual(module.github_title("0.1.2"), "WhiteBoard 0.1.2 (known not to work)")
+        self.assertIn("known not to work", module.github_notes("0.1.2").lower())
         with self.assertRaises(SystemExit):
             module.changelog_body("9.9.9")
         with self.assertRaises(SystemExit):
             module.changelog_body("0.1.3", "## [0.1.3] - 2026-09-11\n\n")
+        with self.assertRaises(SystemExit):
+            module.changelog_body(
+                "0.1.3",
+                "## [0.1.3] - 2026-09-11\n\n### Added features\n- x\n",
+            )
+        with tempfile.TemporaryDirectory() as raw:
+            folder = Path(raw)
+            (folder / "WhiteBoard-0.1.3-Setup.exe").write_text("x")
+            with self.assertRaises(SystemExit):
+                module.verify_release_assets(folder, "0.1.3")
+            (folder / "WhiteBoard-0.1.3-macOS-AppleSilicon.dmg").write_text("x")
+            (folder / "WhiteBoard-0.1.3-macOS-Intel.dmg").write_text("x")
+            module.verify_release_assets(folder, "0.1.3")
 
 
 if __name__ == "__main__":

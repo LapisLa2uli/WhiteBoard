@@ -58,11 +58,19 @@ if ($LASTEXITCODE -ne 0) {
 
 $version = Get-AppVersion
 Write-Host "Packaging WhiteBoard $version for Windows..."
+python -c "import flet, flet_desktop.version as v; print('flet', flet.version.flet_version, 'flet-desktop', v.version); raise SystemExit(0 if flet.version.flet_version == v.version else 1)"
+if ($LASTEXITCODE -ne 0) { throw "flet and flet-desktop versions must match" }
+
 python -m PyInstaller --noconfirm --clean --distpath dist --workpath build packaging/whiteboard.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
 $exe = Join-Path "dist" "WhiteBoard\WhiteBoard.exe"
 if (-not (Test-Path $exe)) { throw "Build finished but $exe was not found" }
+
+$toc = Get-ChildItem -Path "build" -Recurse -Filter "Analysis-00.toc" | Select-Object -First 1
+if (-not $toc -or -not (Select-String -Path $toc.FullName -Pattern "flet_desktop" -Quiet)) {
+    throw "PyInstaller did not collect flet_desktop; the Windows app would fail to start"
+}
 
 $iscc = Get-Iscc
 $rootIss = $Root.Replace("\", "/")

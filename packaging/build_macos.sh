@@ -25,10 +25,17 @@ fi
 
 "$PYTHON" packaging/generate_icons.py
 
+"$PYTHON" -c "import flet, flet_desktop.version as v; print('flet', flet.version.flet_version, 'flet-desktop', v.version); raise SystemExit(0 if flet.version.flet_version == v.version else 1)"
+
 "$PYTHON" -m PyInstaller --noconfirm --clean --distpath dist --workpath build packaging/whiteboard.spec
 
 if [[ ! -d dist/WhiteBoard.app ]]; then
   echo "Build finished but dist/WhiteBoard.app was not found" >&2
+  exit 1
+fi
+
+if ! grep -Rqs "flet_desktop" build --include="Analysis-00.toc"; then
+  echo "PyInstaller did not collect flet_desktop; the macOS app would fail to start" >&2
   exit 1
 fi
 

@@ -9,6 +9,14 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 ROOT = Path(SPECPATH).resolve().parent
 block_cipher = None
 
+try:
+    import flet_desktop.version  # noqa: F401
+except ImportError as exc:
+    raise SystemExit(
+        "flet-desktop must be installed before packaging. "
+        "Run: python -m pip install flet-desktop"
+    ) from exc
+
 datas = [(str(ROOT / "assets"), "assets")]
 datas += collect_data_files("flet")
 binaries = []
@@ -16,16 +24,28 @@ hiddenimports = [
     "app",
     "blackboard",
     "flet",
+    "flet_desktop",
+    "flet_desktop.version",
     "playwright",
     "playwright.sync_api",
     "playwright.async_api",
 ]
+hookspath = []
 
-for package in ("playwright",):
+for package in ("flet", "flet_desktop", "playwright"):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     datas += pkg_datas
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
+
+try:
+    import flet_cli
+
+    hook_dir = Path(flet_cli.__file__).resolve().parent / "__pyinstaller"
+    if hook_dir.is_dir():
+        hookspath.append(str(hook_dir))
+except Exception:
+    pass
 
 icon = str(ROOT / ("assets/logo.icns" if sys.platform == "darwin" else "assets/logo.ico"))
 version_file = ROOT / "packaging" / "file_version_info.txt"
@@ -33,7 +53,7 @@ sys.path.insert(0, str(ROOT))
 try:
     from app.branding import APP_VERSION
 except Exception:
-    APP_VERSION = "0.1.1"
+    APP_VERSION = "0.1.2"
 
 a = Analysis(
     [str(ROOT / "run_whiteboard.py")],
@@ -41,9 +61,9 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=[],
+    hookspath=hookspath,
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(ROOT / "packaging" / "rthooks" / "pyi_rth_whiteboard.py")],
     excludes=["matplotlib", "flet.testing", "numpy"],
     cipher=block_cipher,
     noarchive=False,

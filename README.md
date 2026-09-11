@@ -4,7 +4,7 @@ WhiteBoard is a personal desktop dashboard for your own Blackboard account. It s
 
 This README covers **distribution (installer) setup** and **development (source) setup**. For a full map of features, screens, and buttons, see the [wiki](https://github.com/LapisLa2uli/WhiteBoard/wiki) or the copies in [`docs/`](docs/Home.md) ([Features](docs/Features.md), [User Guide](docs/User-Guide.md)).
 
-Current release: **[0.1.1](https://github.com/LapisLa2uli/WhiteBoard/releases/tag/v0.1.1)**
+Current release: **[0.1.2](https://github.com/LapisLa2uli/WhiteBoard/releases/tag/v0.1.2)**
 
 ---
 

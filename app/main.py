@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 import flet as ft
@@ -46,6 +47,8 @@ def _size_window(page: ft.Page) -> None:
 
 
 def main(_argv: list[str] | None = None) -> None:
+    if getattr(sys, "frozen", False):
+        os.environ.setdefault("FLET_APP_PACKAGED", "1")
     ft.app(
         target=build_app,
         assets_dir=str(assets_dir()),

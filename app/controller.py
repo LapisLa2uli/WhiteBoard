@@ -6,7 +6,7 @@ import sys
 import threading
 import uuid
 import webbrowser
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -46,8 +46,12 @@ class AppController:
         self.loading_percent = None
         self.grades_graded_expanded = True
         self.grades_pending_expanded = True
+        self.assignments_todo_expanded = True
+        self.assignments_submitted_expanded = True
         self.busy = False
         self.calendar_days = 14
+        self.calendar_mode = "list"
+        self.calendar_anchor = date.today()
         self.assignment_filter = "all"
         self.assignment_query = ""
         self.course_query = ""
@@ -537,6 +541,36 @@ class AppController:
             self.grades_graded_expanded = bool(expanded)
         else:
             self.grades_pending_expanded = bool(expanded)
+
+    def set_assignments_section(self, key: str, expanded: bool) -> None:
+        if key == "todo":
+            self.assignments_todo_expanded = bool(expanded)
+        else:
+            self.assignments_submitted_expanded = bool(expanded)
+
+    def set_calendar_mode(self, mode: str) -> None:
+        if mode not in {"list", "week", "month"}:
+            return
+        self.calendar_mode = mode
+        self.rebuild()
+
+    def calendar_go_today(self) -> None:
+        self.calendar_anchor = date.today()
+        self.rebuild()
+
+    def shift_calendar(self, delta: int) -> None:
+        from datetime import timedelta
+
+        from blackboard.api import add_months, calendar_week_start
+
+        anchor = self.calendar_anchor
+        if self.calendar_mode == "month":
+            self.calendar_anchor = add_months(anchor, delta)
+        elif self.calendar_mode == "week":
+            self.calendar_anchor = calendar_week_start(anchor) + timedelta(weeks=delta)
+        else:
+            self.calendar_anchor = anchor + timedelta(days=delta * self.calendar_days)
+        self.rebuild()
 
     def logout(self) -> None:
         self._close_session()

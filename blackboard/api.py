@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable, Literal
 
 from urllib.parse import parse_qs, quote, urlencode, urlparse
@@ -166,12 +166,11 @@ def fetch_snapshot(
     harvested_calendar = _first_harvest(harvested, ("calendar", "dueDate"))
     harvested_grades = _first_harvest(harvested, ("grade", "streams/ultra"))
 
-    calendar = harvested_calendar or _try_paths(
-        session,
-        [p.format(user_id=quote(user_id, safe="")) for p in CALENDAR_PATHS[:2]],
-        snapshot,
-        "calendar",
-    )
+    calendar_payloads: list[Any] = []
+    if harvested_calendar:
+        calendar_payloads.append(harvested_calendar)
+    calendar_payloads.extend(_fetch_calendar_payloads(session, snapshot, user_id))
+    calendar = _merge_calendar_payloads(*calendar_payloads)
     snapshot.deadlines, snapshot.assignments = _parse_calendar(
         calendar, snapshot.courses, session.base_url
     )
@@ -258,6 +257,90 @@ def _try_paths(
     if last_error:
         snapshot.errors[section] = last_error
     return None
+
+
+def _calendar_query_window() -> tuple[str, str]:
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=186)
+    end = now + timedelta(days=366)
+    return (
+        start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+
+
+def _fetch_calendar_payloads(
+    session: BlackboardSession, snapshot: Snapshot, user_id: str
+) -> list[Any]:
+    since, until = _calendar_query_window()
+    q_start = quote(since, safe="")
+    q_end = quote(until, safe="")
+    user = quote(user_id, safe="")
+    paths = [
+        f"/learn/api/v1/calendars/dueDateCalendarItems?startDate={q_start}&endDate={q_end}",
+        f"/learn/api/v1/calendars/calendarItems?startDate={q_start}&endDate={q_end}",
+        f"/learn/api/public/v1/calendars/items?since={q_start}&until={q_end}",
+        f"/learn/api/v1/users/{user}/dueDateCalendarItems?startDate={q_start}&endDate={q_end}",
+        f"/learn/api/v1/calendars/items?startDate={q_start}&endDate={q_end}",
+    ]
+    payloads: list[Any] = []
+    got_full_calendar = False
+    last_error = ""
+    for path in paths:
+        try:
+            data = session.get_json(path)
+        except ApiRequestError as exc:
+            last_error = str(exc)
+            continue
+        except Exception as exc:
+            last_error = str(exc)
+            continue
+        if not data:
+            continue
+        items = _as_list(data)
+        if not items:
+            continue
+        payloads.append(data)
+        lowered = path.lower()
+        if "duedate" not in lowered:
+            got_full_calendar = True
+    if not got_full_calendar and hasattr(session, "harvest_learn_json"):
+        try:
+            harvested_more = session.harvest_learn_json(("/ultra/calendar",))
+            extra = _first_harvest(
+                harvested_more, ("calendarItems", "calendars/items", "calendar")
+            )
+            if extra:
+                payloads.append(extra)
+                got_full_calendar = True
+        except Exception:
+            pass
+    if payloads:
+        snapshot.errors.pop("calendar", None)
+    elif last_error:
+        snapshot.errors["calendar"] = last_error
+    return payloads
+
+
+def _merge_calendar_payloads(*payloads: Any) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for payload in payloads:
+        for raw in _as_list(payload):
+            if not isinstance(raw, dict):
+                continue
+            item_id = str(_pick(raw, "id", "itemId", "uuid") or "")
+            title = str(_pick(raw, "title", "name", "subject") or "")
+            when = parse_dt(
+                _pick(raw, "startDate", "start", "dueDate", "endDate", "end", "date")
+            )
+            course = str(_pick(raw, "courseId", "calendarId") or "")
+            key = item_id or f"{course}:{title.lower()}:{when}"
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(raw)
+    return merged
 
 
 def _is_soft_http_error(message: str | None) -> bool:
@@ -732,8 +815,8 @@ def _parse_calendar(
                 content_handler=handler,
             )
         )
-        # Due-date calendar items are coursework even when Ultra omits "Assignment".
-        if kind in ("assignment", "test") or when is not None:
+        # Only coursework belongs on the Assignments page.
+        if kind in ("assignment", "test"):
             assignments.append(
                 Assignment(
                     id=item_id,
@@ -797,7 +880,7 @@ def _parse_grades(
                 assignment_id=assignment_id,
             )
         )
-    return grades
+    return _dedupe_grades(grades)
 
 
 def _parse_announcements(data: Any, course_id: str) -> list[Announcement]:
@@ -1086,6 +1169,8 @@ def _merge_assignments_from_deadlines(snapshot: Snapshot) -> None:
     seen_ids = {item.id for item in snapshot.assignments}
     seen_keys = {(item.course_id, item.title.lower()) for item in snapshot.assignments}
     for deadline in snapshot.deadlines:
+        if deadline.kind == "other":
+            continue
         key = (deadline.course_id, deadline.title.lower())
         if deadline.id in seen_ids or key in seen_keys:
             continue
@@ -2017,17 +2102,29 @@ def _enrich_last_activity(snapshot: Snapshot) -> None:
 
 
 def _deadline_kind(raw: dict[str, Any]) -> DeadlineKind:
-    text = " ".join(
-        [
-            str(_pick(raw, "itemType", "type", "eventType", "contentHandler") or ""),
-            str(_pick(raw, "title", "name", "subject") or ""),
-        ]
-    ).lower()
+    item_type = str(_pick(raw, "itemType", "type", "eventType") or "")
+    handler = str(_pick(raw, "contentHandler") or "")
+    title = str(_pick(raw, "title", "name", "subject") or "")
+    type_key = item_type.lower().replace("_", "").replace(" ", "")
+    text = f"{item_type} {handler} {title}".lower()
+    if type_key in {
+        "officehours",
+        "officehour",
+        "institution",
+        "institutional",
+        "personal",
+        "course",
+        "courseevent",
+        "event",
+        "announcement",
+        "ultraannouncement",
+    }:
+        return "other"
     if any(word in text for word in ("office hour", "meeting", "holiday", "vacation")):
         return "other"
     if any(word in text for word in ("test", "quiz", "exam", "assessment")):
         return "test"
-    if any(word in text for word in ("assign", "homework", "work", "due")):
+    if any(word in text for word in ("assign", "homework", "work", "due", "gradebook")):
         return "assignment"
     # Ultra due-date items are often unlabeled GradebookColumn / CalendarItem entries.
     return "assignment"
@@ -2175,19 +2272,67 @@ def deadline_is_finished(snapshot: Snapshot, deadline: Deadline) -> bool:
 
 
 def upcoming(
-    snapshot: Snapshot, days: int
+    snapshot: Snapshot, days: int, *, now: datetime | None = None
 ) -> list[Deadline]:
-    now = datetime.now(timezone.utc)
-    limit = now.timestamp() + days * 86400
+    moment = _as_utc(now) if now else datetime.now(timezone.utc)
+    limit = moment.timestamp() + days * 86400
     items = []
     for deadline in snapshot.deadlines:
         when = _as_utc(deadline.when)
         if when is None:
             continue
-        if now.timestamp() - 12 * 3600 <= when.timestamp() <= limit:
+        if moment.timestamp() - 12 * 3600 <= when.timestamp() <= limit:
             items.append(deadline)
     items.sort(key=lambda d: _as_utc(d.when) or datetime.max.replace(tzinfo=timezone.utc))
     return items
+
+
+def calendar_items_in_range(
+    snapshot: Snapshot, start: datetime, end: datetime
+) -> list[Deadline]:
+    start_ts = _as_utc(start).timestamp()
+    end_ts = _as_utc(end).timestamp()
+    items = []
+    for deadline in snapshot.deadlines:
+        when = _as_utc(deadline.when)
+        if when is None:
+            continue
+        if start_ts <= when.timestamp() < end_ts:
+            items.append(deadline)
+    items.sort(key=lambda d: _as_utc(d.when) or datetime.max.replace(tzinfo=timezone.utc))
+    return items
+
+
+def calendar_week_start(day: date) -> date:
+    """Monday-first week, matching Google Calendar in China."""
+    return day - timedelta(days=day.weekday())
+
+
+def add_months(day: date, delta: int) -> date:
+    month_index = day.month - 1 + delta
+    year = day.year + month_index // 12
+    month = month_index % 12 + 1
+    if month <= 0:
+        month += 12
+        year -= 1
+    last_day = (
+        date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1)
+        - timedelta(days=1)
+    ).day
+    return date(year, month, min(day.day, last_day))
+
+
+def event_is_all_day(when: datetime | None) -> bool:
+    if when is None:
+        return True
+    local = _as_utc(when).astimezone()
+    return local.hour == 0 and local.minute == 0 and local.second == 0
+
+
+def local_event_date(when: datetime | None) -> date | None:
+    if when is None:
+        return None
+    return _as_utc(when).astimezone().date()
 
 
 def recent_grades(snapshot: Snapshot, limit: int = 8) -> list[Grade]:
@@ -2222,6 +2367,39 @@ def is_posted_grade(score: str) -> bool:
     return key not in _PENDING_SCORE_LABELS and compact not in _PENDING_SCORE_LABELS
 
 
+def _grade_rank(grade: Grade) -> tuple:
+    posted = 1 if is_posted_grade(grade.score) else 0
+    when = _as_utc(grade.posted_at)
+    stamp = when.timestamp() if when else 0.0
+    return (posted, stamp, len(grade.score or ""))
+
+
+def _dedupe_grades(grades: list[Grade]) -> list[Grade]:
+    by_id: dict[str, Grade] = {}
+    id_order: list[str] = []
+    for grade in grades:
+        gid = grade.id or f"{grade.course_id}:{_norm_title(grade.title)}:{grade.score}"
+        existing = by_id.get(gid)
+        if existing is None:
+            by_id[gid] = grade
+            id_order.append(gid)
+        elif _grade_rank(grade) > _grade_rank(existing):
+            by_id[gid] = grade
+
+    by_title: dict[tuple[str, str], Grade] = {}
+    title_order: list[tuple[str, str]] = []
+    for gid in id_order:
+        grade = by_id[gid]
+        key = (grade.course_id, _norm_title(grade.title))
+        existing = by_title.get(key)
+        if existing is None:
+            by_title[key] = grade
+            title_order.append(key)
+        elif _grade_rank(grade) > _grade_rank(existing):
+            by_title[key] = grade
+    return [by_title[key] for key in title_order]
+
+
 def grade_page_groups(snapshot: Snapshot) -> tuple[list[Grade], list[Grade]]:
     """Split work into posted grades vs submitted-but-ungraded. Hide the rest."""
     graded: list[Grade] = []
@@ -2241,7 +2419,7 @@ def grade_page_groups(snapshot: Snapshot) -> tuple[list[Grade], list[Grade]]:
             return True
         return (assignment.course_id, _norm_title(assignment.title)) in claimed_titles
 
-    for grade in snapshot.grades:
+    for grade in _dedupe_grades(snapshot.grades):
         if is_posted_grade(grade.score):
             graded.append(grade)
             claim(grade)
@@ -2303,6 +2481,8 @@ def assignments_for(
     seen_keys = {(item.course_id, item.title.lower()) for item in items}
     now = datetime.now(timezone.utc)
     for deadline in snapshot.deadlines:
+        if deadline.kind == "other":
+            continue
         key = (deadline.course_id, deadline.title.lower())
         if deadline.id in seen_ids or key in seen_keys:
             continue

@@ -43,11 +43,11 @@ How to reach each capability. For the control-by-control list, see [User Guide](
 
 ## Assignments
 
-**What it does.** Unsubmitted work first (when filter is All), then submitted cards in gray. Search, status chips, overdue hiding, multi-select, ignore, and local “mark as submitted.”
+**What it does.** Unsubmitted work first (when filter is All), then a foldable **Submitted** group in gray. Search, status chips, overdue hiding, multi-select, ignore, and local “mark as submitted.”
 
 **How to access.** Top bar → **Assignments**.
 
-**Related.** Status chips: All / Todo / Submitted / Late. Overdue dropdown: show all, hide if >1 week late, hide if >1 month late. Ignore sends items to the Ignored list (local only). Mark as submitted is **local only** — it does not upload a file to Blackboard.
+**Related.** Status chips: All / Todo / Submitted / Late. On **All**, open or close the **To do** and **Submitted** groups. Overdue dropdown: show all, hide if >1 week late, hide if >1 month late. Ignore sends items to the Ignored list (local only). Mark as submitted is **local only** — it does not upload a file to Blackboard.
 
 ## Submitted
 
@@ -83,9 +83,9 @@ How to reach each capability. For the control-by-control list, see [User Guide](
 
 ## Calendar
 
-**What it does.** Upcoming deadlines grouped by day.
+**What it does.** Blackboard calendar events (assignments, tests, meetings, office hours, and similar) in a list, week, or month view. Completed assignments are gray.
 
-**How to access.** Top bar → **Calendar**. Chips switch the window: **7 / 14 / 30 days**.
+**How to access.** Top bar → **Calendar**. Use **List / Week / Month**. In list view, chips switch the window: **7 / 14 / 30 days**. **Today** and the arrows move the visible week or month (or the list start date).
 
 ## Settings
 

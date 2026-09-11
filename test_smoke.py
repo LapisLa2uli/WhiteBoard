@@ -190,6 +190,13 @@ def load_sample(store: Store | None = None) -> Snapshot:
                 assignment_id="a3",
                 blackboard_url="https://shs.blackboard.cn/ultra/courses/chem/outline",
             ),
+            Deadline(
+                id="oh-math",
+                title="Math office hours",
+                when=now + timedelta(days=2, hours=3),
+                course_id="math",
+                kind="other",
+            ),
         ],
         content_nodes=[
             ContentNode(
@@ -360,6 +367,56 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(len(deadlines), 1)
         self.assertEqual(len(assignments), 1)
         self.assertEqual(assignments[0].title, "Problem set 4")
+
+    def test_office_hours_are_not_assignments(self) -> None:
+        data = {
+            "results": [
+                {
+                    "id": "oh1",
+                    "title": "Office hours",
+                    "start": "2026-09-12T15:00:00.000Z",
+                    "calendarId": "math",
+                    "itemType": "OfficeHours",
+                }
+            ]
+        }
+        deadlines, assignments = _parse_calendar(data, [], "https://shs.blackboard.cn")
+        self.assertEqual(len(deadlines), 1)
+        self.assertEqual(deadlines[0].kind, "other")
+        self.assertEqual(assignments, [])
+
+    def test_merge_calendar_payloads_dedupes_by_id(self) -> None:
+        from blackboard.api import _merge_calendar_payloads
+
+        due = {
+            "results": [
+                {
+                    "id": "a1",
+                    "title": "Essay 3",
+                    "start": "2026-09-12T15:59:00.000Z",
+                    "itemType": "Assignment",
+                }
+            ]
+        }
+        full = {
+            "results": [
+                {
+                    "id": "a1",
+                    "title": "Essay 3",
+                    "start": "2026-09-12T15:59:00.000Z",
+                    "itemType": "Assignment",
+                },
+                {
+                    "id": "m1",
+                    "title": "Department meeting",
+                    "start": "2026-09-13T02:00:00.000Z",
+                    "itemType": "Course",
+                },
+            ]
+        }
+        merged = _merge_calendar_payloads(due, full)
+        self.assertEqual(len(merged), 2)
+        self.assertEqual({row["id"] for row in merged}, {"a1", "m1"})
 
     def test_work_launch_url_skips_home_and_outline(self) -> None:
         base = "https://shs.blackboardchina.cn"
@@ -743,13 +800,30 @@ class FilterTests(unittest.TestCase):
                     title="Lab writeup",
                     when=datetime.now(timezone.utc),
                     course_id="chem",
-                    kind="other",
+                    kind="assignment",
                 )
             ]
         )
         items = assignments_for(snap, "all")
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].title, "Lab writeup")
+
+    def test_other_calendar_events_stay_off_assignments(self) -> None:
+        from blackboard.api import assignments_for
+        from blackboard.models import Deadline, Snapshot
+
+        snap = Snapshot(
+            deadlines=[
+                Deadline(
+                    id="oh",
+                    title="Office hours",
+                    when=datetime.now(timezone.utc),
+                    course_id="chem",
+                    kind="other",
+                )
+            ]
+        )
+        self.assertEqual(assignments_for(snap, "all"), [])
 
     def test_search_and_hide_old_late_assignments(self) -> None:
         from datetime import timedelta
@@ -963,6 +1037,11 @@ class FilterTests(unittest.TestCase):
         )
         ids = [item.id for item in visible_assignments(ctrl)]
         self.assertEqual(ids, ["todo-later", "done-soon"])
+        from app.views.assignments import assignment_all_page_groups
+
+        todo, submitted = assignment_all_page_groups(visible_assignments(ctrl))
+        self.assertEqual([item.id for item in todo], ["todo-later"])
+        self.assertEqual([item.id for item in submitted], ["done-soon"])
 
     def test_grade_marks_assignment_submitted(self) -> None:
         from blackboard.api import _apply_assignment_status
@@ -1049,6 +1128,43 @@ class FilterTests(unittest.TestCase):
         self.assertNotIn("Not started", hidden)
         self.assertNotIn("Missing lab", hidden)
         self.assertNotIn("Empty column", hidden)
+
+    def test_grade_page_dedupes_duplicate_posted_scores(self) -> None:
+        from blackboard.api import _parse_grades, grade_page_groups
+        from blackboard.models import Grade, Snapshot
+
+        snap = Snapshot(
+            grades=[
+                Grade(id="g1", course_id="chem", title="Lab 4", score="18/20"),
+                Grade(id="g1-copy", course_id="chem", title="Lab 4", score="18/20"),
+                Grade(id="g2", course_id="eng", title="Essay 3", score="27/30"),
+                Grade(id="g2-again", course_id="eng", title="Essay 3", score="27/30"),
+            ]
+        )
+        graded, pending = grade_page_groups(snap)
+        self.assertEqual(sorted(row.title for row in graded), ["Essay 3", "Lab 4"])
+        self.assertEqual(pending, [])
+        parsed = _parse_grades(
+            {
+                "results": [
+                    {
+                        "id": "g1",
+                        "title": "Lab 4",
+                        "courseId": "chem",
+                        "displayGrade": {"text": "18", "possible": "20"},
+                    },
+                    {
+                        "id": "g1-dup",
+                        "title": "Lab 4",
+                        "courseId": "chem",
+                        "displayGrade": {"text": "18", "possible": "20"},
+                    },
+                ]
+            },
+            [],
+        )
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].title, "Lab 4")
 
     def test_review_history_html_counts_as_submitted(self) -> None:
         from datetime import timedelta
@@ -1580,6 +1696,10 @@ class ViewBuilderTests(unittest.TestCase):
             control = builder()
             self.assertIsInstance(control, ft.Control)
 
+        for mode in ("list", "week", "month"):
+            ctrl.calendar_mode = mode
+            self.assertIsInstance(build_calendar(ctrl), ft.Control)
+
         ctrl.settings["contents_view_mode"] = "folder"
         ctrl.contents_path = []
         self.assertIsInstance(build_contents(ctrl), ft.Control)
@@ -1703,6 +1823,43 @@ class HomeAndLoadingTests(unittest.TestCase):
         ]
         self.assertEqual(visible, ["open"])
         self.assertTrue(deadline_is_finished(snap, snap.deadlines[0]))
+
+    def test_calendar_range_and_week_start(self) -> None:
+        from datetime import date, timedelta
+
+        from blackboard.api import add_months, calendar_items_in_range, calendar_week_start
+        from blackboard.models import Deadline, Snapshot
+
+        self.assertEqual(calendar_week_start(date(2026, 9, 11)), date(2026, 9, 7))
+        self.assertEqual(add_months(date(2026, 1, 31), 1), date(2026, 2, 28))
+        now = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
+        snap = Snapshot(
+            deadlines=[
+                Deadline(
+                    id="in",
+                    title="Quiz",
+                    when=now,
+                    course_id="chem",
+                    kind="assignment",
+                ),
+                Deadline(
+                    id="out",
+                    title="Later",
+                    when=now + timedelta(days=10),
+                    course_id="chem",
+                    kind="assignment",
+                ),
+                Deadline(
+                    id="meet",
+                    title="Office hours",
+                    when=now + timedelta(hours=2),
+                    course_id="chem",
+                    kind="other",
+                ),
+            ]
+        )
+        found = calendar_items_in_range(snap, now - timedelta(hours=1), now + timedelta(days=1))
+        self.assertEqual({item.id for item in found}, {"in", "meet"})
 
 
 class BrowserLaunchTests(unittest.TestCase):

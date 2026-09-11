@@ -5,9 +5,18 @@ import flet as ft
 from blackboard.api import grade_page_groups
 from blackboard.models import Grade
 
-from app import theme
 from app.controller import AppController
-from app.widgets import card, empty_state, error_banner, format_dt, heading, muted, page_scroll
+from app.widgets import (
+    card,
+    collapsible_folder,
+    empty_state,
+    error_banner,
+    format_dt,
+    heading,
+    muted,
+    page_scroll,
+    tile_expanded,
+)
 
 
 def build_grades(ctrl: AppController) -> ft.Control:
@@ -28,57 +37,26 @@ def build_grades(ctrl: AppController) -> ft.Control:
         return page_scroll(blocks)
 
     blocks.append(
-        _folder(
+        collapsible_folder(
             title="Graded",
             subtitle=f"{len(graded)} assignment{'s' if len(graded) != 1 else ''}",
             expanded=ctrl.grades_graded_expanded,
             rows=[_grade_card(ctrl, grade) for grade in graded],
             empty="No graded assignments.",
-            on_change=lambda e: ctrl.set_grades_section("graded", _tile_expanded(e)),
+            on_change=lambda e: ctrl.set_grades_section("graded", tile_expanded(e)),
         )
     )
     blocks.append(
-        _folder(
+        collapsible_folder(
             title="Submitted, not graded",
             subtitle=f"{len(pending)} assignment{'s' if len(pending) != 1 else ''}",
             expanded=ctrl.grades_pending_expanded,
             rows=[_grade_card(ctrl, grade) for grade in pending],
             empty="No submitted work waiting for a grade.",
-            on_change=lambda e: ctrl.set_grades_section("pending", _tile_expanded(e)),
+            on_change=lambda e: ctrl.set_grades_section("pending", tile_expanded(e)),
         )
     )
     return page_scroll(blocks)
-
-
-def _folder(
-    *,
-    title: str,
-    subtitle: str,
-    expanded: bool,
-    rows: list[ft.Control],
-    empty: str,
-    on_change,
-) -> ft.Control:
-    children: list[ft.Control] = rows or [muted(empty)]
-    return ft.Container(
-        bgcolor=theme.CARD_BG,
-        border=ft.Border.all(1, theme.BORDER),
-        border_radius=12,
-        content=ft.ExpansionTile(
-            title=ft.Text(title, weight=ft.FontWeight.W_600, color=theme.TEXT),
-            subtitle=ft.Text(subtitle, size=12, color=theme.MUTED),
-            leading=ft.Icon(ft.Icons.FOLDER, color=theme.ACCENT),
-            expanded=expanded,
-            maintain_state=True,
-            bgcolor=theme.CARD_BG,
-            collapsed_bgcolor=theme.CARD_BG,
-            controls_padding=ft.Padding.only(left=12, right=12, bottom=12),
-            expanded_alignment=ft.Alignment.TOP_CENTER,
-            expanded_cross_axis_alignment=ft.CrossAxisAlignment.STRETCH,
-            controls=[ft.Column(children, spacing=10, tight=True)],
-            on_change=on_change,
-        ),
-    )
 
 
 def _grade_card(ctrl: AppController, grade: Grade) -> ft.Control:
@@ -111,13 +89,3 @@ def _grade_card(ctrl: AppController, grade: Grade) -> ft.Control:
         ),
         on_click=open_row,
     )
-
-
-def _tile_expanded(event) -> bool:
-    data = getattr(event, "data", None)
-    if isinstance(data, bool):
-        return data
-    if isinstance(data, str):
-        return data.lower() in {"true", "1", "yes"}
-    control = getattr(event, "control", None)
-    return bool(getattr(control, "expanded", True))

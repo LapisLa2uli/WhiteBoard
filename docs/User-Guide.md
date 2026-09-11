@@ -54,7 +54,7 @@ The white strip at the top of every dashboard page.
 | **Ignored** | Opens assignments you hid. |
 | **Grades** | Opens graded and pending-grade folders. |
 | **Contents** | Opens the course file browser. |
-| **Calendar** | Opens deadlines grouped by day. |
+| **Calendar** | Opens the calendar (list, week, or month). |
 | **Settings** | Opens URL, cache, logout, shortcuts. |
 | “Updated …” text | When the snapshot was last fetched. |
 | Your name | Profile name from Blackboard, if loaded. |
@@ -100,7 +100,7 @@ If nothing matches: “No matching courses” or “No courses in this filter.�
 | Control | What it does |
 |---|---|
 | **Search assignments** | Filters by title as you type. |
-| Chip **All** | Unsubmitted first, submitted gray underneath. |
+| Chip **All** | Foldable **To do** and **Submitted** groups. Submitted cards are gray. |
 | Chip **Todo** | Not submitted, not late. |
 | Chip **Submitted** | Has a Blackboard submission, a grade, or your local mark. |
 | Chip **Late** | Past due and not treated as submitted. |
@@ -205,9 +205,12 @@ Respects the sidebar filter when **Hide assignments outside this filter** is on.
 
 | Control | What it does |
 |---|---|
-| **7 days** / **14 days** / **30 days** | How far ahead to list. Default 14. |
-| Day headings | Groups items by date. |
-| Item card | Click → assignment or deadline detail. Double-click → Blackboard. |
+| **List** / **Week** / **Month** | List is the day-by-day agenda. Week and month are 7-column grids (Monday first). |
+| **Today** | Jumps to today. |
+| Previous / next arrows | List: move by the selected day range. Week: previous/next week. Month: previous/next month. |
+| **7 days** / **14 days** / **30 days** | List view only. How far ahead to list. Default 14. |
+| Day headings (list) | Groups items by date. |
+| Item card / event chip | Click → assignment, course, or Blackboard. Double-click a list card → Blackboard. Gray = completed assignment. |
 
 ---
 

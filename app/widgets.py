@@ -13,8 +13,8 @@ def heading(text: str, size: int = 26) -> ft.Text:
     return ft.Text(text, size=size, weight=ft.FontWeight.W_600, color=theme.TEXT)
 
 
-def muted(text: str, size: int = 13) -> ft.Text:
-    return ft.Text(text, size=size, color=theme.MUTED)
+def muted(text: str, size: int = 13, **kwargs) -> ft.Text:
+    return ft.Text(text, size=size, color=theme.MUTED, **kwargs)
 
 
 def format_loading_message(message: str, max_chars: int = 48) -> str:
@@ -112,6 +112,7 @@ def assignment_card(
         border=ft.Border.all(border_width, border_color),
         ink=on_click is not None or on_double_tap is not None,
         opacity=0.72 if dimmed else 1,
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
     )
     if on_click is None and on_double_tap is None:
         return inner
@@ -169,6 +170,49 @@ def course_chip(name: str, course_id: str, on_click: Callable | None = None) -> 
 
 def section_title(text: str) -> ft.Text:
     return ft.Text(text, size=16, weight=ft.FontWeight.W_600, color=theme.TEXT)
+
+
+def collapsible_folder(
+    *,
+    title: str,
+    subtitle: str,
+    expanded: bool,
+    rows: list[ft.Control],
+    empty: str,
+    on_change,
+    leading_icon=None,
+    spacing: int = 10,
+) -> ft.Control:
+    children: list[ft.Control] = rows or [muted(empty)]
+    return ft.Container(
+        bgcolor=theme.CARD_BG,
+        border=ft.Border.all(1, theme.BORDER),
+        border_radius=12,
+        content=ft.ExpansionTile(
+            title=ft.Text(title, weight=ft.FontWeight.W_600, color=theme.TEXT),
+            subtitle=ft.Text(subtitle, size=12, color=theme.MUTED),
+            leading=ft.Icon(leading_icon or ft.Icons.FOLDER, color=theme.ACCENT),
+            expanded=expanded,
+            maintain_state=True,
+            bgcolor=theme.CARD_BG,
+            collapsed_bgcolor=theme.CARD_BG,
+            controls_padding=ft.Padding.only(left=12, right=12, bottom=12),
+            expanded_alignment=ft.Alignment.TOP_CENTER,
+            expanded_cross_axis_alignment=ft.CrossAxisAlignment.STRETCH,
+            controls=[ft.Column(children, spacing=spacing, tight=True)],
+            on_change=on_change,
+        ),
+    )
+
+
+def tile_expanded(event) -> bool:
+    data = getattr(event, "data", None)
+    if isinstance(data, bool):
+        return data
+    if isinstance(data, str):
+        return data.lower() in {"true", "1", "yes"}
+    control = getattr(event, "control", None)
+    return bool(getattr(control, "expanded", True))
 
 
 def status_chip(status: str) -> ft.Container:

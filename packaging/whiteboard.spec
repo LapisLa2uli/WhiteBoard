@@ -48,7 +48,7 @@ sys.path.insert(0, str(ROOT))
 try:
     from app.branding import APP_VERSION
 except Exception:
-    APP_VERSION = "0.2.0"
+    APP_VERSION = "0.3.0"
 
 a = Analysis(
     [str(ROOT / "run_whiteboard.py")],

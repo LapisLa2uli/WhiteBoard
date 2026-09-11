@@ -11,6 +11,7 @@ from app import theme
 from app.controller import AppController
 from app.widgets import (
     assignment_card,
+    collapsible_folder,
     deadline_legend,
     empty_state,
     error_banner,
@@ -19,6 +20,7 @@ from app.widgets import (
     muted,
     page_scroll,
     status_chip,
+    tile_expanded,
 )
 
 FILTERS = ("all", "todo", "submitted", "late")
@@ -33,7 +35,7 @@ def build_assignments(ctrl: AppController) -> ft.Control:
     return _build_work_list(
         ctrl,
         title="Assignments",
-        subtitle="Unsubmitted work first. Submitted cards are gray and listed underneath. Double-tap a card to open it in Blackboard.",
+        subtitle="Unsubmitted work first. Submitted work is in a foldable group underneath. Double-tap a card to open it in Blackboard.",
         show_status_filters=True,
         show_hide_overdue=True,
         forced_status=None,
@@ -179,6 +181,14 @@ def _all_page_sort_key(assignment: Assignment) -> tuple[bool, datetime]:
     return (assignment.status == "submitted", when)
 
 
+def assignment_all_page_groups(
+    items: list[Assignment],
+) -> tuple[list[Assignment], list[Assignment]]:
+    todo = [item for item in items if item.status != "submitted"]
+    submitted = [item for item in items if item.status == "submitted"]
+    return todo, submitted
+
+
 def assignment_toolbar_controls(
     ctrl: AppController, *, forced_status: str | None = None
 ) -> list[ft.Control]:
@@ -243,7 +253,6 @@ def assignment_toolbar_controls(
 def assignment_list_controls(
     ctrl: AppController, *, forced_status: str | None = None
 ) -> list[ft.Control]:
-    snapshot = ctrl.store.snapshot
     items = visible_assignments(ctrl, forced_status=forced_status)
     if not items:
         message = (
@@ -256,96 +265,165 @@ def assignment_list_controls(
         return [empty_state(message, ctrl.refresh)]
 
     ignored_page = forced_status == "ignored"
-    rows: list[ft.Control] = []
-    for assignment in items:
-        course = snapshot.course_name(assignment.course_id)
-        selected = assignment.id in ctrl.selected_assignment_ids
-        submitted = assignment.status == "submitted"
-        title_color = theme.MUTED if submitted else theme.TEXT
-        card = assignment_card(
-            ft.Row(
-                [
-                    ft.Column(
-                        [
-                            ft.Text(
-                                assignment.title,
-                                weight=ft.FontWeight.W_600,
-                                color=title_color,
-                            ),
-                            muted(f"{course or 'Course'}  ·  {format_dt(assignment.due_at)}"),
-                        ],
-                        spacing=4,
-                        expand=True,
-                    ),
-                    ft.Column(
-                        [
-                            ctrl.countdown_control(
-                                assignment.due_at, status=assignment.status
-                            ),
-                            status_chip(assignment.status),
-                        ],
-                        spacing=4,
-                        horizontal_alignment=ft.CrossAxisAlignment.END,
-                    ),
-                ]
+    all_page = forced_status is None and ctrl.assignment_filter == "all"
+    if all_page:
+        todo_items, submitted_items = assignment_all_page_groups(items)
+        return [
+            collapsible_folder(
+                title="To do",
+                subtitle=(
+                    f"{len(todo_items)} assignment"
+                    if len(todo_items) == 1
+                    else f"{len(todo_items)} assignments"
+                ),
+                expanded=ctrl.assignments_todo_expanded,
+                rows=[
+                    _assignment_row(ctrl, assignment, ignored_page=False)
+                    for assignment in todo_items
+                ],
+                empty="No unsubmitted assignments.",
+                on_change=lambda e: ctrl.set_assignments_section("todo", tile_expanded(e)),
+                leading_icon=ft.Icons.ASSIGNMENT_OUTLINED,
+                spacing=12,
             ),
-            course_id=assignment.course_id,
-            due_at=assignment.due_at,
-            dimmed=submitted,
-            on_click=lambda e, aid=assignment.id: _on_card_click(ctrl, aid),
-            on_double_tap=lambda e, item=assignment: ctrl.open_work_in_blackboard(
-                url=item.blackboard_url,
-                course_id=item.course_id,
-                assignment_id=item.id,
+            collapsible_folder(
+                title="Submitted",
+                subtitle=(
+                    f"{len(submitted_items)} assignment"
+                    if len(submitted_items) == 1
+                    else f"{len(submitted_items)} assignments"
+                ),
+                expanded=ctrl.assignments_submitted_expanded,
+                rows=[
+                    _assignment_row(ctrl, assignment, ignored_page=False)
+                    for assignment in submitted_items
+                ],
+                empty="No submitted assignments.",
+                on_change=lambda e: ctrl.set_assignments_section(
+                    "submitted", tile_expanded(e)
+                ),
+                leading_icon=ft.Icons.TASK_ALT,
+                spacing=12,
             ),
+        ]
+    return [
+        _assignment_row(ctrl, assignment, ignored_page=ignored_page)
+        for assignment in items
+    ]
+
+
+def _assignment_row(
+    ctrl: AppController, assignment: Assignment, *, ignored_page: bool
+) -> ft.Control:
+    snapshot = ctrl.store.snapshot
+    course = snapshot.course_name(assignment.course_id)
+    selected = assignment.id in ctrl.selected_assignment_ids
+    submitted = assignment.status == "submitted"
+    title_color = theme.MUTED if submitted else theme.TEXT
+    card = assignment_card(
+        ft.Row(
+            [
+                ft.Column(
+                    [
+                        ft.Text(
+                            assignment.title,
+                            weight=ft.FontWeight.W_600,
+                            color=title_color,
+                            max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                        ),
+                        muted(
+                            f"{course or 'Course'}  ·  {format_dt(assignment.due_at)}",
+                            max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                        ),
+                    ],
+                    spacing=4,
+                    expand=True,
+                    tight=True,
+                ),
+                ft.Column(
+                    [
+                        ctrl.countdown_control(
+                            assignment.due_at, status=assignment.status
+                        ),
+                        status_chip(assignment.status),
+                    ],
+                    spacing=4,
+                    tight=True,
+                    horizontal_alignment=ft.CrossAxisAlignment.END,
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        course_id=assignment.course_id,
+        due_at=assignment.due_at,
+        dimmed=submitted,
+        on_click=lambda e, aid=assignment.id: _on_card_click(ctrl, aid),
+        on_double_tap=lambda e, item=assignment: ctrl.open_work_in_blackboard(
+            url=item.blackboard_url,
+            course_id=item.course_id,
+            assignment_id=item.id,
+        ),
+    )
+    leading: list[ft.Control] = []
+    if ctrl.assignment_select_mode:
+        leading.append(
+            ft.Checkbox(
+                value=selected,
+                on_change=lambda e, aid=assignment.id: ctrl.toggle_assignment_selected(aid),
+            )
         )
-        leading: list[ft.Control] = []
-        if ctrl.assignment_select_mode:
-            leading.append(
-                ft.Checkbox(
-                    value=selected,
-                    on_change=lambda e, aid=assignment.id: ctrl.toggle_assignment_selected(aid),
-                )
-            )
-        action = (
-            ft.IconButton(
-                icon=ft.Icons.VISIBILITY_OUTLINED,
-                tooltip="Restore",
-                icon_color=theme.ACCENT,
-                on_click=lambda e, item=assignment: ctrl.restore_assignments([item]),
-            )
-            if ignored_page
-            else ft.IconButton(
-                icon=ft.Icons.VISIBILITY_OFF_OUTLINED,
-                tooltip="Ignore",
+    action = (
+        ft.IconButton(
+            icon=ft.Icons.VISIBILITY_OUTLINED,
+            tooltip="Restore",
+            icon_color=theme.ACCENT,
+            on_click=lambda e, item=assignment: ctrl.restore_assignments([item]),
+        )
+        if ignored_page
+        else ft.IconButton(
+            icon=ft.Icons.VISIBILITY_OFF_OUTLINED,
+            tooltip="Ignore",
+            icon_color=theme.MUTED,
+            on_click=lambda e, item=assignment: ctrl.ignore_assignments([item]),
+        )
+    )
+    status_action: ft.Control = ft.Container(width=0, height=0)
+    if not ignored_page:
+        if ctrl.is_marked_submitted(assignment):
+            status_action = ft.IconButton(
+                icon=ft.Icons.UNDO,
+                tooltip="Undo submitted mark",
                 icon_color=theme.MUTED,
-                on_click=lambda e, item=assignment: ctrl.ignore_assignments([item]),
+                on_click=lambda e, item=assignment: ctrl.unmark_assignments_submitted(
+                    [item]
+                ),
             )
-        )
-        status_action: ft.Control = ft.Container(width=0, height=0)
-        if not ignored_page:
-            if ctrl.is_marked_submitted(assignment):
-                status_action = ft.IconButton(
-                    icon=ft.Icons.UNDO,
-                    tooltip="Undo submitted mark",
-                    icon_color=theme.MUTED,
-                    on_click=lambda e, item=assignment: ctrl.unmark_assignments_submitted([item]),
-                )
-            elif assignment.status != "submitted":
-                status_action = ft.IconButton(
-                    icon=ft.Icons.TASK_ALT,
-                    tooltip="Mark as submitted",
-                    icon_color=theme.OK,
-                    on_click=lambda e, item=assignment: ctrl.mark_assignments_submitted([item]),
-                )
-        rows.append(
-            ft.Row(
-                [*leading, ft.Container(content=card, expand=True), status_action, action],
-                spacing=8,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        elif assignment.status != "submitted":
+            status_action = ft.IconButton(
+                icon=ft.Icons.TASK_ALT,
+                tooltip="Mark as submitted",
+                icon_color=theme.OK,
+                on_click=lambda e, item=assignment: ctrl.mark_assignments_submitted(
+                    [item]
+                ),
             )
-        )
-    return rows
+    return ft.Row(
+        [
+            *leading,
+            ft.Container(
+                content=card,
+                expand=True,
+                clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            ),
+            status_action,
+            action,
+        ],
+        spacing=8,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
 
 
 def _on_card_click(ctrl: AppController, assignment_id: str) -> None:

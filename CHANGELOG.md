@@ -4,6 +4,21 @@ Summarized major changes for each WhiteBoard release, compared with the version 
 Write for someone using the app, not for developers. Every version needs the three
 headings below. Packaging and GitHub Releases copy this text.
 
+## [0.3.0] - 2026-09-11
+
+### Added features
+- On Assignments (All), submitted work is in its own foldable group under the to-do list.
+- Calendar can switch between a day-by-day list, a week grid, and a month grid, similar to Google Calendar.
+- Calendar now includes Blackboard events such as meetings and office hours, not only assignments.
+- Completed assignments on the calendar are shown in gray.
+
+### Bugfixes
+- Long assignment or course names no longer cover the Mark as submitted / Undo buttons.
+- Each posted grade is listed once on Grades instead of appearing twice.
+
+### Other changes
+- None in this release.
+
 ## [0.2.0] - 2026-09-11
 
 ### Added features

@@ -8,7 +8,7 @@ from pathlib import Path
 import flet as ft
 
 APP_NAME = "WhiteBoard"
-APP_VERSION = "0.1.2"
+APP_VERSION = "0.1.3"
 APP_PUBLISHER = "WhiteBoard"
 SETUP_MARKER = "installed-by-setup.txt"
 

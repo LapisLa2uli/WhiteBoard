@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import queue
+import sys
 import threading
 import time
 from typing import Any, Callable
@@ -570,19 +571,27 @@ def _session_api_ok(page, base_url: str) -> bool:
         return False
 
 
+def _chromium_launch_attempts(*, headless: bool) -> tuple[dict[str, Any], ...]:
+    bundled = {"headless": headless, "timeout": 12_000}
+    edge = {"headless": headless, "channel": "msedge", "timeout": 12_000}
+    chrome = {"headless": headless, "channel": "chrome", "timeout": 12_000}
+    if getattr(sys, "frozen", False):
+        return (bundled, edge, chrome)
+    return (edge, chrome, {"headless": headless, "timeout": 6_000})
+
+
 def _launch_chromium(playwright, *, headless: bool = True):
     errors: list[str] = []
-    # Prefer installed Edge/Chrome. Bundled Playwright Chromium often is not downloaded.
-    attempts = (
-        {"headless": headless, "channel": "msedge", "timeout": 12_000},
-        {"headless": headless, "channel": "chrome", "timeout": 12_000},
-        {"headless": headless, "timeout": 6_000},
-    )
-    for kwargs in attempts:
+    for kwargs in _chromium_launch_attempts(headless=headless):
         try:
             return playwright.chromium.launch(**kwargs)
         except Exception as exc:
             errors.append(str(exc))
+    if getattr(sys, "frozen", False):
+        raise SessionError(
+            "Could not start the bundled browser. Last error: "
+            + (errors[-1] if errors else "unknown")
+        )
     raise SessionError(
         "Could not start Chrome or Edge. Install one of those browsers, or run "
         "`python -m playwright install chromium`. Last error: "

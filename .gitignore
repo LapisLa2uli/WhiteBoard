@@ -47,6 +47,7 @@ coverage.xml
 # Local packaging tools (Inno Setup compiler, etc.)
 packaging/tools/
 packaging/file_version_info.txt
+packaging/.cache/
 
 # PyInstaller / packaged app output (hundreds of MB)
 dist/

@@ -9,6 +9,7 @@ from blackboard.api import _parse_calendar, _parse_courses, _parse_grades, upcom
 from blackboard.auth import (
     ApiRequestError,
     AuthExpiredError,
+    _chromium_launch_attempts,
     candidate_base_urls,
     is_auth_error,
     url_looks_logged_in,
@@ -1700,6 +1701,85 @@ class HomeAndLoadingTests(unittest.TestCase):
         ]
         self.assertEqual(visible, ["open"])
         self.assertTrue(deadline_is_finished(snap, snap.deadlines[0]))
+
+
+class BrowserLaunchTests(unittest.TestCase):
+    def test_source_prefers_system_browsers(self) -> None:
+        attempts = _chromium_launch_attempts(headless=True)
+        self.assertEqual(
+            [item.get("channel") for item in attempts],
+            ["msedge", "chrome", None],
+        )
+
+    def test_frozen_prefers_bundled_chromium(self) -> None:
+        import sys
+
+        previous = getattr(sys, "frozen", None)
+        sys.frozen = True
+        try:
+            attempts = _chromium_launch_attempts(headless=True)
+        finally:
+            if previous is None:
+                delattr(sys, "frozen")
+            else:
+                sys.frozen = previous
+        self.assertEqual(
+            [item.get("channel") for item in attempts],
+            [None, "msedge", "chrome"],
+        )
+
+
+class BundleRuntimeTests(unittest.TestCase):
+    def test_verify_bundle_requires_flet_playwright_and_chromium(self) -> None:
+        import importlib.util
+        import tempfile
+        from pathlib import Path
+
+        helper = Path(__file__).resolve().parent / "packaging" / "bundle_runtime.py"
+        spec = importlib.util.spec_from_file_location("whiteboard_bundle_runtime", helper)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        verify_bundle = module.verify_bundle
+
+        with tempfile.TemporaryDirectory() as raw:
+            dist = Path(raw)
+            app = dist / "WhiteBoard" / "_internal"
+            (app / "flet_desktop" / "app").mkdir(parents=True)
+            (app / "playwright" / "driver").mkdir(parents=True)
+            (app / "playwright" / "driver" / "package" / ".local-browsers" / "chromium-1" / "chrome-win").mkdir(
+                parents=True
+            )
+            (app / "flet_desktop" / "app" / "flet-windows.zip").write_bytes(b"archive")
+            (app / "playwright" / "driver" / "node.exe").write_bytes(b"node")
+            (app / "playwright" / "driver" / "package" / ".local-browsers" / "chromium-1" / "chrome-win" / "chrome.exe").write_bytes(
+                b"chrome"
+            )
+            verify_bundle(dist)
+
+            (app / "playwright" / "driver" / "package" / ".local-browsers" / "chromium-1" / "chrome-win" / "chrome.exe").unlink()
+            with self.assertRaises(SystemExit):
+                verify_bundle(dist)
+
+
+class ReleaseNotesTests(unittest.TestCase):
+    def test_changelog_has_notes_for_app_version(self) -> None:
+        import importlib.util
+        from pathlib import Path
+
+        helper = Path(__file__).resolve().parent / "packaging" / "release_notes.py"
+        spec = importlib.util.spec_from_file_location("whiteboard_release_notes", helper)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        version = module.app_version()
+        body = module.changelog_body(version)
+        self.assertTrue(body)
+        self.assertIn("What's new", module.github_notes(version))
+        with self.assertRaises(SystemExit):
+            module.changelog_body("9.9.9")
+        with self.assertRaises(SystemExit):
+            module.changelog_body("0.1.3", "## [0.1.3] - 2026-09-11\n\n")
 
 
 if __name__ == "__main__":

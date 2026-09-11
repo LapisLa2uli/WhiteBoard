@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (for example v0.1.2)"
+        description: "Tag to release (for example v0.1.3)"
         required: true
-        default: "v0.1.2"
+        default: "v0.1.3"
 
 permissions:
   contents: write
@@ -27,6 +27,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r packaging/requirements-build.txt
+          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path (Get-Location) "packaging\.cache\playwright-browsers"
           python -m playwright install chromium
       - name: Build Windows installer
         run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging/build_windows.ps1
@@ -75,6 +76,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r packaging/requirements-build.txt
+          export PLAYWRIGHT_BROWSERS_PATH="$PWD/packaging/.cache/playwright-browsers"
           python -m playwright install chromium
       - name: Build macOS disk image
         env:
@@ -116,28 +118,12 @@ jobs:
           fi
           version="${tag#v}"
           ls -lah release-files
-          notes="$(cat <<EOF
-          ## WhiteBoard ${version}
-
-          Personal Blackboard desktop dashboard.
-
-          ### Downloads
-          - **Windows:** \`WhiteBoard-${version}-Setup.exe\` — install or upgrade. Includes the Flet desktop runtime so the app can start. Shortcuts for Desktop and Windows Search keep working.
-          - **macOS Apple Silicon (M1/M2/M3/M4):** \`WhiteBoard-${version}-macOS-AppleSilicon.dmg\`
-          - **macOS Intel:** \`WhiteBoard-${version}-macOS-Intel.dmg\` — use this on Intel MacBooks, including Ventura.
-          - **Source:** GitHub attaches a source code zip to this release automatically.
-
-          Open the matching \`.dmg\` and drag WhiteBoard into Applications.
-
-          ### Notes
-          Sign in with your own school Blackboard account. Course data stays on Blackboard.
-          EOF
-          )"
+          python3 packaging/release_notes.py "$version" --github > release-notes.md
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" release-files/* --clobber
-            gh release edit "$tag" --title "WhiteBoard ${version}" --notes "$notes"
+            gh release edit "$tag" --title "WhiteBoard ${version}" --notes-file release-notes.md
           else
             gh release create "$tag" release-files/* \
               --title "WhiteBoard ${version}" \
-              --notes "$notes"
+              --notes-file release-notes.md
           fi

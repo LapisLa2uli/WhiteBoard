@@ -26,6 +26,10 @@ fi
 "$PYTHON" packaging/generate_icons.py
 
 "$PYTHON" -c "import flet_desktop.version as v; print('flet-desktop', v.version)"
+"$PYTHON" packaging/release_notes.py --check
+
+export PLAYWRIGHT_BROWSERS_PATH="$(pwd)/packaging/.cache/playwright-browsers"
+"$PYTHON" packaging/bundle_runtime.py prepare
 
 "$PYTHON" -m PyInstaller --noconfirm --clean --distpath dist --workpath build packaging/whiteboard.spec
 
@@ -54,6 +58,8 @@ if [[ "$ARCH" == "x86_64" ]] && echo "$ACTUAL_ARCH" | grep -qw arm64; then
   echo "Intel build unexpectedly contains arm64" >&2
   exit 1
 fi
+
+"$PYTHON" packaging/bundle_runtime.py verify
 
 echo "Creating installer disk image..."
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/whiteboard-dmg.XXXXXX")"

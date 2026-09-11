@@ -122,9 +122,15 @@ jobs:
           python3 packaging/release_notes.py --sync-broken-releases || true
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" release-files/* --clobber
-            gh release edit "$tag" --title "WhiteBoard ${version}" --notes-file release-notes.md
+            gh release edit "$tag" \
+              --tag "$tag" \
+              --title "WhiteBoard ${version}" \
+              --notes-file release-notes.md \
+              --draft=false \
+              --latest
           else
             gh release create "$tag" release-files/* \
               --title "WhiteBoard ${version}" \
-              --notes-file release-notes.md
+              --notes-file release-notes.md \
+              --latest
           fi

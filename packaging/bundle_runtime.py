@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import tarfile
 import urllib.request
 from pathlib import Path
 
@@ -19,6 +20,7 @@ CACHE = Path(__file__).resolve().parent / ".cache"
 
 FLET_ARCHIVES = ("flet-windows.zip", "flet-macos.tar.gz")
 PLAYWRIGHT_DRIVERS = ("node.exe", "node")
+CHROMIUM_ARCHIVE = "playwright-chromium.tar.gz"
 CHROMIUM_MARKERS = (
     "chrome.exe",
     "chrome",
@@ -42,8 +44,25 @@ def ensure_flet_client_archive() -> Path:
         f"https://github.com/flet-dev/flet/releases/download/v{flet_desktop.version.version}/{artifact}",
     )
     print(f"Downloading Flet desktop client {artifact} from {url}")
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    urllib.request.urlretrieve(url, tmp)
+    tmp = dest.with_name(dest.name + ".part")
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": "WhiteBoard-packaging"})
+            with urllib.request.urlopen(request, timeout=120) as response, tmp.open("wb") as out:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+            last_error = None
+            break
+        except Exception as exc:
+            last_error = exc
+            print(f"Download attempt {attempt + 1} failed: {exc}")
+            tmp.unlink(missing_ok=True)
+    if last_error is not None:
+        raise SystemExit(f"Could not download {artifact}: {last_error}") from last_error
     if tmp.stat().st_size < 1_000_000:
         tmp.unlink(missing_ok=True)
         raise SystemExit(f"Flet desktop archive is too small: {tmp}")
@@ -77,7 +96,16 @@ def demote_nested_runtime_binaries(binaries, datas):
     extra_datas = list(datas)
     for entry in binaries:
         dest = str(entry[0]).replace("\\", "/")
-        if ".local-browsers" in dest or "Flet.app" in dest or dest.endswith(".app"):
+        src = str(entry[1]).replace("\\", "/") if len(entry) > 1 else ""
+        haystack = f"{dest} {src}"
+        if (
+            ".local-browsers" in haystack
+            or ".app/" in haystack
+            or dest.endswith(".app")
+            or "Flet.app" in haystack
+            or "Chromium.app" in haystack
+            or "Chrome for Testing.app" in haystack
+        ):
             extra_datas.append((entry[0], entry[1], "DATA"))
         else:
             kept.append(entry)
@@ -153,13 +181,39 @@ def ensure_playwright_chromium() -> dict[str, Path]:
     return found
 
 
+def playwright_browser_archive(browsers: dict[str, Path]) -> Path:
+    """Pack Chromium into one archive so macOS packaging does not rewrite .app binaries."""
+    dest = CACHE / CHROMIUM_ARCHIVE
+    stamp = dest.with_suffix(dest.suffix + ".stamp")
+    marker = "\n".join(f"{name}={src}" for name, src in sorted(browsers.items()))
+    if (
+        dest.is_file()
+        and dest.stat().st_size > 1_000_000
+        and stamp.is_file()
+        and stamp.read_text(encoding="utf-8") == marker
+    ):
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Archiving Playwright Chromium into {dest}")
+    tmp = dest.with_name(dest.name + ".tmp")
+    with tarfile.open(tmp, "w:gz") as tf:
+        for name, src in browsers.items():
+            tf.add(src, arcname=name, recursive=True)
+    tmp.replace(dest)
+    stamp.write_text(marker, encoding="utf-8")
+    return dest
+
+
 def collect_runtime_datas() -> list[tuple[str, str]]:
     """Extra datas that must appear beside the collected Python packages."""
     archive = ensure_flet_client_archive()
     browsers = ensure_playwright_chromium()
     extras = [(str(archive), "flet_desktop/app")]
-    for name, src in browsers.items():
-        extras.append((str(src), f"playwright/driver/package/.local-browsers/{name}"))
+    if sys.platform == "darwin":
+        extras.append((str(playwright_browser_archive(browsers)), "playwright/driver/package"))
+    else:
+        for name, src in browsers.items():
+            extras.append((str(src), f"playwright/driver/package/.local-browsers/{name}"))
     return extras
 
 
@@ -222,6 +276,13 @@ def verify_bundle(dist_root: Path | None = None) -> None:
     if driver is None or "playwright" not in driver.as_posix():
         raise SystemExit(f"{bundle} is missing the Playwright Node driver")
 
+    packed_chromium = _find_named(bundle, (CHROMIUM_ARCHIVE,))
+    if packed_chromium is not None:
+        print(f"Bundled Flet client: {archive}")
+        print(f"Bundled Playwright driver: {driver}")
+        print(f"Bundled Chromium archive: {packed_chromium}")
+        return
+
     browser_dirs = _local_browser_dirs(bundle)
     extra = [
         path.name
@@ -261,6 +322,9 @@ def prepare() -> None:
     print(f"Flet client archive: {archive} ({archive.stat().st_size} bytes)")
     for name, src in browsers.items():
         print(f"Playwright {name}: {src}")
+    if sys.platform == "darwin":
+        packed = playwright_browser_archive(browsers)
+        print(f"Playwright Chromium archive: {packed} ({packed.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":

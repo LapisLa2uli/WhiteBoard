@@ -1732,6 +1732,7 @@ class BrowserLaunchTests(unittest.TestCase):
 class BundleRuntimeTests(unittest.TestCase):
     def test_verify_bundle_requires_flet_playwright_and_chromium(self) -> None:
         import importlib.util
+        import tarfile
         import tempfile
         from pathlib import Path
 
@@ -1752,6 +1753,10 @@ class BundleRuntimeTests(unittest.TestCase):
             )
             (app / "flet_desktop" / "app" / "flet-windows.zip").write_bytes(b"archive")
             (app / "playwright" / "driver" / "node.exe").write_bytes(b"node")
+            (app / "playwright" / "driver" / "package" / "playwright-chromium.tar.gz").write_bytes(b"archive")
+            verify_bundle(dist)
+
+            (app / "playwright" / "driver" / "package" / "playwright-chromium.tar.gz").unlink()
             (app / "playwright" / "driver" / "package" / ".local-browsers" / "chromium-1" / "chrome-win" / "chrome.exe").write_bytes(
                 b"chrome"
             )
@@ -1765,12 +1770,71 @@ class BundleRuntimeTests(unittest.TestCase):
             [
                 ("playwright/driver/node.exe", "/tmp/node.exe", "BINARY"),
                 ("playwright/driver/package/.local-browsers/chromium-1/chrome", "/tmp/chrome", "BINARY"),
+                (
+                    "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+                    "/tmp/chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+                    "BINARY",
+                ),
             ],
             [],
         )
         self.assertEqual(len(kept), 1)
         self.assertEqual(kept[0][0], "playwright/driver/node.exe")
+        self.assertEqual(len(datas), 2)
         self.assertEqual(datas[0][2], "DATA")
+
+        with tempfile.TemporaryDirectory() as raw:
+            cache = Path(raw) / "cache"
+            chromium = Path(raw) / "chromium-1"
+            (chromium / "chrome-mac").mkdir(parents=True)
+            (chromium / "chrome-mac" / "chrome").write_bytes(b"chrome")
+            ffmpeg = Path(raw) / "ffmpeg-1"
+            ffmpeg.mkdir()
+            (ffmpeg / "ffmpeg").write_bytes(b"ff")
+            module.CACHE = cache
+            archive = module.playwright_browser_archive(
+                {"chromium-1": chromium, "ffmpeg-1": ffmpeg}
+            )
+            self.assertGreater(archive.stat().st_size, 0)
+            with tarfile.open(archive, "r:gz") as tf:
+                names = tf.getnames()
+            self.assertTrue(any(name.startswith("chromium-1/") for name in names))
+            self.assertTrue(any(name.startswith("ffmpeg-1/") for name in names))
+
+        rthook = Path(__file__).resolve().parent / "packaging" / "rthooks" / "pyi_rth_whiteboard.py"
+        spec = importlib.util.spec_from_file_location("whiteboard_rthook", rthook)
+        assert spec and spec.loader
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        with tempfile.TemporaryDirectory() as raw:
+            import os
+            import sys
+            from unittest import mock
+
+            home = Path(raw) / "home"
+            bundle = Path(raw) / "bundle"
+            package = bundle / "playwright" / "driver" / "package"
+            package.mkdir(parents=True)
+            source = Path(raw) / "src" / "chromium-9"
+            source.mkdir(parents=True)
+            (source / "chrome").write_bytes(b"chrome")
+            with tarfile.open(package / "playwright-chromium.tar.gz", "w:gz") as tf:
+                tf.add(source, arcname="chromium-9")
+            previous = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+            try:
+                with mock.patch.object(hook.Path, "home", return_value=home):
+                    hook._extract_playwright_browsers(bundle)
+                dest = home / "AppData" / "Local" / "WhiteBoard" / "ms-playwright"
+                if sys.platform == "darwin":
+                    dest = home / "Library" / "Application Support" / "WhiteBoard" / "ms-playwright"
+                self.assertTrue((dest / ".ready").is_file())
+                self.assertTrue((dest / "chromium-9" / "chrome").is_file())
+                self.assertEqual(os.environ["PLAYWRIGHT_BROWSERS_PATH"], str(dest))
+            finally:
+                if previous is None:
+                    os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
+                else:
+                    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = previous
 
 
 class ReleaseNotesTests(unittest.TestCase):

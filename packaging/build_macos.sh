@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+set -x
 cd "$(dirname "$0")/.."
 
 if command -v python >/dev/null 2>&1; then

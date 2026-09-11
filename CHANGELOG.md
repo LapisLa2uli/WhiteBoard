@@ -12,6 +12,7 @@ headings below. Packaging and GitHub Releases copy this text.
 ### Bugfixes
 - The Mac apps no longer quit the moment you open them. Older Mac downloads had the same kind of startup failure as Windows 0.1.2.
 - A GitHub release is not published unless Windows, Intel Mac, and Apple Silicon Mac installers are all present.
+- The Mac installers for this version are included. An earlier 0.1.3 upload only had the Windows installer.
 
 ### Other changes
 - The download is larger because the app now carries its own browser.

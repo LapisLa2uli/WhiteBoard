@@ -32,20 +32,11 @@ hiddenimports = [
 ]
 hookspath = []
 
-for package in ("flet", "flet_desktop", "playwright"):
+for package in ("flet_desktop", "playwright"):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     datas += pkg_datas
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
-
-try:
-    import flet_cli
-
-    hook_dir = Path(flet_cli.__file__).resolve().parent / "__pyinstaller"
-    if hook_dir.is_dir():
-        hookspath.append(str(hook_dir))
-except Exception:
-    pass
 
 icon = str(ROOT / ("assets/logo.icns" if sys.platform == "darwin" else "assets/logo.ico"))
 version_file = ROOT / "packaging" / "file_version_info.txt"

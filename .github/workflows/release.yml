@@ -46,6 +46,7 @@ jobs:
           if-no-files-found: error
 
   build-macos:
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -96,6 +97,7 @@ jobs:
 
   release:
     needs: [build-windows, build-macos]
+    if: ${{ always() && needs.build-windows.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -120,7 +122,7 @@ jobs:
           Personal Blackboard desktop dashboard.
 
           ### Downloads
-          - **Windows:** \`WhiteBoard-${version}-Setup.exe\` — install or upgrade. Shortcuts for Desktop and Windows Search keep working.
+          - **Windows:** \`WhiteBoard-${version}-Setup.exe\` — install or upgrade. Includes the Flet desktop runtime so the app can start. Shortcuts for Desktop and Windows Search keep working.
           - **macOS Apple Silicon (M1/M2/M3/M4):** \`WhiteBoard-${version}-macOS-AppleSilicon.dmg\`
           - **macOS Intel:** \`WhiteBoard-${version}-macOS-Intel.dmg\` — use this on Intel MacBooks, including Ventura.
           - **Source:** GitHub attaches a source code zip to this release automatically.

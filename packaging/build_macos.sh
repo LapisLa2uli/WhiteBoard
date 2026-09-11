@@ -34,7 +34,8 @@ if [[ ! -d dist/WhiteBoard.app ]]; then
   exit 1
 fi
 
-if ! grep -Rqs "flet_desktop" build --include="Analysis-00.toc"; then
+toc="$(find build -name 'Analysis-00.toc' | head -n 1 || true)"
+if [[ -z "$toc" ]] || ! grep -q "flet_desktop" "$toc"; then
   echo "PyInstaller did not collect flet_desktop; the macOS app would fail to start" >&2
   exit 1
 fi

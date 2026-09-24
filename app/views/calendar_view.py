@@ -88,7 +88,19 @@ def _toolbar(ctrl: AppController, mode: str) -> ft.Control:
     )
     controls: list[ft.Control] = [
         nav,
-        ft.Row(chips, spacing=8),
+        ft.Row(
+            [
+                *chips,
+                ft.Chip(
+                    label=ft.Text("Hide events"),
+                    selected=ctrl.hide_calendar_events,
+                    show_checkmark=False,
+                    on_click=lambda e: ctrl.set_hide_calendar_events(not ctrl.hide_calendar_events),
+                ),
+            ],
+            spacing=8,
+            wrap=True,
+        ),
     ]
     if mode == "list":
         controls.append(
@@ -130,11 +142,14 @@ def _list_blocks(ctrl: AppController) -> list[ft.Control]:
         if ctrl.calendar_anchor == date.today()
         else _day_start(ctrl.calendar_anchor)
     )
-    items = [
-        item
-        for item in upcoming(snapshot, ctrl.calendar_days, now=origin)
-        if ctrl.assignment_in_active_filter(item.course_id) or not item.course_id
-    ]
+    items = _visible_events(
+        ctrl,
+        [
+            item
+            for item in upcoming(snapshot, ctrl.calendar_days, now=origin)
+            if ctrl.assignment_in_active_filter(item.course_id) or not item.course_id
+        ],
+    )
     if not items:
         return [empty_state("No upcoming events in this range.", ctrl.refresh)]
 
@@ -151,10 +166,18 @@ def _list_blocks(ctrl: AppController) -> list[ft.Control]:
     return blocks
 
 
+def _visible_events(ctrl: AppController, items: list) -> list:
+    if not ctrl.hide_calendar_events:
+        return items
+    return [item for item in items if item.kind != "other"]
+
+
 def _list_card(ctrl: AppController, item) -> ft.Control:
     snapshot = ctrl.store.snapshot
     course = snapshot.course_name(item.course_id)
     finished = item.kind != "other" and deadline_is_finished(snapshot, item)
+    if item.kind == "other":
+        return _event_list_card(ctrl, item, course)
 
     def open_item(e, deadline=item):
         _open_calendar_item(ctrl, deadline)
@@ -219,11 +242,14 @@ def _month_grid(ctrl: AppController) -> ft.Control:
     month_end = add_months(month_start, 1)
     range_start = _day_start(grid_start)
     range_end = _day_start(grid_start + timedelta(days=42))
-    events = [
-        item
-        for item in calendar_items_in_range(snapshot, range_start, range_end)
-        if ctrl.assignment_in_active_filter(item.course_id) or not item.course_id
-    ]
+    events = _visible_events(
+        ctrl,
+        [
+            item
+            for item in calendar_items_in_range(snapshot, range_start, range_end)
+            if ctrl.assignment_in_active_filter(item.course_id) or not item.course_id
+        ],
+    )
     by_day: dict[date, list] = {}
     for item in events:
         day = local_event_date(item.when)
@@ -304,11 +330,14 @@ def _week_grid(ctrl: AppController) -> ft.Control:
     start = calendar_week_start(ctrl.calendar_anchor)
     range_start = _day_start(start)
     range_end = _day_start(start + timedelta(days=7))
-    events = [
-        item
-        for item in calendar_items_in_range(snapshot, range_start, range_end)
-        if ctrl.assignment_in_active_filter(item.course_id) or not item.course_id
-    ]
+    events = _visible_events(
+        ctrl,
+        [
+            item
+            for item in calendar_items_in_range(snapshot, range_start, range_end)
+            if ctrl.assignment_in_active_filter(item.course_id) or not item.course_id
+        ],
+    )
     by_day: dict[date, list] = {start + timedelta(days=i): [] for i in range(7)}
     for item in events:
         day = local_event_date(item.when)
@@ -415,6 +444,34 @@ def _week_stack(ctrl, items: list, *, empty: str, min_height: int = 72) -> ft.Co
     )
 
 
+def _event_list_card(ctrl: AppController, item, course: str) -> ft.Control:
+    def open_item(e, deadline=item):
+        _open_calendar_item(ctrl, deadline)
+
+    return ft.Container(
+        bgcolor=theme.EVENT_BG,
+        border=ft.Border.all(3, theme.EVENT),
+        border_radius=12,
+        padding=16,
+        ink=True,
+        on_click=open_item,
+        content=ft.Row(
+            [
+                ft.Column(
+                    [
+                        ft.Text(item.title, weight=ft.FontWeight.W_600, color=theme.TEXT),
+                        muted(f"{format_dt(item.when)}  ·  {course or 'Event'}"),
+                    ],
+                    spacing=4,
+                    expand=True,
+                ),
+                status_chip("other"),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        ),
+    )
+
+
 def _event_chip(ctrl: AppController, item, *, show_time: bool = False) -> ft.Control:
     snapshot = ctrl.store.snapshot
     finished = item.kind != "other" and deadline_is_finished(snapshot, item)
@@ -422,8 +479,11 @@ def _event_chip(ctrl: AppController, item, *, show_time: bool = False) -> ft.Con
     if show_time and item.when:
         local = item.when.astimezone() if item.when.tzinfo else item.when.replace(tzinfo=timezone.utc).astimezone()
         label = f"{local.strftime('%H:%M')} {item.title}"
-    fill = "#e2e8f0" if finished else subject_fill(item.course_id)
-    ink = theme.MUTED if finished else subject_ink(item.course_id)
+    if item.kind == "other":
+        fill, ink = theme.EVENT_BG, theme.EVENT
+    else:
+        fill = "#e2e8f0" if finished else subject_fill(item.course_id)
+        ink = theme.MUTED if finished else subject_ink(item.course_id)
     return ft.Container(
         content=ft.Text(
             label,

@@ -80,6 +80,8 @@ class Grade:
     score: str = ""
     posted_at: datetime | None = None
     assignment_id: str = ""
+    points_earned: float | None = None
+    points_possible: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -95,6 +97,8 @@ class Grade:
             score=str(data.get("score", "")),
             posted_at=_parse_stored_dt(data.get("posted_at")),
             assignment_id=str(data.get("assignment_id", "")),
+            points_earned=_optional_float(data.get("points_earned")),
+            points_possible=_optional_float(data.get("points_possible")),
         )
 
 
@@ -210,6 +214,7 @@ class Snapshot:
     deadlines: list[Deadline] = field(default_factory=list)
     announcements: list[Announcement] = field(default_factory=list)
     content_nodes: list[ContentNode] = field(default_factory=list)
+    files_indexed: bool = False
     fetched_at: datetime | None = None
     errors: dict[str, str] = field(default_factory=dict)
     manual_submitted_keys: set[str] = field(default_factory=set)
@@ -234,6 +239,7 @@ class Snapshot:
             "deadlines": [d.to_dict() for d in self.deadlines],
             "announcements": [a.to_dict() for a in self.announcements],
             "content_nodes": [n.to_dict() for n in self.content_nodes],
+            "files_indexed": self.files_indexed,
             "fetched_at": _iso(self.fetched_at),
             "errors": dict(self.errors),
         }
@@ -249,9 +255,25 @@ class Snapshot:
             deadlines=[Deadline.from_dict(x) for x in data.get("deadlines", [])],
             announcements=[Announcement.from_dict(x) for x in data.get("announcements", [])],
             content_nodes=[ContentNode.from_dict(x) for x in data.get("content_nodes", [])],
+            files_indexed=_stored_files_indexed(data),
             fetched_at=_parse_stored_dt(data.get("fetched_at")),
             errors=dict(data.get("errors") or {}),
         )
+
+
+def _optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _stored_files_indexed(data: dict[str, Any]) -> bool:
+    if "files_indexed" in data:
+        return bool(data.get("files_indexed"))
+    return bool(data.get("content_nodes"))
 
 
 def _parse_stored_dt(value: Any) -> datetime | None:

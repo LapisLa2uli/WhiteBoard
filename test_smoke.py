@@ -272,6 +272,7 @@ def load_sample(store: Store | None = None) -> Snapshot:
             ),
         ],
     )
+    store.snapshot.files_indexed = True
     store.signed_in = True
     return store.snapshot
 
@@ -615,6 +616,70 @@ class ParserTests(unittest.TestCase):
         }
         grades = _parse_grades(data, [])
         self.assertEqual(grades[0].score, "18/20")
+        self.assertEqual(grades[0].points_earned, 18)
+        self.assertEqual(grades[0].points_possible, 20)
+
+    def test_points_possible_is_kept_when_score_is_numeric(self) -> None:
+        data = {
+            "results": [
+                {
+                    "title": "Quiz",
+                    "courseId": "math",
+                    "score": 9,
+                    "pointsPossible": 10,
+                }
+            ]
+        }
+        grade = _parse_grades(data, [])[0]
+        self.assertEqual(grade.score, "9/10")
+        self.assertEqual(grade.points_possible, 10)
+
+    def test_calendar_events_stay_off_the_assignment_list(self) -> None:
+        data = {
+            "results": [
+                {
+                    "id": "e1",
+                    "title": "School assembly",
+                    "start": "2026-09-12T01:00:00.000Z",
+                    "calendarId": "eng",
+                    "itemType": "CalendarEvent",
+                }
+            ]
+        }
+        deadlines, assignments = _parse_calendar(data, [], "https://shs.blackboard.cn")
+        self.assertEqual(deadlines[0].kind, "other")
+        self.assertEqual(assignments, [])
+
+    def test_course_page_lists_submitted_work_without_a_score(self) -> None:
+        from blackboard.api import course_result_rows, course_score_percent
+
+        now = datetime.now(timezone.utc)
+        snap = Snapshot(
+            assignments=[
+                Assignment(
+                    id="new",
+                    course_id="chem",
+                    title="Lab 6",
+                    due_at=now - timedelta(days=1),
+                    status="submitted",
+                ),
+                Assignment(
+                    id="old",
+                    course_id="chem",
+                    title="Lab 4",
+                    due_at=now - timedelta(days=10),
+                    status="submitted",
+                ),
+            ],
+            grades=[
+                Grade(id="g1", course_id="chem", title="Lab 4", score="18/20"),
+            ],
+        )
+        rows = course_result_rows(snap, "chem")
+        self.assertEqual([row[0] for row in rows], ["Lab 6", "Lab 4"])
+        self.assertEqual(rows[0][1], "Submitted")
+        self.assertEqual(rows[1][1], "18/20")
+        self.assertEqual(course_score_percent(snap, "chem"), 90)
 
     def test_soft_http_errors_are_ignored_for_grades(self) -> None:
         from blackboard.api import _is_soft_http_error

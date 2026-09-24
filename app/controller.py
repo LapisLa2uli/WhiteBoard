@@ -74,6 +74,9 @@ class AppController:
         self.contents_path: list[str] = []
         self.contents_status = ""
         self.contents_busy = False
+        self.contents_indexing = False
+        self._file_index_gen = 0
+        self._file_index_failed = False
         self.shortcut_status = ""
         self.file_picker = None
         self._shortcut_prompt_shown = False
@@ -183,6 +186,8 @@ class AppController:
             self.stack.clear()
         elif push and self.route != route:
             self.stack.append(self.route)
+        if route == "/contents" and self.route != "/contents":
+            self._file_index_failed = False
         self.route = route
         self.rebuild()
 
@@ -214,6 +219,8 @@ class AppController:
         self.page.update()
         self.ensure_countdown_ticker()
         self.maybe_prompt_shortcuts()
+        if self.route == "/contents":
+            self.ensure_file_index()
 
     def reset_countdowns(self) -> None:
         self._countdown_gen += 1
@@ -441,11 +448,14 @@ class AppController:
                         if gen != self._login_gen:
                             return
                         assert self.session is not None
+                        self._file_index_gen += 1
+                        self.contents_indexing = False
                         self.store.refresh(
                             self.session,
                             quick=False,
                             on_progress=self._on_fetch_progress,
                             course_ids=self.fetch_course_ids(),
+                            include_files=True,
                         )
                         break
                     except AuthExpiredError:
@@ -547,6 +557,15 @@ class AppController:
             self.assignments_todo_expanded = bool(expanded)
         else:
             self.assignments_submitted_expanded = bool(expanded)
+
+    @property
+    def hide_calendar_events(self) -> bool:
+        return bool(self.settings.get("hide_calendar_events"))
+
+    def set_hide_calendar_events(self, value: bool) -> None:
+        self.settings["hide_calendar_events"] = bool(value)
+        self.persist()
+        self.rebuild()
 
     def set_calendar_mode(self, mode: str) -> None:
         if mode not in {"list", "week", "month"}:
@@ -1126,6 +1145,43 @@ class AppController:
         for node in nodes:
             self.open_content_node(node)
 
+    def ensure_file_index(self) -> None:
+        if (
+            self.contents_indexing
+            or self.store.snapshot.files_indexed
+            or self._file_index_failed
+        ):
+            return
+        if self.session is None or self.busy:
+            return
+        self.contents_indexing = True
+        self.contents_status = "Loading course files…"
+        self._file_index_gen += 1
+        gen = self._file_index_gen
+        threading.Thread(
+            target=lambda: self._index_files_work(gen),
+            daemon=True,
+            name="bb-files",
+        ).start()
+        self.rebuild()
+
+    def _index_files_work(self, gen: int) -> None:
+        try:
+            session = self.session
+            if session is None or gen != self._file_index_gen:
+                return
+            self.store.index_files(session)
+            if gen == self._file_index_gen:
+                self.contents_status = ""
+        except Exception as exc:
+            if gen == self._file_index_gen:
+                self._file_index_failed = True
+                self.contents_status = f"Couldn't load course files: {exc}"
+        finally:
+            if gen == self._file_index_gen:
+                self.contents_indexing = False
+                self.ui(self.rebuild)
+
     def download_selected_contents(self) -> None:
         files = []
         seen: set[str] = set()
@@ -1180,32 +1236,36 @@ class AppController:
             self.contents_busy = True
             self.contents_status = "Downloading…"
             self.ui(self.rebuild)
-            saved = 0
-            errors: list[str] = []
-            try:
-                for node in files:
-                    name = _safe_filename(node.display_name())
-                    target = Path(dest_file) if dest_file else Path(dest_dir) / name
-                    self.contents_status = f"Downloading {name}…"
-                    self.ui(self._update_contents_status)
-                    try:
-                        data = self._download_content_bytes(node)
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        target.write_bytes(data)
-                        saved += 1
-                    except Exception as exc:
-                        errors.append(f"{name}: {exc}")
-            finally:
-                self.contents_busy = False
-            if errors and not saved:
-                self.contents_status = errors[0]
-            elif errors:
-                self.contents_status = f"Saved {saved} file(s). Some failed: {errors[0]}"
-            elif dest_file:
-                self.contents_status = f"Saved {files[0].display_name()}."
-            else:
-                self.contents_status = f"Saved {saved} file(s) to {dest_dir}."
-            self.ui(self.rebuild)
+
+            def save_files() -> None:
+                saved = 0
+                errors: list[str] = []
+                try:
+                    for node in files:
+                        name = _safe_filename(node.display_name())
+                        target = Path(dest_file) if dest_file else Path(dest_dir) / name
+                        self.contents_status = f"Downloading {name}…"
+                        self.ui(self._update_contents_status)
+                        try:
+                            data = self._download_content_bytes(node)
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            target.write_bytes(data)
+                            saved += 1
+                        except Exception as exc:
+                            errors.append(f"{name}: {exc}")
+                finally:
+                    self.contents_busy = False
+                if errors and not saved:
+                    self.contents_status = errors[0]
+                elif errors:
+                    self.contents_status = f"Saved {saved} file(s). Some failed: {errors[0]}"
+                elif dest_file:
+                    self.contents_status = f"Saved {files[0].display_name()}."
+                else:
+                    self.contents_status = f"Saved {saved} file(s) to {dest_dir}."
+                self.ui(self.rebuild)
+
+            threading.Thread(target=save_files, daemon=True, name="bb-download").start()
 
         try:
             self.page.run_task(pick_and_save)

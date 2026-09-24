@@ -59,7 +59,10 @@ def build_contents(ctrl: AppController) -> ft.Control:
         "Course files. Metadata loads with Refresh; files download only when you choose Download."
     )
     blocks: list[ft.Control] = [heading("Contents"), intro, toolbar]
-    if ctrl.contents_status:
+    if ctrl.contents_indexing:
+        blocks.append(muted(ctrl.contents_status or "Loading course files…"))
+        blocks.append(ft.ProgressBar(color=theme.ACCENT, bgcolor=theme.BORDER))
+    elif ctrl.contents_status:
         blocks.append(muted(ctrl.contents_status))
     if snapshot.errors.get("contents"):
         blocks.append(error_banner("Couldn't load some course contents. Try Refresh."))
@@ -103,7 +106,16 @@ def build_contents(ctrl: AppController) -> ft.Control:
         if expanded:
             rows.extend(_tree_rows(ctrl, course_nodes, course.id, "", 1))
 
-    if not snapshot.content_nodes:
+    if ctrl.contents_indexing:
+        pass
+    elif not snapshot.files_indexed and not snapshot.content_nodes:
+        blocks.append(
+            empty_state(
+                "Course files load when you open this page. Sign in, or use Refresh to index everything.",
+                ctrl.refresh,
+            )
+        )
+    elif not snapshot.content_nodes:
         blocks.append(
             empty_state("No course files indexed yet. Use Refresh after signing in.", ctrl.refresh)
         )

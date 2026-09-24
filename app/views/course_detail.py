@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import flet as ft
 
-from blackboard.api import _resolve_assignment_status, deadline_is_finished, upcoming
+from blackboard.api import (
+    _resolve_assignment_status,
+    _trim_number,
+    course_result_rows,
+    course_score_percent,
+    course_score_totals,
+    deadline_is_finished,
+    upcoming,
+)
 
 from app.controller import AppController
 from app.widgets import (
@@ -13,6 +21,7 @@ from app.widgets import (
     heading,
     muted,
     page_scroll,
+    score_ring,
     section_title,
     status_chip,
 )
@@ -32,7 +41,6 @@ def build_course_detail(ctrl: AppController, course_id: str) -> ft.Control:
 
     work = [a for a in snapshot.assignments if a.course_id == course_id]
     work.sort(key=lambda a: a.due_at.timestamp() if a.due_at else float("inf"))
-    grades = [g for g in snapshot.grades if g.course_id == course_id]
     notes = [n for n in snapshot.announcements if n.course_id == course_id]
     due = [
         deadline
@@ -40,10 +48,36 @@ def build_course_detail(ctrl: AppController, course_id: str) -> ft.Control:
         if deadline.course_id == course_id and not deadline_is_finished(snapshot, deadline)
     ]
 
+    totals = course_score_totals(snapshot, course_id)
+    percent = course_score_percent(snapshot, course_id)
+    fraction = (
+        f"{_trim_number(totals[0])} / {_trim_number(totals[1])}"
+        if totals
+        else "No graded points yet"
+    )
     blocks: list[ft.Control] = [
         ft.TextButton("Back", icon=ft.Icons.ARROW_BACK, on_click=lambda e: ctrl.back()),
-        heading(course.name),
-        muted(" · ".join(part for part in (course.term, course.instructor) if part) or "Course"),
+        ft.Row(
+            [
+                ft.Column(
+                    [
+                        heading(course.name),
+                        muted(
+                            " · ".join(part for part in (course.term, course.instructor) if part)
+                            or "Course"
+                        ),
+                    ],
+                    spacing=4,
+                    expand=True,
+                ),
+                ft.Column(
+                    [score_ring(percent), muted(fraction, 11)],
+                    spacing=4,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
         section_title("Upcoming work"),
     ]
 
@@ -109,16 +143,28 @@ def build_course_detail(ctrl: AppController, course_id: str) -> ft.Control:
         blocks.append(empty_state("No upcoming work for this course."))
 
     blocks.append(section_title("Grades"))
-    if grades:
-        for grade in grades:
+    results = course_result_rows(snapshot, course_id)
+    if results:
+        for title, label, due, aid in results:
             blocks.append(
                 card(
                     ft.Row(
                         [
-                            ft.Text(grade.title, expand=True),
-                            ft.Text(grade.score or "—", weight=ft.FontWeight.W_600),
-                        ]
-                    )
+                            ft.Column(
+                                [
+                                    ft.Text(title, weight=ft.FontWeight.W_600),
+                                    muted(format_dt(due, with_time=False) if due else "No due date"),
+                                ],
+                                spacing=2,
+                                expand=True,
+                            ),
+                            ft.Text(label, size=16, weight=ft.FontWeight.W_600),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    on_click=(lambda e, assignment_id=aid: _open_assignment(ctrl, assignment_id))
+                    if aid
+                    else None,
                 )
             )
     else:

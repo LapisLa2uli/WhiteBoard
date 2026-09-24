@@ -149,7 +149,19 @@ def deadline_legend() -> ft.Control:
         for color, label in swatches
     ]
     return ft.Row(
-        [muted("Border: deadline", 11), *items, muted("Fill: course", 11)],
+        [
+            muted("Border: deadline", 11),
+            *items,
+            muted("Fill: course", 11),
+            ft.Row(
+                [
+                    ft.Container(width=14, height=14, border_radius=4, bgcolor=theme.EVENT_BG, border=ft.Border.all(3, theme.EVENT)),
+                    muted("Event", 11),
+                ],
+                spacing=6,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+        ],
         spacing=12,
         wrap=True,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -170,6 +182,31 @@ def course_chip(name: str, course_id: str, on_click: Callable | None = None) -> 
 
 def section_title(text: str) -> ft.Text:
     return ft.Text(text, size=16, weight=ft.FontWeight.W_600, color=theme.TEXT)
+
+
+def score_ring(percent: float | None, *, size: int = 76) -> ft.Control:
+    value = 0.0 if percent is None else max(0.0, min(1.0, percent / 100))
+    label = "—" if percent is None else f"{round(percent)}%"
+    return ft.Stack(
+        [
+            ft.ProgressRing(
+                value=value,
+                width=size,
+                height=size,
+                stroke_width=7,
+                color=theme.ACCENT,
+                bgcolor=theme.BORDER,
+            ),
+            ft.Container(
+                width=size,
+                height=size,
+                alignment=ft.Alignment.CENTER,
+                content=ft.Text(label, size=13, weight=ft.FontWeight.W_700, color=theme.TEXT),
+            ),
+        ],
+        width=size,
+        height=size,
+    )
 
 
 def collapsible_folder(
@@ -222,7 +259,7 @@ def status_chip(status: str) -> ft.Container:
         "late": (theme.LATE, "#fee2e2"),
         "test": (theme.WARN, "#ffedd5"),
         "assignment": (theme.ACCENT, "#dbeafe"),
-        "other": (theme.MUTED, "#e2e8f0"),
+        "other": (theme.EVENT, theme.EVENT_BG),
     }
     fg, bg = colors.get(status, (theme.MUTED, "#e2e8f0"))
     return ft.Container(

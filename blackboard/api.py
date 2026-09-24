@@ -111,6 +111,7 @@ def fetch_snapshot(
     *,
     quick: bool = False,
     course_ids: set[str] | None = None,
+    include_files: bool = False,
 ) -> Snapshot:
     snapshot = Snapshot(fetched_at=datetime.now(timezone.utc))
     session._tell("Loading your profile…", 0.04)
@@ -216,8 +217,9 @@ def fetch_snapshot(
         snapshot.announcements = _fetch_announcements(session, snapshot)
 
     _merge_assignments_from_deadlines(snapshot)
-    _enrich_assignment_links(session, snapshot, quick=quick)
+    _enrich_assignment_links(session, snapshot, quick=quick, include_files=include_files)
     _check_live_submissions(session, snapshot, quick=quick)
+    snapshot.files_indexed = bool(include_files)
     _apply_assignment_status(snapshot)
     _merge_deadlines_from_assignments(snapshot)
     _enrich_last_activity(snapshot)
@@ -856,7 +858,7 @@ def _parse_grades(
         course_name = str(_pick(raw, "courseName", "calendarName") or "")
         if not course_id and course_name:
             course_id = names.get(course_name.lower(), "")
-        score = _format_score(raw, item)
+        score, points_earned, points_possible = _score_parts(raw, item)
         if _blank_score(score) and _grade_has_student_work(raw, item):
             score = "Submitted"
         posted = parse_dt(
@@ -878,6 +880,8 @@ def _parse_grades(
                 score=score,
                 posted_at=posted,
                 assignment_id=assignment_id,
+                points_earned=points_earned,
+                points_possible=points_possible,
             )
         )
     return _dedupe_grades(grades)
@@ -1220,23 +1224,29 @@ def _merge_deadlines_from_assignments(snapshot: Snapshot) -> None:
 
 
 def _enrich_assignment_links(
-    session: BlackboardSession, snapshot: Snapshot, *, quick: bool = False
+    session: BlackboardSession,
+    snapshot: Snapshot,
+    *,
+    quick: bool = False,
+    include_files: bool = False,
 ) -> None:
     for assignment in snapshot.assignments:
         if assignment.content_id == assignment.id:
             assignment.content_id = ""
         if not assignment.content_id:
             assignment.content_id = _content_id_from_grades(snapshot, assignment)
-    catalog, nodes = crawl_course_catalog(session, snapshot, quick=quick)
-    snapshot.content_nodes = nodes
-    apply_content_catalog(snapshot, catalog)
-    remaining = {
-        item.course_id
-        for item in snapshot.assignments
-        if item.course_id and not _trusted_content_id(item)
-    }
-    if remaining:
-        _fill_content_ids_from_columns(session, snapshot, remaining)
+    if include_files:
+        catalog, nodes = crawl_course_catalog(session, snapshot, quick=quick, include_html=True)
+        snapshot.content_nodes = nodes
+        apply_content_catalog(snapshot, catalog)
+        remaining = {
+            item.course_id
+            for item in snapshot.assignments
+            if item.course_id and not _trusted_content_id(item)
+        }
+        if remaining:
+            _fill_content_ids_from_columns(session, snapshot, remaining)
+        snapshot.files_indexed = True
     _apply_launch_urls(snapshot, session.base_url)
 
 
@@ -1254,7 +1264,11 @@ class ContentEntry:
 
 
 def crawl_course_catalog(
-    session: BlackboardSession, snapshot: Snapshot, *, quick: bool = False
+    session: BlackboardSession,
+    snapshot: Snapshot,
+    *,
+    quick: bool = False,
+    include_html: bool = True,
 ) -> tuple[list[ContentEntry], list[ContentNode]]:
     courses = [course for course in snapshot.courses if _bb_pk(course.id)]
     needed = {item.course_id for item in snapshot.assignments}
@@ -1271,7 +1285,7 @@ def crawl_course_catalog(
         session._tell(f"Indexing {index + 1} of {len(courses)}: {course.name}", fraction)
         try:
             course_entries, course_nodes = _catalog_for_course(
-                session, course.id, session.base_url
+                session, course.id, session.base_url, include_html=include_html
             )
             catalog.extend(course_entries)
             nodes.extend(course_nodes)
@@ -1311,7 +1325,11 @@ def parse_html_links(html: str) -> list[tuple[str, str]]:
 
 
 def _catalog_for_course(
-    session: BlackboardSession, course_id: str, base_url: str
+    session: BlackboardSession,
+    course_id: str,
+    base_url: str,
+    *,
+    include_html: bool = True,
 ) -> tuple[list[ContentEntry], list[ContentNode]]:
     items = _fetch_course_content_tree(session, course_id)
     entries = [
@@ -1320,6 +1338,9 @@ def _catalog_for_course(
     entries = [entry for entry in entries if entry.content_id or entry.title]
     nodes = content_nodes_from_items(items, course_id, base_url)
     _enrich_file_attachments(session, course_id, nodes, base_url)
+    if not include_html:
+        _apply_open_urls_from_catalog(nodes, entries)
+        return entries, nodes
     folder_ids = [
         entry.content_id for entry in entries if entry.is_folder and entry.content_id
     ][:20]
@@ -2116,9 +2137,13 @@ def _deadline_kind(raw: dict[str, Any]) -> DeadlineKind:
         "course",
         "courseevent",
         "event",
+        "calendarevent",
+        "schedule",
+        "courseschedule",
+        "classmeeting",
         "announcement",
         "ultraannouncement",
-    }:
+    } or "event" in type_key or "schedule" in type_key:
         return "other"
     if any(word in text for word in ("office hour", "meeting", "holiday", "vacation")):
         return "other"
@@ -2131,23 +2156,90 @@ def _deadline_kind(raw: dict[str, Any]) -> DeadlineKind:
 
 
 def _format_score(raw: dict[str, Any], item: dict[str, Any]) -> str:
+    return _score_parts(raw, item)[0]
+
+
+def _as_number(value: Any) -> float | None:
+    if isinstance(value, bool) or value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().replace(",", "")
+    if re.fullmatch(r"-?\d+(?:\.\d+)?", text):
+        return float(text)
+    return None
+
+
+def _trim_number(value: float) -> str:
+    if float(value).is_integer():
+        return str(int(value))
+    return f"{value:g}"
+
+
+def _split_fraction(text: str) -> tuple[float, float] | None:
+    match = re.fullmatch(
+        r"\s*(-?\d+(?:\.\d+)?)\s*/\s*(-?\d+(?:\.\d+)?)\s*", text or ""
+    )
+    if not match:
+        return None
+    return float(match.group(1)), float(match.group(2))
+
+
+def _find_number(blob: Any, keys: tuple[str, ...], depth: int = 0) -> float | None:
+    if depth > 5:
+        return None
+    if isinstance(blob, dict):
+        for key in keys:
+            number = _as_number(blob.get(key))
+            if number is not None:
+                return number
+        for value in blob.values():
+            if isinstance(value, (dict, list)):
+                found = _find_number(value, keys, depth + 1)
+                if found is not None:
+                    return found
+    elif isinstance(blob, list):
+        for value in blob:
+            found = _find_number(value, keys, depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
+_POSSIBLE_KEYS = ("possible", "pointsPossible", "possiblePoints", "maxScore", "maxPoints")
+
+
+def _score_parts(
+    raw: dict[str, Any], item: dict[str, Any]
+) -> tuple[str, float | None, float | None]:
     display = _pick(raw, "displayGrade", "grade", "score", "text") or _pick(
         item, "displayGrade", "grade", "score"
     )
+    text = ""
+    earned: float | None = None
+    possible = _find_number(raw, _POSSIBLE_KEYS)
+    if possible is None:
+        possible = _find_number(item, _POSSIBLE_KEYS)
     if isinstance(display, dict):
-        text = _pick(display, "text", "display", "score")
-        possible = _pick(display, "possible", "pointsPossible")
-        if text and possible not in (None, ""):
-            return f"{text}/{possible}"
-        return str(text or "")
-    if display not in (None, ""):
-        possible = _pick(raw, "pointsPossible", "possible") or _pick(
-            item, "pointsPossible", "possible"
-        )
-        if possible not in (None, ""):
-            return f"{display}/{possible}"
-        return str(display)
-    return ""
+        text = str(_pick(display, "text", "display") or "")
+        earned = _as_number(_pick(display, "score"))
+        if earned is None:
+            earned = _as_number(text)
+        nested_possible = _as_number(_pick(display, "possible", "pointsPossible"))
+        if nested_possible is not None:
+            possible = nested_possible
+    elif display not in (None, ""):
+        text = str(display)
+        earned = _as_number(display)
+    fraction = _split_fraction(text)
+    if fraction:
+        earned, possible = fraction
+        text = f"{_trim_number(earned)}/{_trim_number(possible)}"
+    elif earned is not None and possible is not None:
+        text = f"{_trim_number(earned)}/{_trim_number(possible)}"
+    elif text and possible is not None and "/" not in text:
+        text = f"{text}/{_trim_number(possible)}"
+    return text, earned, possible
 
 
 def _term_name(blob: Any) -> str:
@@ -2365,6 +2457,143 @@ def is_posted_grade(score: str) -> bool:
     key = text.lower().replace("_", " ")
     compact = key.replace(" ", "")
     return key not in _PENDING_SCORE_LABELS and compact not in _PENDING_SCORE_LABELS
+
+
+def grade_points(grade: Grade) -> tuple[float, float] | None:
+    earned = grade.points_earned
+    possible = grade.points_possible
+    if earned is None or possible is None:
+        fraction = _split_fraction(grade.score)
+        if fraction:
+            earned, possible = fraction
+    if earned is None or possible is None or possible <= 0:
+        return None
+    probe = grade.score or f"{_trim_number(earned)}/{_trim_number(possible)}"
+    if not is_posted_grade(probe):
+        return None
+    return earned, possible
+
+
+def format_grade_label(grade: Grade | None) -> str:
+    if grade is None:
+        return "Submitted"
+    points = grade_points(grade)
+    if points:
+        return f"{_trim_number(points[0])}/{_trim_number(points[1])}"
+    text = (grade.score or "").strip()
+    if (
+        text
+        and not _blank_score(text)
+        and grade.points_possible
+        and "/" not in text
+        and text.lower() != "submitted"
+    ):
+        return f"{text}/{_trim_number(grade.points_possible)}"
+    if text and not _blank_score(text):
+        return text
+    return "Submitted"
+
+
+def course_score_totals(snapshot: Snapshot, course_id: str) -> tuple[float, float] | None:
+    earned = 0.0
+    possible = 0.0
+    found = False
+    for grade in snapshot.grades:
+        if grade.course_id != course_id:
+            continue
+        points = grade_points(grade)
+        if not points:
+            continue
+        earned += points[0]
+        possible += points[1]
+        found = True
+    if not found or possible <= 0:
+        return None
+    return earned, possible
+
+
+def course_score_percent(snapshot: Snapshot, course_id: str) -> float | None:
+    totals = course_score_totals(snapshot, course_id)
+    if not totals:
+        return None
+    return totals[0] / totals[1] * 100
+
+
+def grade_due_at(snapshot: Snapshot, grade: Grade) -> datetime | None:
+    assignment = assignment_for_work(
+        snapshot,
+        assignment_id=grade.assignment_id or grade.id,
+        title=grade.title,
+        course_id=grade.course_id,
+    )
+    if assignment and assignment.due_at:
+        return assignment.due_at
+    for deadline in snapshot.deadlines:
+        if deadline.course_id != grade.course_id:
+            continue
+        if _titles_match(deadline.title, grade.title):
+            return deadline.when
+    return grade.posted_at
+
+
+def course_result_rows(
+    snapshot: Snapshot, course_id: str
+) -> list[tuple[str, str, datetime | None, str]]:
+    """Past work for one course: title, score label, due date, assignment id."""
+    rows: list[tuple[str, str, datetime | None, str]] = []
+    grades = [grade for grade in snapshot.grades if grade.course_id == course_id]
+    used: set[int] = set()
+
+    def matching_grade(title: str, assignment_id: str) -> tuple[int, Grade] | None:
+        for index, grade in enumerate(grades):
+            if index in used:
+                continue
+            if assignment_id and assignment_id in {grade.id, grade.assignment_id}:
+                return index, grade
+        for index, grade in enumerate(grades):
+            if index in used:
+                continue
+            if _titles_match(grade.title, title):
+                return index, grade
+        return None
+
+    for assignment in snapshot.assignments:
+        if assignment.course_id != course_id:
+            continue
+        status = _resolve_assignment_status(snapshot, assignment)
+        found = matching_grade(assignment.title, assignment.id)
+        grade = found[1] if found else None
+        posted = grade is not None and is_posted_grade(grade.score)
+        if status != "submitted" and not posted:
+            continue
+        if found:
+            used.add(found[0])
+        label = format_grade_label(grade) if posted else "Submitted"
+        rows.append((assignment.title, label, assignment.due_at, assignment.id))
+
+    for index, grade in enumerate(grades):
+        if index in used:
+            continue
+        if not is_posted_grade(grade.score) and not _grade_indicates_work(grade):
+            continue
+        label = format_grade_label(grade) if is_posted_grade(grade.score) else "Submitted"
+        rows.append((grade.title, label, grade_due_at(snapshot, grade), grade.assignment_id or ""))
+
+    def sort_key(row: tuple[str, str, datetime | None, str]) -> float:
+        due = _as_utc(row[2])
+        return due.timestamp() if due else float("-inf")
+
+    rows.sort(key=sort_key, reverse=True)
+    return rows
+
+
+def index_course_files(session: BlackboardSession, snapshot: Snapshot) -> None:
+    """Load course file trees without the slower HTML page walk."""
+    catalog, nodes = crawl_course_catalog(session, snapshot, include_html=False)
+    snapshot.content_nodes = nodes
+    apply_content_catalog(snapshot, catalog)
+    _apply_launch_urls(snapshot, session.base_url)
+    snapshot.files_indexed = True
 
 
 def _grade_rank(grade: Grade) -> tuple:

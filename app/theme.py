@@ -11,6 +11,8 @@ LATE = "#9f1239"
 OK = "#059669"
 WARN = "#d97706"
 BORDER = "#e2e8f0"
+EVENT = "#6d28d9"
+EVENT_BG = "#f3e8ff"
 ERROR_BG = "#fef2f2"
 ERROR_FG = "#991b1b"
 

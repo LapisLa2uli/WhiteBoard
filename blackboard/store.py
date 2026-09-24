@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from blackboard.api import fetch_snapshot
+from blackboard.api import fetch_snapshot, index_course_files
 from blackboard.auth import BlackboardSession
 from blackboard.models import Snapshot
 
@@ -24,19 +24,30 @@ class Store:
         quick: bool = False,
         on_progress: object | None = None,
         course_ids: set[str] | None = None,
+        include_files: bool = False,
     ) -> Snapshot:
         previous = session.on_progress
         if on_progress is not None:
             session.on_progress = on_progress  # type: ignore[assignment]
         try:
             snapshot = fetch_snapshot(
-                session, quick=quick, course_ids=course_ids
+                session,
+                quick=quick,
+                course_ids=course_ids,
+                include_files=include_files,
             )
         finally:
             session.on_progress = previous
         self.snapshot = snapshot
         self.signed_in = True
         self.save_cache()
+        return self.snapshot
+
+    def index_files(self, session: BlackboardSession) -> Snapshot:
+        target = self.snapshot
+        index_course_files(session, target)
+        if target is self.snapshot:
+            self.save_cache()
         return self.snapshot
 
     def load_cache(self) -> bool:
@@ -82,6 +93,7 @@ def load_settings() -> dict:
         "load_course_ids": [],
         "contents_view_mode": "tree",
         "shortcut_prompt_done": False,
+        "hide_calendar_events": False,
     }
     if not SETTINGS_PATH.exists():
         return dict(defaults)
@@ -102,6 +114,7 @@ def load_settings() -> dict:
         merged["hide_filtered_assignments"] = bool(merged.get("hide_filtered_assignments"))
         merged["load_filter_courses_only"] = bool(merged.get("load_filter_courses_only"))
         merged["shortcut_prompt_done"] = bool(merged.get("shortcut_prompt_done"))
+        merged["hide_calendar_events"] = bool(merged.get("hide_calendar_events"))
         mode = str(merged.get("contents_view_mode") or "tree")
         merged["contents_view_mode"] = mode if mode in {"tree", "folder", "columns"} else "tree"
         merged["username"] = str(merged.get("username") or "")
@@ -133,5 +146,6 @@ def save_settings(settings: dict) -> None:
             else "tree"
         ),
         "shortcut_prompt_done": bool(settings.get("shortcut_prompt_done")),
+        "hide_calendar_events": bool(settings.get("hide_calendar_events")),
     }
     SETTINGS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")

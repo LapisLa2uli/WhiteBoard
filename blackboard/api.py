@@ -191,10 +191,15 @@ def fetch_snapshot(
         "grades",
     )
     snapshot.grades = _parse_grades(grades, snapshot.courses)
-    if not snapshot.grades and snapshot.courses:
-        snapshot.grades = _fetch_course_grades(
-            session, snapshot, user_id, limit=8 if quick else 16
-        )
+    mygrades = _fetch_mygrades(session, snapshot)
+    if mygrades:
+        snapshot.grades = _merge_mygrades(snapshot.grades, mygrades)
+        snapshot.errors.pop("grades", None)
+    elif snapshot.courses:
+        extra = _fetch_course_grades(session, snapshot, user_id)
+        if extra:
+            snapshot.grades = _merge_mygrades(snapshot.grades, extra)
+            snapshot.errors.pop("grades", None)
     if not snapshot.grades:
         try:
             harvested_more = session.harvest_learn_json(("/ultra/stream",))
@@ -356,11 +361,14 @@ def _fetch_course_grades(
     snapshot: Snapshot,
     user_id: str,
     *,
-    limit: int = 8,
+    courses: list[Course] | None = None,
 ) -> list[Grade]:
     grades: list[Grade] = []
     errors: list[str] = []
-    for course in snapshot.courses[:limit]:
+    chosen = courses if courses is not None else list(snapshot.courses)
+    if hasattr(session, "get_json_many"):
+        return _fetch_course_grades_parallel(session, snapshot, user_id, chosen)
+    for course in chosen:
         for template in COURSE_GRADE_PATHS:
             path = template.format(
                 course_id=quote(course.id, safe=""),
@@ -384,6 +392,353 @@ def _fetch_course_grades(
     elif errors:
         snapshot.errors["grades"] = errors[0]
     return grades
+
+
+def _fetch_course_grades_parallel(
+    session: BlackboardSession,
+    snapshot: Snapshot,
+    user_id: str,
+    courses: list[Course],
+) -> list[Grade]:
+    """Try each gradebook URL for every remaining course at the same time."""
+    grades: list[Grade] = []
+    pending = list(courses)
+    errors: list[str] = []
+    for template in COURSE_GRADE_PATHS:
+        if not pending:
+            break
+        paths = [
+            template.format(
+                course_id=quote(course.id, safe=""),
+                user_id=quote(user_id, safe=""),
+            )
+            for course in pending
+        ]
+        try:
+            rows = list(session.get_json_many(paths) or [])
+        except Exception as exc:
+            errors.append(str(exc))
+            break
+        if len(rows) < len(pending):
+            rows.extend({} for _ in range(len(pending) - len(rows)))
+        still: list[Course] = []
+        for course, row in zip(pending, rows):
+            status = int((row or {}).get("status") or 0)
+            data = (row or {}).get("data")
+            if status and status < 400 and data is not None:
+                grades.extend(_parse_grades(data, [course], default_course_id=course.id))
+                continue
+            if status not in (404, 405, 501):
+                errors.append(f"HTTP {status}")
+            still.append(course)
+        pending = still
+    if grades:
+        snapshot.errors.pop("grades", None)
+    elif errors:
+        snapshot.errors["grades"] = errors[0]
+    return grades
+
+
+def mygrades_path(course_id: str) -> str:
+    return (
+        "/webapps/bb-mygrades-BBLEARN/myGrades"
+        f"?course_id={quote(course_id, safe='')}"
+        "&stream_name=mygrades&is_stream=false"
+    )
+
+
+def _fetch_mygrades(session: BlackboardSession, snapshot: Snapshot) -> list[Grade]:
+    """Read every course's My Grades page, several pages at a time."""
+    courses = [course for course in snapshot.courses if _bb_pk(course.id)]
+    if not courses or not hasattr(session, "get_html_documents"):
+        return []
+    grades: list[Grade] = []
+    render_later: list[Course] = []
+    total = len(courses)
+    batch_size = 8
+    for start in range(0, total, batch_size):
+        batch = courses[start : start + batch_size]
+        session._tell(
+            f"Loading grades {start + 1}–{min(start + len(batch), total)} of {total}",
+            0.20 + 0.06 * ((start + len(batch)) / total),
+        )
+        try:
+            documents = session.get_html_documents([mygrades_path(course.id) for course in batch])
+        except Exception:
+            render_later.extend(batch)
+            continue
+        by_id = {
+            _course_id_from_mygrades_url(str(document.get("url") or "")): document
+            for document in documents or []
+            if isinstance(document, dict)
+        }
+        for course in batch:
+            document = by_id.get(course.id) or {}
+            html = str(document.get("html") or "")
+            status = int(document.get("status") or 0)
+            parsed = _parse_mygrades_html(html, course.id) if html and status < 400 else []
+            if parsed:
+                grades.extend(parsed)
+            elif _mygrades_html_needs_browser(html, status):
+                render_later.append(course)
+    if render_later and hasattr(session, "read_mygrades_pages"):
+        grades.extend(_render_mygrades(session, render_later))
+    return grades
+
+
+def _render_mygrades(session: BlackboardSession, courses: list[Course]) -> list[Grade]:
+    grades: list[Grade] = []
+    batch_size = 4
+    for start in range(0, len(courses), batch_size):
+        batch = courses[start : start + batch_size]
+        session._tell(
+            f"Opening grade pages {start + 1}–{min(start + len(batch), len(courses))} of {len(courses)}",
+            0.26,
+        )
+        try:
+            pages = session.read_mygrades_pages([mygrades_path(course.id) for course in batch])
+        except Exception:
+            break
+        if pages and all(bool(page.get("blocked")) for page in pages if isinstance(page, dict)):
+            break
+        by_id = {
+            _course_id_from_mygrades_url(str(page.get("url") or "")): page
+            for page in pages or []
+            if isinstance(page, dict)
+        }
+        for course in batch:
+            page = by_id.get(course.id) or {}
+            grades.extend(_grades_from_dom_rows(page.get("rows"), course.id))
+    return grades
+
+
+def _course_id_from_mygrades_url(url: str) -> str:
+    return (parse_qs(urlparse(url).query).get("course_id") or [""])[0]
+
+
+def _mygrades_html_needs_browser(html: str, status: int) -> bool:
+    """True when the download is a shell and the scores are drawn after the page loads."""
+    if status in (404, 405, 501) or status >= 400:
+        return False
+    if not html:
+        return True
+    lowered = html.lower()
+    if "itemrow" in lowered or "pointspossible" in lowered or "sortable_item_row" in lowered:
+        return False
+    if 'id="loginform"' in lowered or "id='loginform'" in lowered:
+        return False
+    return True
+
+
+def _merge_mygrades(existing: list[Grade], fresh: list[Grade]) -> list[Grade]:
+    covered = {grade.course_id for grade in fresh}
+    kept = [grade for grade in existing if grade.course_id not in covered]
+    return _dedupe_grades(kept + fresh)
+
+
+_MYGRADES_ROW_RE = re.compile(
+    r'''<(?:div|tr|li)\b[^>]*class=["'][^"']*(?:sortable_item_row|itemRow|graded_item_row|gradeRow)[^"']*["'][^>]*>''',
+    re.IGNORECASE,
+)
+_CATEGORY_WORDS = {
+    "assignment",
+    "test",
+    "quiz",
+    "discussion",
+    "journal",
+    "survey",
+    "作业",
+    "测验",
+    "讨论",
+}
+_SKIP_GRADE_TITLES = {
+    "total",
+    "weighted total",
+    "running total",
+    "overall grade",
+    "总分",
+    "加权总分",
+    "总计",
+    "总成绩",
+}
+_SUBMITTED_GRADE_WORDS = (
+    "needs grading",
+    "needsgrading",
+    "submitted",
+    "已提交",
+    "需要评分",
+    "待评分",
+    "待批改",
+)
+_EMPTY_GRADE_WORDS = {"", "-", "—", "--", "n/a", "na", "none", "未提交", "未评分"}
+
+
+def _grades_from_dom_rows(rows: Any, course_id: str) -> list[Grade]:
+    grades: list[Grade] = []
+    seen: set[str] = set()
+    if not isinstance(rows, list):
+        return []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        title = _clean_html_text(str(row.get("title") or ""))
+        if not title or title.lower() in _SKIP_GRADE_TITLES:
+            continue
+        label, earned, possible = _mygrades_score(
+            str(row.get("grade") or ""),
+            str(row.get("possible") or ""),
+        )
+        if label is None or title.lower() in seen:
+            continue
+        seen.add(title.lower())
+        grades.append(
+            Grade(
+                id=f"{course_id}:{title}",
+                course_id=course_id,
+                title=title,
+                score=label,
+                posted_at=parse_dt(row.get("posted")),
+                points_earned=earned,
+                points_possible=possible,
+            )
+        )
+    return grades
+
+
+def _strip_hidden_grade_labels(html: str) -> str:
+    return re.sub(
+        r'<(?:span|div)\b[^>]*class=["\'][^"\']*\b(?:hideoff|offscreen|sr-only)\b[^"\']*["\'][^>]*>.*?</(?:span|div)>',
+        " ",
+        html or "",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+
+def _parse_mygrades_html(html: str, course_id: str) -> list[Grade]:
+    text = _strip_hidden_grade_labels(html or "")
+    lowered = text.lower()
+    login_wall = 'id="loginform"' in lowered or "id='loginform'" in lowered
+    has_grade_markup = "itemrow" in lowered or "pointspossible" in lowered or "gradable" in lowered
+    if login_wall and not has_grade_markup:
+        return []
+    matches = list(_MYGRADES_ROW_RE.finditer(text))
+    chunks: list[str] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else match.end() + 4000
+        chunks.append(text[match.start() : end])
+    grades: list[Grade] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        grade = _grade_from_mygrades_chunk(chunk, course_id)
+        if grade is None or grade.title.lower() in seen:
+            continue
+        seen.add(grade.title.lower())
+        grades.append(grade)
+    return grades
+
+
+def _grade_from_mygrades_chunk(chunk: str, course_id: str) -> Grade | None:
+    if re.search(r"\bcalculatedRow\b", chunk, flags=re.IGNORECASE):
+        return None
+    title = _mygrades_title(chunk)
+    if not title or title.lower() in _SKIP_GRADE_TITLES:
+        return None
+    score_text = _class_inner_text(chunk, "grade")
+    possible_text = _class_inner_text(chunk, "pointsPossible")
+    label, earned, possible = _mygrades_score(score_text, possible_text)
+    if label is None:
+        return None
+    posted = parse_dt(_class_inner_text(chunk, "lastActivityDate"))
+    return Grade(
+        id=f"{course_id}:{title}",
+        course_id=course_id,
+        title=title,
+        score=label,
+        posted_at=posted,
+        points_earned=earned,
+        points_possible=possible,
+    )
+
+
+def _mygrades_title(chunk: str) -> str:
+    start = re.search(
+        r'''class=["'][^"']*\bgradable\b[^"']*["'][^>]*>''',
+        chunk,
+        flags=re.IGNORECASE,
+    )
+    region = chunk[start.end() : start.end() + 2500] if start else chunk[:2500]
+    stop = re.search(
+        r'''<(?:div|span|td|tr)\b[^>]*class=["'][^"']*\b(?:grade|pointsPossible|activity|lastActivityDate)\b''',
+        region,
+        flags=re.IGNORECASE,
+    )
+    if stop and stop.start() > 0:
+        region = region[: stop.start()]
+    anchors = re.findall(r"<a\b[^>]*>(.*?)</a>", region, flags=re.IGNORECASE | re.DOTALL)
+    texts = [_clean_html_text(anchor) for anchor in anchors]
+    texts = [text for text in texts if text and text.lower() not in _CATEGORY_WORDS]
+    if texts:
+        return max(texts, key=len)
+    plain = _clean_html_text(region)
+    for word in _CATEGORY_WORDS:
+        plain = re.sub(rf"\b{re.escape(word)}\b", " ", plain, flags=re.IGNORECASE)
+    return " ".join(plain.split())
+
+
+def _mygrades_score(
+    score_text: str, possible_text: str
+) -> tuple[str | None, float | None, float | None]:
+    score = _clean_html_text(score_text)
+    score = re.sub(r"^(?:grade|成绩)\s*[:：]?\s*", "", score, flags=re.IGNORECASE).strip()
+    possible = _first_number(possible_text)
+    compact = score.lower().replace(" ", "")
+    if any(word in score.lower() for word in _SUBMITTED_GRADE_WORDS) or any(
+        word in compact for word in ("needsgrading", "submitted")
+    ):
+        return "Submitted", None, possible
+    fraction = _split_fraction(score.replace(" ", ""))
+    if fraction:
+        earned, possible_from_score = fraction
+        if possible is None:
+            possible = possible_from_score
+        return f"{_trim_number(earned)}/{_trim_number(possible or possible_from_score)}", earned, possible
+    earned = _as_number(score)
+    if earned is not None and possible is not None:
+        return f"{_trim_number(earned)}/{_trim_number(possible)}", earned, possible
+    if earned is not None:
+        return _trim_number(earned), earned, None
+    if score and score.lower() not in _EMPTY_GRADE_WORDS and score not in _EMPTY_GRADE_WORDS:
+        if possible is not None:
+            return f"{score}/{_trim_number(possible)}", None, possible
+        return score, None, None
+    return None, None, None
+
+
+def _class_inner_text(html: str, class_name: str) -> str:
+    match = re.search(
+        rf'''class=["'][^"']*\b{class_name}\b[^"']*["'][^>]*>(.*?)</(?:span|div|td|a)>''',
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return _clean_html_text(match.group(1) if match else "")
+
+
+def _clean_html_text(value: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", value or "")
+    text = (
+        text.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&#39;", "'")
+        .replace("&quot;", '"')
+    )
+    return " ".join(text.split())
+
+
+def _first_number(value: str) -> float | None:
+    match = re.search(r"-?\d+(?:\.\d+)?", value or "")
+    if not match:
+        return None
+    return float(match.group(0))
 
 
 def _fetch_announcements(
@@ -846,10 +1201,26 @@ def _parse_grades(
         item = raw.get("item") if isinstance(raw.get("item"), dict) else raw
         grade_id = str(_pick(item, "id", "columnId", "gradeId") or _pick(raw, "id") or "")
         title = str(
-            _pick(item, "title", "name", "columnName")
-            or _pick(raw, "title", "name")
-            or "Grade"
+            _pick(item, "title", "name", "columnName", "displayName")
+            or _pick(raw, "title", "name", "columnName", "displayName")
+            or ""
         )
+        if not title:
+            for blob in (raw, item):
+                if not isinstance(blob, dict):
+                    continue
+                for key in ("column", "columnDefinition", "gradeColumn"):
+                    nested = blob.get(key)
+                    if isinstance(nested, dict):
+                        title = str(
+                            _pick(nested, "displayName", "name", "title", "columnName") or ""
+                        )
+                    if title:
+                        break
+                if title:
+                    break
+        if not title:
+            title = "Grade"
         course_id = str(
             _pick(raw, "courseId", "calendarId")
             or _pick(item, "courseId")

@@ -634,6 +634,88 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(grade.score, "9/10")
         self.assertEqual(grade.points_possible, 10)
 
+    def test_mygrades_page_keeps_points_and_skips_totals(self) -> None:
+        from blackboard.api import _merge_mygrades, _parse_mygrades_html, mygrades_path
+
+        html = """
+        <div id="grades_wrapper">
+          <div class="sortable_item_row row itemRow">
+            <div class="cell gradable">
+              <div class="itemCat">Assignment</div>
+              <a href="/webapps/assignment/uploadAssignment?content_id=_1_1">AP Calc HW 1</a>
+            </div>
+            <div class="cell activity timestamp">
+              <span class="lastActivityDate">2026-09-01</span>
+            </div>
+            <div class="cell grade">
+              <span class="grade"><span class="hideoff">Grade: </span>18.00</span>
+              <span class="pointsPossible">/20.00</span>
+            </div>
+          </div>
+          <div class="sortable_item_row row itemRow">
+            <div class="cell gradable"><a href="#">Quiz 2</a></div>
+            <div class="cell grade">
+              <span class="grade">Needs Grading</span>
+              <span class="pointsPossible">/10</span>
+            </div>
+          </div>
+          <div class="sortable_item_row row itemRow">
+            <div class="cell gradable"><a>Not started</a></div>
+            <div class="cell grade"><span class="grade">-</span><span class="pointsPossible">/5</span></div>
+          </div>
+          <div class="sortable_item_row calculatedRow">
+            <div class="cell gradable">Total</div>
+            <div class="cell grade"><span class="grade">90%</span></div>
+          </div>
+        </div>
+        """
+        grades = _parse_mygrades_html(html, "_6759_1")
+        by_title = {grade.title: grade for grade in grades}
+        self.assertEqual(set(by_title), {"AP Calc HW 1", "Quiz 2"})
+        self.assertEqual(by_title["AP Calc HW 1"].score, "18/20")
+        self.assertEqual(by_title["AP Calc HW 1"].points_earned, 18)
+        self.assertEqual(by_title["AP Calc HW 1"].points_possible, 20)
+        self.assertEqual(by_title["Quiz 2"].score, "Submitted")
+        self.assertEqual(by_title["Quiz 2"].points_possible, 10)
+        self.assertIn("course_id=_6759_1", mygrades_path("_6759_1"))
+        self.assertIn("stream_name=mygrades", mygrades_path("_6759_1"))
+
+        from blackboard.models import Grade
+
+        existing = [
+            Grade(id="old", course_id="_6759_1", title="Old stream row", score="1/1"),
+            Grade(id="keep", course_id="_other_1", title="Other course", score="5/5"),
+        ]
+        merged = _merge_mygrades(existing, grades)
+        titles = {grade.course_id: grade.title for grade in merged if grade.course_id == "_other_1"}
+        self.assertEqual(titles, {"_other_1": "Other course"})
+        self.assertFalse(any(grade.title == "Old stream row" for grade in merged))
+        self.assertTrue(any(grade.title == "AP Calc HW 1" for grade in merged))
+
+        from blackboard.api import _grades_from_dom_rows
+
+        dom_rows = _grades_from_dom_rows(
+            [
+                {
+                    "title": "AP Calc HW 1",
+                    "grade": "18.00",
+                    "possible": "/20.00",
+                    "posted": "2026-09-01",
+                },
+                {"title": "Total", "grade": "90%", "possible": "", "posted": ""},
+            ],
+            "_6759_1",
+        )
+        self.assertEqual(len(dom_rows), 1)
+        self.assertEqual(dom_rows[0].score, "18/20")
+        self.assertEqual(dom_rows[0].points_possible, 20)
+
+        from blackboard.api import _mygrades_html_needs_browser
+
+        self.assertFalse(_mygrades_html_needs_browser('<div class="itemRow"></div>', 200))
+        self.assertTrue(_mygrades_html_needs_browser("<html><body>Loading</body></html>", 200))
+        self.assertFalse(_mygrades_html_needs_browser("missing", 404))
+
     def test_calendar_events_stay_off_the_assignment_list(self) -> None:
         data = {
             "results": [

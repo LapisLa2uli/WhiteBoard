@@ -476,6 +476,72 @@ class BlackboardSession:
 
         return list(self.call(work, timeout=min(120, 15 + 6 * len(targets))) or [])
 
+    def get_html_documents(self, urls: list[str]) -> list[dict[str, Any]]:
+        """Fetch same-site HTML pages with the signed-in session."""
+        targets: list[str] = []
+        for raw in urls:
+            url = resolve_url(self.base_url, raw)
+            if same_site(self.base_url, url):
+                targets.append(url)
+        if not targets:
+            return []
+
+        def work() -> list[dict[str, Any]]:
+            return _in_page_get_html(self._page, targets)
+
+        timeout = min(180, 20 + 12 * len(targets))
+        return list(self.call(work, timeout=timeout) or [])
+
+    def read_mygrades_page(self, url: str) -> dict[str, Any]:
+        """Open one My Grades page and read the rows the browser actually shows."""
+        target = resolve_url(self.base_url, url)
+        if not same_site(self.base_url, target):
+            return {"rows": [], "html": ""}
+
+        def work() -> dict[str, Any]:
+            try:
+                return _read_mygrades_dom(self._page, target)
+            except Exception:
+                return {"rows": [], "html": ""}
+
+        payload = self.call(work, timeout=45)
+        return payload if isinstance(payload, dict) else {"rows": [], "html": ""}
+
+    def read_mygrades_pages(self, urls: list[str]) -> list[dict[str, Any]]:
+        """Render several My Grades pages at once and read the rows from each."""
+        targets: list[str] = []
+        for raw in urls:
+            url = resolve_url(self.base_url, raw)
+            if same_site(self.base_url, url):
+                targets.append(url)
+        if not targets:
+            return []
+
+        def work() -> list[dict[str, Any]]:
+            try:
+                return _in_page_read_mygrades(self._page, targets)
+            except Exception:
+                return []
+
+        timeout = min(180, 20 + 4 * len(targets))
+        return list(self.call(work, timeout=timeout) or [])
+
+    def get_json_many(self, paths: list[str]) -> list[dict[str, Any]]:
+        """Fetch several same-site JSON URLs at the same time."""
+        targets: list[str] = []
+        for raw in paths:
+            url = resolve_url(self.base_url, raw).replace("/.learn/", "/learn/")
+            if same_site(self.base_url, url):
+                targets.append(url)
+        if not targets:
+            return []
+
+        def work() -> list[dict[str, Any]]:
+            return _in_page_get_json_many(self._page, targets)
+
+        timeout = min(120, 15 + 3 * len(targets))
+        return list(self.call(work, timeout=timeout) or [])
+
     def check_submission_pages(self, urls: list[str]) -> list[dict[str, Any]]:
         """Open assignment pages and report whether each already has a student attempt."""
 
@@ -675,37 +741,315 @@ def _in_page_collect_links(page, urls: list[str]) -> list[dict[str, str]]:
                 }
             }
             const found = [];
-            for (const url of urls) {
-                const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), 6000);
-                try {
-                    const res = await fetch(url, {
-                        method: "GET",
-                        credentials: "include",
-                        headers,
-                        signal: controller.signal,
-                    });
-                    const html = await res.text();
-                    const re = /<a\\s+[^>]*href=["']([^"']+)["'][^>]*>([\\s\\S]*?)<\\/a>/gi;
-                    let match;
-                    while ((match = re.exec(html))) {
-                        found.push({
-                            href: match[1],
-                            text: match[2].replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim(),
-                            source: url,
+            const limit = 6;
+            let cursor = 0;
+            async function run() {
+                while (cursor < urls.length) {
+                    const url = urls[cursor++];
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), 8000);
+                    try {
+                        const res = await fetch(url, {
+                            method: "GET",
+                            credentials: "include",
+                            headers,
+                            signal: controller.signal,
                         });
+                        const html = await res.text();
+                        const re = /<a\\s+[^>]*href=["']([^"']+)["'][^>]*>([\\s\\S]*?)<\\/a>/gi;
+                        let match;
+                        while ((match = re.exec(html))) {
+                            found.push({
+                                href: match[1],
+                                text: match[2].replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim(),
+                                source: url,
+                            });
+                        }
+                    } catch (err) {
+                        continue;
+                    } finally {
+                        clearTimeout(timer);
                     }
-                } catch (err) {
-                    continue;
-                } finally {
-                    clearTimeout(timer);
                 }
             }
+            const workers = [];
+            for (let n = 0; n < Math.min(limit, urls.length); n++) workers.push(run());
+            await Promise.all(workers);
             return found;
         }""",
         urls,
     )
     return [row for row in (result or []) if isinstance(row, dict) and row.get("href")]
+
+
+_MYGRADES_EXTRACT_JS = """() => {
+    const scrub = (node) => {
+        if (!node) return "";
+        const clone = node.cloneNode(true);
+        clone.querySelectorAll(".hideoff, .offscreen, .sr-only, .itemCat, script, style").forEach((n) => n.remove());
+        return (clone.innerText || "").replace(/\\s+/g, " ").trim();
+    };
+    const skip = /^(total|weighted total|running total|overall grade|item|grade|last activity|总分|加权总分|总计|总成绩|项目|成绩)$/i;
+    const out = [];
+    const seen = new Set();
+    const push = (title, grade, possible, posted) => {
+        title = (title || "").replace(/\\s+/g, " ").trim();
+        const key = title.toLowerCase();
+        if (!title || skip.test(key) || seen.has(key)) return;
+        seen.add(key);
+        out.push({
+            title,
+            grade: (grade || "").replace(/\\s+/g, " ").trim(),
+            possible: (possible || "").replace(/\\s+/g, " ").trim(),
+            posted: (posted || "").replace(/\\s+/g, " ").trim(),
+        });
+    };
+    const rows = document.querySelectorAll(
+        ".sortable_item_row, .itemRow, .graded_item_row, #grades_wrapper tr, .grades_wrapper tr"
+    );
+    rows.forEach((row) => {
+        const cls = String(row.className || "");
+        if (/calculatedRow|gradesTableHeader|gradeHeader/i.test(cls)) return;
+        const title = scrub(row.querySelector(".gradable a, a.gradeLabel, .cell.gradable, td.gradable"))
+            || scrub(row.querySelector("td"));
+        const grade = scrub(row.querySelector("span.grade, .cell.grade, td.grade"));
+        const possible = scrub(row.querySelector(".pointsPossible"));
+        const posted = scrub(row.querySelector(".lastActivityDate"));
+        push(title, grade, possible, posted);
+    });
+    return out;
+}"""
+
+
+def _read_mygrades_dom(page, url: str) -> dict[str, Any]:
+    page.goto(url, wait_until="domcontentloaded", timeout=25_000)
+    _dismiss_consent(page)
+    rows: list[dict[str, Any]] = []
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        for frame in page.frames:
+            try:
+                found = frame.evaluate(_MYGRADES_EXTRACT_JS)
+            except Exception:
+                found = []
+            if found:
+                rows = [row for row in found if isinstance(row, dict)]
+                break
+        if rows:
+            break
+        page.wait_for_timeout(400)
+    html = ""
+    if not rows:
+        try:
+            html = page.content() or ""
+        except Exception:
+            html = ""
+    return {"rows": rows, "html": html}
+
+
+def _in_page_read_mygrades(page, urls: list[str]) -> list[dict[str, Any]]:
+    page.set_default_timeout(20_000)
+    result = page.evaluate(
+        """async (urls) => {
+            const extract = (doc) => {
+                const scrub = (node) => {
+                    if (!node) return "";
+                    const clone = node.cloneNode(true);
+                    clone.querySelectorAll(".hideoff, .offscreen, .sr-only, .itemCat, script, style").forEach((n) => n.remove());
+                    return (clone.innerText || "").replace(/\\s+/g, " ").trim();
+                };
+                const skip = /^(total|weighted total|running total|overall grade|item|grade|last activity|总分|加权总分|总计|总成绩|项目|成绩)$/i;
+                const out = [];
+                const seen = new Set();
+                const push = (title, grade, possible, posted) => {
+                    title = (title || "").replace(/\\s+/g, " ").trim();
+                    const key = title.toLowerCase();
+                    if (!title || skip.test(key) || seen.has(key)) return;
+                    seen.add(key);
+                    out.push({
+                        title,
+                        grade: (grade || "").replace(/\\s+/g, " ").trim(),
+                        possible: (possible || "").replace(/\\s+/g, " ").trim(),
+                        posted: (posted || "").replace(/\\s+/g, " ").trim(),
+                    });
+                };
+                const rows = doc.querySelectorAll(
+                    ".sortable_item_row, .itemRow, .graded_item_row, #grades_wrapper tr, .grades_wrapper tr"
+                );
+                rows.forEach((row) => {
+                    const cls = String(row.className || "");
+                    if (/calculatedRow|gradesTableHeader|gradeHeader/i.test(cls)) return;
+                    const title = scrub(row.querySelector(".gradable a, a.gradeLabel, .cell.gradable, td.gradable"))
+                        || scrub(row.querySelector("td"));
+                    const grade = scrub(row.querySelector("span.grade, .cell.grade, td.grade"));
+                    const possible = scrub(row.querySelector(".pointsPossible"));
+                    const posted = scrub(row.querySelector(".lastActivityDate"));
+                    push(title, grade, possible, posted);
+                });
+                return out;
+            };
+            const loadOne = async (url) => {
+                const iframe = document.createElement("iframe");
+                iframe.setAttribute("aria-hidden", "true");
+                iframe.style.cssText = "position:absolute;width:0;height:0;border:0;visibility:hidden";
+                const done = new Promise((resolve) => {
+                    const timer = setTimeout(resolve, 10000);
+                    iframe.onload = () => { clearTimeout(timer); resolve(); };
+                });
+                iframe.src = url;
+                document.body.appendChild(iframe);
+                try {
+                    await done;
+                    const doc = iframe.contentDocument;
+                    if (!doc) return { url, rows: [], blocked: true };
+                    const deadline = Date.now() + 2500;
+                    while (Date.now() < deadline) {
+                        if (doc.querySelector(".itemRow, .pointsPossible, .sortable_item_row, #grades_wrapper")) break;
+                        await new Promise((r) => setTimeout(r, 200));
+                    }
+                    return { url, rows: extract(doc), blocked: false };
+                } catch (err) {
+                    return { url, rows: [], blocked: true, error: String(err) };
+                } finally {
+                    iframe.remove();
+                }
+            };
+            const found = new Array(urls.length);
+            const limit = 4;
+            let cursor = 0;
+            async function run() {
+                while (cursor < urls.length) {
+                    const index = cursor++;
+                    found[index] = await loadOne(urls[index]);
+                }
+            }
+            const workers = [];
+            for (let n = 0; n < Math.min(limit, urls.length); n++) workers.push(run());
+            await Promise.all(workers);
+            return found;
+        }""",
+        urls,
+    )
+    return [row for row in (result or []) if isinstance(row, dict)]
+
+
+def _in_page_get_json_many(page, urls: list[str]) -> list[dict[str, Any]]:
+    page.set_default_timeout(20_000)
+    result = page.evaluate(
+        """async (urls) => {
+            const headers = {
+                Accept: "application/json",
+                "X-Requested-With": "XMLHttpRequest",
+            };
+            for (const part of document.cookie.split(";")) {
+                const trimmed = part.trim();
+                const eq = trimmed.indexOf("=");
+                if (eq < 0) continue;
+                const key = trimmed.slice(0, eq).toLowerCase();
+                const value = trimmed.slice(eq + 1);
+                if (key.includes("xsrf")) {
+                    headers["X-Blackboard-XSRF"] = value;
+                }
+            }
+            const found = new Array(urls.length);
+            const limit = 6;
+            let cursor = 0;
+            async function run() {
+                while (cursor < urls.length) {
+                    const index = cursor++;
+                    const url = urls[index];
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), 8000);
+                    try {
+                        const res = await fetch(url, {
+                            method: "GET",
+                            credentials: "include",
+                            headers,
+                            signal: controller.signal,
+                        });
+                        found[index] = { url, status: res.status, text: await res.text() };
+                    } catch (err) {
+                        found[index] = { url, status: 0, text: "", error: String(err) };
+                    } finally {
+                        clearTimeout(timer);
+                    }
+                }
+            }
+            const workers = [];
+            for (let n = 0; n < Math.min(limit, urls.length); n++) workers.push(run());
+            await Promise.all(workers);
+            return found;
+        }""",
+        urls,
+    )
+    parsed: list[dict[str, Any]] = []
+    for row in result or []:
+        if not isinstance(row, dict):
+            continue
+        text = row.get("text") or ""
+        data = None
+        if text:
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                data = None
+        parsed.append(
+            {
+                "url": row.get("url") or "",
+                "status": int(row.get("status") or 0),
+                "data": data,
+            }
+        )
+    return parsed
+
+
+def _in_page_get_html(page, urls: list[str]) -> list[dict[str, Any]]:
+    page.set_default_timeout(20_000)
+    result = page.evaluate(
+        """async (urls) => {
+            const headers = { Accept: "text/html,application/xhtml+xml" };
+            for (const part of document.cookie.split(";")) {
+                const trimmed = part.trim();
+                const eq = trimmed.indexOf("=");
+                if (eq < 0) continue;
+                const key = trimmed.slice(0, eq).toLowerCase();
+                const value = trimmed.slice(eq + 1);
+                if (key.includes("xsrf")) {
+                    headers["X-Blackboard-XSRF"] = value;
+                }
+            }
+            const found = new Array(urls.length);
+            const limit = 8;
+            let cursor = 0;
+            async function run() {
+                while (cursor < urls.length) {
+                    const index = cursor++;
+                    const url = urls[index];
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), 12000);
+                    try {
+                        const res = await fetch(url, {
+                            method: "GET",
+                            credentials: "include",
+                            headers,
+                            signal: controller.signal,
+                        });
+                        found[index] = { url, status: res.status, html: await res.text() };
+                    } catch (err) {
+                        found[index] = { url, status: 0, html: "", error: String(err) };
+                    } finally {
+                        clearTimeout(timer);
+                    }
+                }
+            }
+            const workers = [];
+            for (let n = 0; n < Math.min(limit, urls.length); n++) workers.push(run());
+            await Promise.all(workers);
+            return found;
+        }""",
+        urls,
+    )
+    return [row for row in (result or []) if isinstance(row, dict)]
 
 
 def _in_page_check_submissions(page, urls: list[str]) -> list[dict[str, Any]]:
@@ -738,26 +1082,35 @@ def _in_page_check_submissions(page, urls: list[str]) -> list[dict[str, Any]]:
                 if (/id=["']currentAttempt_submissionList["']/.test(html) && /attachment/.test(html)) return true;
                 return false;
             };
-            const found = [];
-            for (const url of urls) {
-                const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), 6000);
-                try {
-                    const res = await fetch(url, {
-                        method: "GET",
-                        credentials: "include",
-                        headers,
-                        signal: controller.signal,
-                    });
-                    const html = await res.text();
-                    const title = titleFrom(html);
-                    found.push({ url, title, submitted: submitted(html, title) });
-                } catch (err) {
-                    found.push({ url, title: "", submitted: false });
-                } finally {
-                    clearTimeout(timer);
+            const found = new Array(urls.length);
+            const limit = 6;
+            let cursor = 0;
+            async function run() {
+                while (cursor < urls.length) {
+                    const index = cursor++;
+                    const url = urls[index];
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), 8000);
+                    try {
+                        const res = await fetch(url, {
+                            method: "GET",
+                            credentials: "include",
+                            headers,
+                            signal: controller.signal,
+                        });
+                        const html = await res.text();
+                        const title = titleFrom(html);
+                        found[index] = { url, title, submitted: submitted(html, title) };
+                    } catch (err) {
+                        found[index] = { url, title: "", submitted: false };
+                    } finally {
+                        clearTimeout(timer);
+                    }
                 }
             }
+            const workers = [];
+            for (let n = 0; n < Math.min(limit, urls.length); n++) workers.push(run());
+            await Promise.all(workers);
             return found;
         }""",
         urls,

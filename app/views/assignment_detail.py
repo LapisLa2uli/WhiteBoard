@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import flet as ft
 
+from blackboard.api import format_grade_label, grade_note
+
 from app import theme
 from app.controller import AppController
 from app.widgets import assignment_card, card, format_dt, heading, muted, page_scroll, status_chip
@@ -57,7 +59,19 @@ def build_assignment_detail(ctrl: AppController, assignment_id: str) -> ft.Contr
             ),
         )
     if grade:
-        details.append(ft.Row([muted("Grade"), ft.Text(grade.score or "—", weight=ft.FontWeight.W_600)]))
+        grade_row: list[ft.Control] = [
+            muted("Grade"),
+            ft.Text(format_grade_label(grade), weight=ft.FontWeight.W_600),
+        ]
+        if grade_note(grade):
+            grade_row.append(
+                ft.TextButton(
+                    "View feedback",
+                    icon=ft.Icons.CHAT_BUBBLE_OUTLINE,
+                    on_click=lambda e, item=grade: ctrl.show_grade_feedback(item),
+                )
+            )
+        details.append(ft.Row(grade_row, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
     blocks: list[ft.Control] = [
         ft.TextButton("Back", icon=ft.Icons.ARROW_BACK, on_click=lambda e: ctrl.back()),

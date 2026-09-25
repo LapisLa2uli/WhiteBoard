@@ -24,6 +24,7 @@ from app.widgets import (
     error_banner,
     format_dt,
     heading,
+    list_pager,
     muted,
     page_scroll,
     status_chip,
@@ -153,16 +154,22 @@ def _list_blocks(ctrl: AppController) -> list[ft.Control]:
     if not items:
         return [empty_state("No upcoming events in this range.", ctrl.refresh)]
 
+    window, page, page_count, start, total = ctrl.page_window("calendar-list", items)
     blocks: list[ft.Control] = []
 
     def day_key(item):
         return local_event_date(item.when)
 
-    for day, group in groupby(items, key=day_key):
+    for day, group in groupby(window, key=day_key):
         label = day.strftime("%A, %B %d") if day else "No date"
         blocks.append(ft.Text(label, size=16, weight=ft.FontWeight.W_600, color=theme.TEXT))
         for item in group:
             blocks.append(_list_card(ctrl, item))
+    pager = list_pager(
+        ctrl, "calendar-list", page=page, page_count=page_count, start=start, total=total
+    )
+    if pager is not None:
+        blocks.append(pager)
     return blocks
 
 
@@ -531,4 +538,5 @@ def _day_start(day: date) -> datetime:
 
 def _set_days(ctrl: AppController, days: int) -> None:
     ctrl.calendar_days = days
+    ctrl.reset_list_pages("calendar")
     ctrl.rebuild()

@@ -9,6 +9,7 @@ from blackboard.api import (
     course_score_percent,
     course_score_totals,
     deadline_is_finished,
+    grade_note,
     upcoming,
 )
 
@@ -19,6 +20,7 @@ from app.widgets import (
     empty_state,
     format_dt,
     heading,
+    list_pager,
     muted,
     page_scroll,
     score_ring,
@@ -87,7 +89,11 @@ def build_course_detail(ctrl: AppController, course_id: str) -> ft.Control:
         if _resolve_assignment_status(snapshot, assignment) != "submitted"
     ]
     if upcoming_items:
-        for item in upcoming_items:
+        upcoming_key = f"course-upcoming:{course_id}"
+        upcoming_page, page, page_count, start, total = ctrl.page_window(
+            upcoming_key, upcoming_items
+        )
+        for item in upcoming_page:
             if hasattr(item, "status"):
                 title = item.title
                 when = item.due_at
@@ -139,34 +145,72 @@ def build_course_detail(ctrl: AppController, course_id: str) -> ft.Control:
                     ),
                 )
             )
+        pager = list_pager(
+            ctrl,
+            upcoming_key,
+            page=page,
+            page_count=page_count,
+            start=start,
+            total=total,
+        )
+        if pager is not None:
+            blocks.append(pager)
     else:
         blocks.append(empty_state("No upcoming work for this course."))
 
     blocks.append(section_title("Grades"))
     results = course_result_rows(snapshot, course_id)
     if results:
-        for title, label, due, aid in results:
+        grades_key = f"course-grades:{course_id}"
+        grade_page, page, page_count, start, total = ctrl.page_window(grades_key, results)
+        for title, label, due, aid in grade_page:
+            grade = _grade_for_result(snapshot, course_id, title, aid)
+            score_bits: list[ft.Control] = [
+                ft.Text(label, size=16, weight=ft.FontWeight.W_600),
+            ]
+            if grade and grade_note(grade):
+                score_bits.append(
+                    ft.TextButton(
+                        "View feedback",
+                        icon=ft.Icons.CHAT_BUBBLE_OUTLINE,
+                        on_click=lambda e, item=grade: ctrl.show_grade_feedback(item),
+                    )
+                )
             blocks.append(
                 card(
                     ft.Row(
                         [
-                            ft.Column(
-                                [
-                                    ft.Text(title, weight=ft.FontWeight.W_600),
-                                    muted(format_dt(due, with_time=False) if due else "No due date"),
-                                ],
-                                spacing=2,
+                            ft.Container(
                                 expand=True,
+                                ink=bool(aid),
+                                on_click=(
+                                    lambda e, assignment_id=aid: _open_assignment(ctrl, assignment_id)
+                                )
+                                if aid
+                                else None,
+                                content=ft.Column(
+                                    [
+                                        ft.Text(title, weight=ft.FontWeight.W_600),
+                                        muted(format_dt(due, with_time=False) if due else "No due date"),
+                                    ],
+                                    spacing=2,
+                                ),
                             ),
-                            ft.Text(label, size=16, weight=ft.FontWeight.W_600),
+                            ft.Column(
+                                score_bits,
+                                spacing=0,
+                                horizontal_alignment=ft.CrossAxisAlignment.END,
+                            ),
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    on_click=(lambda e, assignment_id=aid: _open_assignment(ctrl, assignment_id))
-                    if aid
-                    else None,
                 )
             )
+        pager = list_pager(
+            ctrl, grades_key, page=page, page_count=page_count, start=start, total=total
+        )
+        if pager is not None:
+            blocks.append(pager)
     else:
         blocks.append(empty_state("No grades for this course yet."))
 
@@ -192,6 +236,17 @@ def build_course_detail(ctrl: AppController, course_id: str) -> ft.Control:
         )
     )
     return page_scroll(blocks)
+
+
+def _grade_for_result(snapshot, course_id: str, title: str, assignment_id: str):
+    for grade in snapshot.grades:
+        if grade.course_id != course_id:
+            continue
+        if assignment_id and assignment_id in {grade.id, grade.assignment_id}:
+            return grade
+        if grade.title.lower() == title.lower():
+            return grade
+    return None
 
 
 def _open_assignment(ctrl: AppController, assignment_id: str) -> None:

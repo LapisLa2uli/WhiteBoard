@@ -55,6 +55,9 @@ def build_shell(ctrl: AppController) -> ft.Control:
                 ft.Container(expand=True),
                 muted(format_refreshed(snapshot.fetched_at)),
                 ft.Text(snapshot.user_name or "", color=theme.MUTED, size=13),
+                ft.ProgressRing(width=18, height=18, stroke_width=2, color=theme.ACCENT)
+                if ctrl.busy or ctrl.contents_indexing
+                else ft.Container(width=0, height=0),
                 ft.OutlinedButton(
                     "Refresh",
                     on_click=lambda e: ctrl.refresh(),

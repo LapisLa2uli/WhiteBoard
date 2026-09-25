@@ -14,6 +14,7 @@ from app.widgets import (
     format_dt,
     format_size,
     heading,
+    list_pager,
     muted,
     page_scroll,
 )
@@ -87,7 +88,8 @@ def build_contents(ctrl: AppController) -> ft.Control:
 
     blocks.append(_list_header())
     rows: list[ft.Control] = []
-    for course in courses:
+    shown, page, page_count, start, total = ctrl.page_window("contents-tree", courses)
+    for course in shown:
         course_key = f"course:{course.id}"
         expanded = course_key in ctrl.contents_expanded
         course_nodes = [node for node in nodes if node.course_id == course.id]
@@ -123,6 +125,11 @@ def build_contents(ctrl: AppController) -> ft.Control:
         blocks.append(empty_state("No files in the visible courses.", ctrl.refresh))
 
     blocks.extend(rows)
+    pager = list_pager(
+        ctrl, "contents-tree", page=page, page_count=page_count, start=start, total=total
+    )
+    if pager is not None:
+        blocks.append(pager)
     return page_scroll(blocks)
 
 
@@ -247,8 +254,15 @@ def _folder_view(
         else:
             rows.append(empty_state("This folder is empty."))
         return rows
-    for item in items:
+    folder_key = f"contents-folder:{parent_key or 'root'}"
+    shown, page, page_count, start, total = ctrl.page_window(folder_key, items)
+    for item in shown:
         rows.append(_explorer_row(ctrl, item, parent_key=parent_key, depth=0, show_meta=True))
+    pager = list_pager(
+        ctrl, folder_key, page=page, page_count=page_count, start=start, total=total
+    )
+    if pager is not None:
+        rows.append(pager)
     return rows
 
 
@@ -268,7 +282,15 @@ def _columns_view(
                     padding=12,
                 )
             )
-        for item in items:
+        selected_index = next(
+            (index for index, item in enumerate(items) if item.key == selected_key),
+            None,
+        )
+        column_key = f"contents-col:{parent_key or 'root'}"
+        shown, page, page_count, start, total = ctrl.page_window(
+            column_key, items, prefer_index=selected_index
+        )
+        for item in shown:
             body.append(
                 _explorer_row(
                     ctrl,
@@ -279,6 +301,11 @@ def _columns_view(
                     highlighted=item.key == selected_key,
                 )
             )
+        pager = list_pager(
+            ctrl, column_key, page=page, page_count=page_count, start=start, total=total
+        )
+        if pager is not None:
+            body.append(pager)
         columns.append(
             ft.Container(
                 expand=True,

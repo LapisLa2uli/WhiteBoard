@@ -17,6 +17,7 @@ from app.widgets import (
     error_banner,
     format_dt,
     heading,
+    list_pager,
     muted,
     page_scroll,
     status_chip,
@@ -277,10 +278,9 @@ def assignment_list_controls(
                     else f"{len(todo_items)} assignments"
                 ),
                 expanded=ctrl.assignments_todo_expanded,
-                rows=[
-                    _assignment_row(ctrl, assignment, ignored_page=False)
-                    for assignment in todo_items
-                ],
+                rows=_paged_assignment_rows(
+                    ctrl, "assignments-todo", todo_items, ignored_page=False
+                ),
                 empty="No unsubmitted assignments.",
                 on_change=lambda e: ctrl.set_assignments_section("todo", tile_expanded(e)),
                 leading_icon=ft.Icons.ASSIGNMENT_OUTLINED,
@@ -294,10 +294,9 @@ def assignment_list_controls(
                     else f"{len(submitted_items)} assignments"
                 ),
                 expanded=ctrl.assignments_submitted_expanded,
-                rows=[
-                    _assignment_row(ctrl, assignment, ignored_page=False)
-                    for assignment in submitted_items
-                ],
+                rows=_paged_assignment_rows(
+                    ctrl, "assignments-submitted", submitted_items, ignored_page=False
+                ),
                 empty="No submitted assignments.",
                 on_change=lambda e: ctrl.set_assignments_section(
                     "submitted", tile_expanded(e)
@@ -306,10 +305,23 @@ def assignment_list_controls(
                 spacing=12,
             ),
         ]
-    return [
-        _assignment_row(ctrl, assignment, ignored_page=ignored_page)
-        for assignment in items
+    page_key = f"assignments-{forced_status or ctrl.assignment_filter}"
+    return _paged_assignment_rows(ctrl, page_key, items, ignored_page=ignored_page)
+
+
+def _paged_assignment_rows(
+    ctrl: AppController, key: str, items: list, *, ignored_page: bool
+) -> list[ft.Control]:
+    if not items:
+        return []
+    window, page, page_count, start, total = ctrl.page_window(key, items)
+    rows: list[ft.Control] = [
+        _assignment_row(ctrl, assignment, ignored_page=ignored_page) for assignment in window
     ]
+    pager = list_pager(ctrl, key, page=page, page_count=page_count, start=start, total=total)
+    if pager is not None:
+        rows.append(pager)
+    return rows
 
 
 def _assignment_row(
@@ -436,4 +448,5 @@ def _on_card_click(ctrl: AppController, assignment_id: str) -> None:
 def _set_filter(ctrl: AppController, value: str) -> None:
     ctrl.assignment_filter = value
     ctrl.selected_assignment_ids.clear()
+    ctrl.reset_list_pages("assignments")
     ctrl.rebuild()

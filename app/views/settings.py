@@ -4,6 +4,7 @@ import flet as ft
 
 from app import theme
 from app.controller import AppController
+from app.paging import PAGE_SIZES
 from app.shortcuts import shortcut_labels
 from app.widgets import card, format_refreshed, heading, muted, page_scroll
 
@@ -49,6 +50,37 @@ def build_settings(ctrl: AppController) -> ft.Control:
             muted(
                 "This app is for your own account only. Course materials stay on Blackboard; "
                 "do not republish them. Session cookies stay in memory and are not saved to disk."
+            ),
+            heading("Lists", 20),
+            card(
+                ft.Column(
+                    [
+                        muted(
+                            "How many items to show at once on assignments, grades, "
+                            "the calendar, course pages, and Contents."
+                        ),
+                        ft.Dropdown(
+                            label="Items on one page",
+                            value=str(ctrl.list_page_size),
+                            options=[
+                                ft.DropdownOption(key=str(size), text=f"Show {size} at once")
+                                for size in PAGE_SIZES
+                            ],
+                            on_select=lambda e: ctrl.set_list_page_size(e.control.value),
+                            width=280,
+                            border_color=theme.BORDER,
+                        ),
+                        ft.Text(
+                            "More than 20 items on one page can make the app lag.",
+                            size=13,
+                            color=theme.WARN if ctrl.list_page_size > 20 else theme.MUTED,
+                            weight=ft.FontWeight.W_600
+                            if ctrl.list_page_size > 20
+                            else ft.FontWeight.W_400,
+                        ),
+                    ],
+                    spacing=12,
+                )
             ),
             heading("Shortcuts", 20),
             card(

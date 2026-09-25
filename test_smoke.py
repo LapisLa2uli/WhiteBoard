@@ -716,6 +716,62 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(_mygrades_html_needs_browser("<html><body>Loading</body></html>", 200))
         self.assertFalse(_mygrades_html_needs_browser("missing", 404))
 
+    def test_teacher_feedback_does_not_replace_the_score(self) -> None:
+        from blackboard.api import (
+            _parse_mygrades_html,
+            format_grade_label,
+            grade_note,
+            grade_points,
+        )
+        from blackboard.models import Grade
+
+        comment = Grade(
+            id="1",
+            course_id="_7856_1",
+            title="Mac Vs. PC",
+            score="Thanks for your question! One improvement. /5",
+            points_possible=5,
+        )
+        self.assertEqual(format_grade_label(comment), "—/5")
+        self.assertIn("Thanks for your question", grade_note(comment))
+        self.assertIsNone(grade_points(comment))
+
+        rubric = Grade(
+            id="2",
+            course_id="_6790_1",
+            title="Poster",
+            score="spoke with devices 4-4-5-3-2=18 /20",
+            points_possible=20,
+        )
+        self.assertEqual(format_grade_label(rubric), "18/20")
+        self.assertEqual(grade_points(rubric), (18.0, 20.0))
+        self.assertIn("spoke with devices", grade_note(rubric))
+
+        essay = Grade(
+            id="3",
+            course_id="_6751_1",
+            title="Research",
+            score="60/60 - excellent essay Hank!",
+        )
+        self.assertEqual(format_grade_label(essay), "60/60")
+        self.assertEqual(grade_points(essay), (60.0, 60.0))
+        self.assertIn("excellent essay", grade_note(essay))
+
+        html = """
+        <div class="sortable_item_row itemRow">
+          <div class="cell gradable"><a>IB response</a></div>
+          <div class="cell grade">
+            <div class="feedback"><p>Thanks for your question!</p></div>
+            <span class="grade">4.00</span>
+            <span class="pointsPossible">/5.00</span>
+          </div>
+        </div>
+        """
+        parsed = _parse_mygrades_html(html, "_7856_1")[0]
+        self.assertEqual(parsed.score, "4/5")
+        self.assertEqual(parsed.points_earned, 4)
+        self.assertIn("Thanks for your question", parsed.feedback)
+
     def test_calendar_events_stay_off_the_assignment_list(self) -> None:
         data = {
             "results": [
@@ -1724,6 +1780,39 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(data["username"], "student")
         self.assertNotIn("password", data)
         self.assertEqual(data["marked_submitted_assignments"][0]["id"], "a1")
+
+    def test_list_page_size_slices_and_is_saved(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app.paging import normalize_page_size, page_of
+        from blackboard import store as store_mod
+        from blackboard.store import load_settings, save_settings
+
+        self.assertEqual(normalize_page_size(10), 10)
+        self.assertEqual(normalize_page_size("50"), 50)
+        self.assertEqual(normalize_page_size(30), 10)
+        self.assertEqual(normalize_page_size("nope"), 10)
+        window, page, count, start, total = page_of(list(range(25)), 1, 10)
+        self.assertEqual(window, list(range(10, 20)))
+        self.assertEqual((page, count, start, total), (1, 3, 10, 25))
+        window, page, count, start, total = page_of(list(range(25)), 99, 20)
+        self.assertEqual(page, 1)
+        self.assertEqual(window, list(range(20, 25)))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            with patch.object(store_mod, "SETTINGS_PATH", path), patch.object(
+                store_mod, "DATA_DIR", Path(tmp)
+            ):
+                save_settings({"username": "student", "list_page_size": 50})
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["list_page_size"], 50)
+                save_settings({"username": "student", "list_page_size": 40})
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["list_page_size"], 10)
+                path.write_text(json.dumps({"list_page_size": 100}), encoding="utf-8")
+                self.assertEqual(load_settings()["list_page_size"], 10)
 
     def test_start_login_requires_credentials(self) -> None:
         from app.controller import AppController

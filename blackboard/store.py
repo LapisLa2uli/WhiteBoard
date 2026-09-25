@@ -94,6 +94,7 @@ def load_settings() -> dict:
         "contents_view_mode": "tree",
         "shortcut_prompt_done": False,
         "hide_calendar_events": False,
+        "list_page_size": 10,
     }
     if not SETTINGS_PATH.exists():
         return dict(defaults)
@@ -115,6 +116,11 @@ def load_settings() -> dict:
         merged["load_filter_courses_only"] = bool(merged.get("load_filter_courses_only"))
         merged["shortcut_prompt_done"] = bool(merged.get("shortcut_prompt_done"))
         merged["hide_calendar_events"] = bool(merged.get("hide_calendar_events"))
+        try:
+            page_size = int(merged.get("list_page_size") or 10)
+        except (TypeError, ValueError):
+            page_size = 10
+        merged["list_page_size"] = page_size if page_size in (10, 20, 50) else 10
         mode = str(merged.get("contents_view_mode") or "tree")
         merged["contents_view_mode"] = mode if mode in {"tree", "folder", "columns"} else "tree"
         merged["username"] = str(merged.get("username") or "")
@@ -147,5 +153,10 @@ def save_settings(settings: dict) -> None:
         ),
         "shortcut_prompt_done": bool(settings.get("shortcut_prompt_done")),
         "hide_calendar_events": bool(settings.get("hide_calendar_events")),
+        "list_page_size": (
+            int(settings.get("list_page_size"))
+            if str(settings.get("list_page_size")) in {"10", "20", "50"}
+            else 10
+        ),
     }
     SETTINGS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")

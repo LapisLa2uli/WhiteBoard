@@ -82,6 +82,7 @@ class Grade:
     assignment_id: str = ""
     points_earned: float | None = None
     points_possible: float | None = None
+    feedback: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -99,6 +100,7 @@ class Grade:
             assignment_id=str(data.get("assignment_id", "")),
             points_earned=_optional_float(data.get("points_earned")),
             points_possible=_optional_float(data.get("points_possible")),
+            feedback=str(data.get("feedback") or ""),
         )
 
 

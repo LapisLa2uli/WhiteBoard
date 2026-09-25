@@ -17,6 +17,41 @@ def muted(text: str, size: int = 13, **kwargs) -> ft.Text:
     return ft.Text(text, size=size, color=theme.MUTED, **kwargs)
 
 
+def list_pager(
+    ctrl,
+    key: str,
+    *,
+    page: int,
+    page_count: int,
+    start: int,
+    total: int,
+) -> ft.Control | None:
+    """Previous / next controls. Hidden when the whole list fits on one page."""
+    size = ctrl.list_page_size
+    if total <= size or page_count <= 1:
+        return None
+    end = min(total, start + size)
+    return ft.Row(
+        [
+            ft.IconButton(
+                icon=ft.Icons.CHEVRON_LEFT,
+                tooltip="Previous page",
+                disabled=page <= 0,
+                on_click=lambda e: ctrl.set_list_page(key, page - 1),
+            ),
+            muted(f"{start + 1}–{end} of {total}"),
+            ft.IconButton(
+                icon=ft.Icons.CHEVRON_RIGHT,
+                tooltip="Next page",
+                disabled=page >= page_count - 1,
+                on_click=lambda e: ctrl.set_list_page(key, page + 1),
+            ),
+        ],
+        spacing=4,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+
+
 def format_loading_message(message: str, max_chars: int = 48) -> str:
     """Keep the progress percent visible by shortening long course names."""
     text = (message or "Loading…").strip() or "Loading…"

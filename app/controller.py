@@ -47,18 +47,22 @@ class AppController:
         self.grades_graded_expanded = True
         self.grades_pending_expanded = True
         self.assignments_todo_expanded = True
-        self.assignments_submitted_expanded = True
+        self.assignments_submitted_expanded = False
         self.busy = False
         self.calendar_days = 14
         self.calendar_mode = "list"
         self.calendar_anchor = date.today()
         self.assignment_filter = "all"
         self.assignment_query = ""
+        self.grade_query = ""
         self.course_query = ""
+        self.list_pages: dict[str, int] = {}
         self.settings = load_settings()
         self.course_list_column = None
         self.assignment_list_column = None
         self.assignment_toolbar_column = None
+        self.grades_list_column = None
+        self._filter_gen = 0
         self.assignment_list_forced_status = None
         self.assignment_select_mode = False
         self.selected_assignment_ids: set[str] = set()
@@ -274,15 +278,17 @@ class AppController:
                 if not current:
                     return
                 for label, due_at in current:
-                    try:
-                        label.value = format_countdown(due_at)
-                        label.color = countdown_color(due_at)
-                        label.update()
-                    except Exception:
-                        continue
-                now = datetime.now(timezone.utc)
-                delay = 1.0 - (now.microsecond / 1_000_000)
-                await asyncio.sleep(max(0.05, min(delay, 1.0)))
+                    label.value = format_countdown(due_at)
+                    label.color = countdown_color(due_at)
+                try:
+                    if len(current) <= 8:
+                        for label, _due in current:
+                            label.update()
+                    else:
+                        self.page.update()
+                except Exception:
+                    return
+                await asyncio.sleep(1.0 if len(current) <= 8 else 30.0)
 
         try:
             self.page.run_task(tick)
@@ -559,6 +565,50 @@ class AppController:
             self.assignments_submitted_expanded = bool(expanded)
 
     @property
+    def list_page_size(self) -> int:
+        from app.paging import normalize_page_size
+
+        return normalize_page_size(self.settings.get("list_page_size"))
+
+    def set_list_page_size(self, value) -> None:
+        from app.paging import normalize_page_size
+
+        size = normalize_page_size(value)
+        if size == self.list_page_size:
+            return
+        self.settings["list_page_size"] = size
+        self.list_pages.clear()
+        self.persist()
+        self.rebuild()
+
+    def page_window(self, key: str, items: list, *, prefer_index: int | None = None):
+        from app.paging import page_of
+
+        if prefer_index is not None and key not in self.list_pages and prefer_index >= 0:
+            self.list_pages[key] = prefer_index // self.list_page_size
+        window, page, page_count, start, total = page_of(
+            items, self.list_pages.get(key, 0), self.list_page_size
+        )
+        self.list_pages[key] = page
+        return window, page, page_count, start, total
+
+    def set_list_page(self, key: str, page: int) -> None:
+        self.list_pages[key] = max(0, int(page))
+        route = self.route
+        if key.startswith("grades") and route == "/grades":
+            self.refresh_grades_list()
+            return
+        if key.startswith("assignments") and route in {"/assignments", "/submitted", "/ignored"}:
+            self.refresh_assignment_list()
+            return
+        self.rebuild()
+
+    def reset_list_pages(self, prefix: str) -> None:
+        for key in list(self.list_pages):
+            if key.startswith(prefix):
+                del self.list_pages[key]
+
+    @property
     def hide_calendar_events(self) -> bool:
         return bool(self.settings.get("hide_calendar_events"))
 
@@ -677,10 +727,76 @@ class AppController:
 
     def set_assignment_query(self, query: str) -> None:
         self.assignment_query = query
-        self.refresh_assignment_list()
+        self.reset_list_pages("assignments")
+        self._schedule_filter_refresh("assignments")
+
+    def set_grade_query(self, query: str) -> None:
+        self.grade_query = query
+        self.reset_list_pages("grades")
+        self._schedule_filter_refresh("grades")
+
+    def _schedule_filter_refresh(self, kind: str) -> None:
+        self._filter_gen += 1
+        gen = self._filter_gen
+
+        async def later() -> None:
+            await asyncio.sleep(0.25)
+            if gen != self._filter_gen:
+                return
+            if kind == "grades":
+                self.refresh_grades_list()
+            else:
+                self.refresh_assignment_list()
+
+        try:
+            self.page.run_task(later)
+        except Exception:
+            if kind == "grades":
+                self.refresh_grades_list()
+            else:
+                self.refresh_assignment_list()
+
+    def refresh_grades_list(self) -> None:
+        from app.views.grades import grade_list_controls
+
+        column = self.grades_list_column
+        if column is None:
+            self.rebuild()
+            return
+        column.controls = grade_list_controls(self)
+        try:
+            column.update()
+        except Exception:
+            self.rebuild()
+
+    def show_grade_feedback(self, grade) -> None:
+        import flet as ft
+
+        from blackboard.api import format_grade_label, grade_note
+
+        course = self.store.snapshot.course_name(grade.course_id) or "Course"
+        dialog = ft.AlertDialog(
+            title=ft.Text(grade.title),
+            content=ft.Container(
+                width=520,
+                height=360,
+                content=ft.Column(
+                    [
+                        ft.Text(course, size=12, color="#64748b"),
+                        ft.Text(format_grade_label(grade), size=18, weight=ft.FontWeight.W_700),
+                        ft.Text(grade_note(grade), selectable=True),
+                    ],
+                    spacing=10,
+                    scroll=ft.ScrollMode.AUTO,
+                ),
+            ),
+            actions=[ft.TextButton("Close", on_click=lambda e: self.page.pop_dialog())],
+        )
+        self.page.show_dialog(dialog)
 
     def set_hide_overdue(self, key: str) -> None:
         self.settings["hide_overdue"] = key if key in {"off", "1w", "1m"} else "off"
+        self.reset_list_pages("assignments")
         self.persist()
         self.refresh_assignment_list()
 

@@ -584,9 +584,10 @@ def _grades_from_dom_rows(rows: Any, course_id: str) -> list[Grade]:
         title = _clean_html_text(str(row.get("title") or ""))
         if not title or title.lower() in _SKIP_GRADE_TITLES:
             continue
-        label, earned, possible = _mygrades_score(
+        label, earned, possible, feedback = _grade_with_feedback(
             str(row.get("grade") or ""),
             str(row.get("possible") or ""),
+            str(row.get("feedback") or ""),
         )
         if label is None or title.lower() in seen:
             continue
@@ -600,6 +601,7 @@ def _grades_from_dom_rows(rows: Any, course_id: str) -> list[Grade]:
                 posted_at=parse_dt(row.get("posted")),
                 points_earned=earned,
                 points_possible=possible,
+                feedback=feedback,
             )
         )
     return grades
@@ -643,9 +645,10 @@ def _grade_from_mygrades_chunk(chunk: str, course_id: str) -> Grade | None:
     title = _mygrades_title(chunk)
     if not title or title.lower() in _SKIP_GRADE_TITLES:
         return None
-    score_text = _class_inner_text(chunk, "grade")
-    possible_text = _class_inner_text(chunk, "pointsPossible")
-    label, earned, possible = _mygrades_score(score_text, possible_text)
+    cleaned, feedback = _pull_feedback_blocks(chunk)
+    score_text = _best_grade_text(cleaned)
+    possible_text = _class_inner_text(cleaned, "pointsPossible")
+    label, earned, possible, feedback = _grade_with_feedback(score_text, possible_text, feedback)
     if label is None:
         return None
     posted = parse_dt(_class_inner_text(chunk, "lastActivityDate"))
@@ -657,6 +660,7 @@ def _grade_from_mygrades_chunk(chunk: str, course_id: str) -> Grade | None:
         posted_at=posted,
         points_earned=earned,
         points_possible=possible,
+        feedback=feedback,
     )
 
 
@@ -712,6 +716,142 @@ def _mygrades_score(
             return f"{score}/{_trim_number(possible)}", None, possible
         return score, None, None
     return None, None, None
+
+
+def _grade_with_feedback(
+    score_text: str, possible_text: str, feedback: str = ""
+) -> tuple[str | None, float | None, float | None, str]:
+    label, earned, possible = _mygrades_score(score_text, possible_text)
+    note = (feedback or "").strip()
+    if label and not _score_is_compact(label):
+        label, earned, possible, extra = _split_mixed_score(label, earned, possible)
+        note = note or extra
+    if label is None and note:
+        shown = f"—/{_trim_number(possible)}" if possible else "—"
+        return shown, earned, possible, note
+    return label, earned, possible, note
+
+
+def _score_is_compact(score: str) -> bool:
+    text = " ".join((score or "").split())
+    if not text:
+        return True
+    if len(text) > 24 or len(text.split()) > 3:
+        return False
+    return True
+
+
+def _split_mixed_score(
+    score: str, earned: float | None, possible: float | None
+) -> tuple[str, float | None, float | None, str]:
+    """Separate a numeric score from teacher comments that were stored in the same text."""
+    text = " ".join((score or "").split())
+    trailing = re.match(r"^(.*?)\s*/\s*(\d+(?:\.\d+)?)\s*$", text)
+    note = text
+    if trailing:
+        maybe = float(trailing.group(2))
+        if possible is None or abs(maybe - possible) < 0.001:
+            possible = maybe
+            note = trailing.group(1).strip()
+    leading = re.match(
+        r"^(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)\s*[-–—:]?\s*(.*)$",
+        note,
+    )
+    if leading:
+        earned = float(leading.group(1))
+        possible = float(leading.group(2))
+        note = leading.group(3).strip()
+        return (
+            f"{_trim_number(earned)}/{_trim_number(possible)}",
+            earned,
+            possible,
+            note,
+        )
+    totaled = re.search(r"=\s*(\d+(?:\.\d+)?)\s*$", note)
+    if totaled and possible:
+        earned = float(totaled.group(1))
+        note = note[: totaled.start()].strip(" -")
+        return (
+            f"{_trim_number(earned)}/{_trim_number(possible)}",
+            earned,
+            possible,
+            note,
+        )
+    if _looks_like_filename(note):
+        shown = f"—/{_trim_number(possible)}" if possible else "—"
+        return shown, None, possible, ""
+    if note:
+        shown = f"—/{_trim_number(possible)}" if possible else "—"
+        return shown, None, possible, note
+    shown = f"—/{_trim_number(possible)}" if possible else "—"
+    return shown, earned, possible, ""
+
+
+def _looks_like_filename(text: str) -> bool:
+    compact = " ".join((text or "").split())
+    if not compact or len(compact.split()) > 3:
+        return False
+    return bool(
+        re.search(r"\.(?:docx?|pdf|pptx?|xlsx?|txt|pages|zip)\b", compact, flags=re.IGNORECASE)
+    )
+
+
+_NOTE_CLASS_RE = re.compile(
+    r"<(div|span|p|td)\b[^>]*class=[\"'][^\"']*\b(?:feedback|comments|comment|instructorcomment|gradecomment|itemcomments|usercomment)\b[^\"']*[\"'][^>]*>",
+    re.IGNORECASE,
+)
+
+
+def _pull_feedback_blocks(html: str) -> tuple[str, str]:
+    notes: list[str] = []
+    pieces: list[str] = []
+    pos = 0
+    for match in _NOTE_CLASS_RE.finditer(html or ""):
+        if match.start() < pos:
+            continue
+        pieces.append(html[pos : match.start()])
+        tag = match.group(1)
+        body_end = _find_closing_tag(html, match.end(), tag)
+        notes.append(_clean_html_text(html[match.end() : body_end]))
+        pos = body_end
+        closer = re.match(rf"</{tag}\s*>", html[pos:], flags=re.IGNORECASE)
+        if closer:
+            pos += closer.end()
+    pieces.append((html or "")[pos:])
+    return "".join(pieces), "\n\n".join(note for note in notes if note)
+
+
+def _find_closing_tag(html: str, start: int, tag: str) -> int:
+    token = re.compile(rf"</?{tag}\b[^>]*>", flags=re.IGNORECASE)
+    depth = 1
+    for match in token.finditer(html, start):
+        if match.group(0).startswith("</"):
+            depth -= 1
+            if depth == 0:
+                return match.start()
+        else:
+            depth += 1
+    return len(html)
+
+
+def _best_grade_text(html: str) -> str:
+    pattern = re.compile(
+        r'''class=["'][^"']*\bgrade\b[^"']*["'][^>]*>(.*?)</(?:span|div|td|a)>''',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    compact: list[str] = []
+    for match in pattern.finditer(html or ""):
+        text = _clean_html_text(match.group(1))
+        text = re.sub(r"^(?:grade|成绩)\s*[:：]?\s*", "", text, flags=re.IGNORECASE).strip()
+        if text and _score_is_compact(text):
+            compact.append(text)
+    for text in compact:
+        head = text.split("/")[0].strip()
+        if _as_number(head) is not None or _split_fraction(text.replace(" ", "")):
+            return text
+    if compact:
+        return compact[-1]
+    return _class_inner_text(html, "grade")
 
 
 def _class_inner_text(html: str, class_name: str) -> str:
@@ -2830,17 +2970,51 @@ def is_posted_grade(score: str) -> bool:
     return key not in _PENDING_SCORE_LABELS and compact not in _PENDING_SCORE_LABELS
 
 
-def grade_points(grade: Grade) -> tuple[float, float] | None:
+def grade_parts(grade: Grade) -> tuple[str, float | None, float | None, str]:
+    """Score label, earned, possible, and teacher feedback kept out of the score."""
+    feedback = (grade.feedback or "").strip()
+    score = (grade.score or "").strip()
     earned = grade.points_earned
     possible = grade.points_possible
+    if feedback and _score_is_compact(score):
+        return _compact_score_label(score, earned, possible), earned, possible, feedback
+    if _score_is_compact(score):
+        return _compact_score_label(score, earned, possible), earned, possible, ""
+    label, earned, possible, note = _split_mixed_score(score, earned, possible)
+    return label, earned, possible, feedback or note
+
+
+def grade_note(grade: Grade) -> str:
+    return grade_parts(grade)[3]
+
+
+def _compact_score_label(
+    score: str, earned: float | None, possible: float | None
+) -> str:
+    text = " ".join(score.split())
+    fraction = _split_fraction(text)
+    if fraction:
+        return f"{_trim_number(fraction[0])}/{_trim_number(fraction[1])}"
+    if earned is not None and possible:
+        return f"{_trim_number(earned)}/{_trim_number(possible)}"
+    if text and possible and "/" not in text and text.lower() != "submitted" and _as_number(text) is not None:
+        return f"{_trim_number(float(text))}/{_trim_number(possible)}"
+    if text:
+        return text
+    if possible:
+        return f"—/{_trim_number(possible)}"
+    return "Submitted"
+
+
+def grade_points(grade: Grade) -> tuple[float, float] | None:
+    label, earned, possible, _note = grade_parts(grade)
     if earned is None or possible is None:
-        fraction = _split_fraction(grade.score)
+        fraction = _split_fraction(label)
         if fraction:
             earned, possible = fraction
     if earned is None or possible is None or possible <= 0:
         return None
-    probe = grade.score or f"{_trim_number(earned)}/{_trim_number(possible)}"
-    if not is_posted_grade(probe):
+    if not is_posted_grade(label):
         return None
     return earned, possible
 
@@ -2848,20 +3022,12 @@ def grade_points(grade: Grade) -> tuple[float, float] | None:
 def format_grade_label(grade: Grade | None) -> str:
     if grade is None:
         return "Submitted"
-    points = grade_points(grade)
-    if points:
-        return f"{_trim_number(points[0])}/{_trim_number(points[1])}"
-    text = (grade.score or "").strip()
-    if (
-        text
-        and not _blank_score(text)
-        and grade.points_possible
-        and "/" not in text
-        and text.lower() != "submitted"
-    ):
-        return f"{text}/{_trim_number(grade.points_possible)}"
-    if text and not _blank_score(text):
-        return text
+    label, earned, possible, _note = grade_parts(grade)
+    if earned is not None and possible:
+        if is_posted_grade(label):
+            return f"{_trim_number(earned)}/{_trim_number(possible)}"
+    if label and not _blank_score(label):
+        return label
     return "Submitted"
 
 

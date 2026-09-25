@@ -792,7 +792,7 @@ _MYGRADES_EXTRACT_JS = """() => {
     const skip = /^(total|weighted total|running total|overall grade|item|grade|last activity|总分|加权总分|总计|总成绩|项目|成绩)$/i;
     const out = [];
     const seen = new Set();
-    const push = (title, grade, possible, posted) => {
+    const push = (title, grade, possible, posted, feedback) => {
         title = (title || "").replace(/\\s+/g, " ").trim();
         const key = title.toLowerCase();
         if (!title || skip.test(key) || seen.has(key)) return;
@@ -802,6 +802,7 @@ _MYGRADES_EXTRACT_JS = """() => {
             grade: (grade || "").replace(/\\s+/g, " ").trim(),
             possible: (possible || "").replace(/\\s+/g, " ").trim(),
             posted: (posted || "").replace(/\\s+/g, " ").trim(),
+            feedback: (feedback || "").replace(/\\s+/g, " ").trim(),
         });
     };
     const rows = document.querySelectorAll(
@@ -812,10 +813,16 @@ _MYGRADES_EXTRACT_JS = """() => {
         if (/calculatedRow|gradesTableHeader|gradeHeader/i.test(cls)) return;
         const title = scrub(row.querySelector(".gradable a, a.gradeLabel, .cell.gradable, td.gradable"))
             || scrub(row.querySelector("td"));
-        const grade = scrub(row.querySelector("span.grade, .cell.grade, td.grade"));
-        const possible = scrub(row.querySelector(".pointsPossible"));
+        const gradeBox = row.cloneNode(true);
+        const notes = [];
+        gradeBox.querySelectorAll(".feedback, .comment, .comments, .itemComments, .gradeComment, .instructorComments").forEach((node) => {
+            notes.push(scrub(node));
+            node.remove();
+        });
+        const grade = scrub(gradeBox.querySelector("span.grade, .cell.grade, td.grade"));
+        const possible = scrub(gradeBox.querySelector(".pointsPossible"));
         const posted = scrub(row.querySelector(".lastActivityDate"));
-        push(title, grade, possible, posted);
+        push(title, grade, possible, posted, notes.filter(Boolean).join("\\n\\n"));
     });
     return out;
 }"""
@@ -861,7 +868,7 @@ def _in_page_read_mygrades(page, urls: list[str]) -> list[dict[str, Any]]:
                 const skip = /^(total|weighted total|running total|overall grade|item|grade|last activity|总分|加权总分|总计|总成绩|项目|成绩)$/i;
                 const out = [];
                 const seen = new Set();
-                const push = (title, grade, possible, posted) => {
+                const push = (title, grade, possible, posted, feedback) => {
                     title = (title || "").replace(/\\s+/g, " ").trim();
                     const key = title.toLowerCase();
                     if (!title || skip.test(key) || seen.has(key)) return;
@@ -871,6 +878,7 @@ def _in_page_read_mygrades(page, urls: list[str]) -> list[dict[str, Any]]:
                         grade: (grade || "").replace(/\\s+/g, " ").trim(),
                         possible: (possible || "").replace(/\\s+/g, " ").trim(),
                         posted: (posted || "").replace(/\\s+/g, " ").trim(),
+                        feedback: (feedback || "").replace(/\\s+/g, " ").trim(),
                     });
                 };
                 const rows = doc.querySelectorAll(
@@ -881,10 +889,16 @@ def _in_page_read_mygrades(page, urls: list[str]) -> list[dict[str, Any]]:
                     if (/calculatedRow|gradesTableHeader|gradeHeader/i.test(cls)) return;
                     const title = scrub(row.querySelector(".gradable a, a.gradeLabel, .cell.gradable, td.gradable"))
                         || scrub(row.querySelector("td"));
-                    const grade = scrub(row.querySelector("span.grade, .cell.grade, td.grade"));
-                    const possible = scrub(row.querySelector(".pointsPossible"));
+                    const gradeBox = row.cloneNode(true);
+                    const notes = [];
+                    gradeBox.querySelectorAll(".feedback, .comment, .comments, .itemComments, .gradeComment, .instructorComments").forEach((node) => {
+                        notes.push(scrub(node));
+                        node.remove();
+                    });
+                    const grade = scrub(gradeBox.querySelector("span.grade, .cell.grade, td.grade"));
+                    const possible = scrub(gradeBox.querySelector(".pointsPossible"));
                     const posted = scrub(row.querySelector(".lastActivityDate"));
-                    push(title, grade, possible, posted);
+                    push(title, grade, possible, posted, notes.filter(Boolean).join("\\n\\n"));
                 });
                 return out;
             };

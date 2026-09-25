@@ -95,6 +95,8 @@ def load_settings() -> dict:
         "shortcut_prompt_done": False,
         "hide_calendar_events": False,
         "list_page_size": 10,
+        "deadline_colors": {},
+        "course_colors": {},
     }
     if not SETTINGS_PATH.exists():
         return dict(defaults)
@@ -121,6 +123,11 @@ def load_settings() -> dict:
         except (TypeError, ValueError):
             page_size = 10
         merged["list_page_size"] = page_size if page_size in (10, 20, 50) else 10
+        merged["deadline_colors"] = _clean_color_map(
+            merged.get("deadline_colors"),
+            allowed=("overdue", "today", "soon", "week", "later"),
+        )
+        merged["course_colors"] = _clean_color_map(merged.get("course_colors"))
         mode = str(merged.get("contents_view_mode") or "tree")
         merged["contents_view_mode"] = mode if mode in {"tree", "folder", "columns"} else "tree"
         merged["username"] = str(merged.get("username") or "")
@@ -158,5 +165,39 @@ def save_settings(settings: dict) -> None:
             if str(settings.get("list_page_size")) in {"10", "20", "50"}
             else 10
         ),
+        "deadline_colors": _clean_color_map(
+            settings.get("deadline_colors"),
+            allowed=("overdue", "today", "soon", "week", "later"),
+        ),
+        "course_colors": _clean_color_map(settings.get("course_colors")),
     }
     SETTINGS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _clean_hex(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if len(text) == 6 and all(char in "0123456789abcdef" for char in text):
+        text = f"#{text}"
+    if (
+        len(text) == 7
+        and text.startswith("#")
+        and all(char in "0123456789abcdef" for char in text[1:])
+    ):
+        return text
+    return ""
+
+
+def _clean_color_map(raw: object, *, allowed: tuple[str, ...] | None = None) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        return {}
+    cleaned: dict[str, str] = {}
+    for key, value in raw.items():
+        name = str(key or "").strip()
+        if not name or (allowed is not None and name not in allowed):
+            continue
+        color = _clean_hex(value)
+        if color:
+            cleaned[name] = color
+        if len(cleaned) >= 200:
+            break
+    return cleaned

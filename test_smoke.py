@@ -875,7 +875,91 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(store.signed_in)
 
 
+class ViewerTests(unittest.TestCase):
+    def test_pages_open_in_the_app_viewer(self) -> None:
+        from app.controller import AppController
+        from app.embedded_browser import cookies_from_storage
+
+        cookies = cookies_from_storage(
+            {
+                "cookies": [
+                    {
+                        "name": "JSESSIONID",
+                        "value": "abc",
+                        "domain": ".blackboardchina.cn",
+                        "path": "/",
+                        "httpOnly": True,
+                        "secure": True,
+                        "sameSite": "Lax",
+                        "expires": -1,
+                    },
+                    {"name": "", "value": "nope", "domain": "x"},
+                ]
+            }
+        )
+        self.assertEqual(cookies[0]["name"], "JSESSIONID")
+        self.assertTrue(cookies[0]["httpOnly"])
+        self.assertNotIn("expires", cookies[0])
+        self.assertEqual(len(cookies), 1)
+
+        class FakePage:
+            controls: list = []
+
+            def update(self) -> None:
+                return None
+
+            def run_task(self, handler, *args, **kwargs):
+                return None
+
+        class Host:
+            def __init__(self) -> None:
+                self.shown: list = []
+                self.closed = False
+
+            def show(self, url, storage=None) -> None:
+                self.shown.append(url)
+
+            def close(self) -> None:
+                self.closed = True
+
+            def command(self, name, payload=None) -> None:
+                self.shown.append((name, payload))
+
+        host = Host()
+        ctrl = AppController(FakePage())  # type: ignore[arg-type]
+        ctrl.store.signed_in = True
+        ctrl.route = "/home"
+        ctrl.viewer_factory = lambda: host
+        ctrl.open_blackboard("/webapps/assignment/uploadAssignment?course_id=_1_1")
+        self.assertTrue(ctrl.viewer_url.startswith("https://"))
+        self.assertIn("/webapps/assignment/uploadAssignment", ctrl.viewer_url)
+        self.assertEqual(host.shown[0], ctrl.viewer_url)
+        self.assertIsNotNone(ctrl.viewer_address)
+        ctrl.viewer_navigate("example.com/path")
+        self.assertEqual(ctrl.viewer_url, "https://example.com/path")
+        self.assertEqual(host.shown[-1], ("goto", "https://example.com/path"))
+        ctrl.close_viewer()
+        self.assertEqual(ctrl.viewer_url, "")
+        self.assertTrue(host.closed)
+
+    def test_browser_executable_is_installed_on_windows(self) -> None:
+        import sys
+
+        from app.embedded_browser import browser_executable
+
+        if sys.platform != "win32":
+            self.skipTest("embedded viewer is used on Windows")
+        path = browser_executable()
+        self.assertIsNotNone(path)
+        self.assertTrue(path.is_file())
+
+
 class ColorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from app.palette import apply_palette
+
+        apply_palette({})
+
     def test_deadline_border_urgency(self) -> None:
         from datetime import timedelta
 
@@ -920,6 +1004,58 @@ class ColorTests(unittest.TestCase):
         self.assertEqual(countdown_color(now - timedelta(seconds=1), now=now), theme.LATE)
         self.assertEqual(countdown_color(now + timedelta(minutes=30), now=now), theme.DEADLINE_TODAY)
 
+    def test_custom_deadline_and_course_colors(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app import theme
+        from app.palette import apply_palette, deadline_color, subject_fill, subject_ink
+        from app.widgets import deadline_border
+        from blackboard import store as store_mod
+        from blackboard.store import load_settings, save_settings
+        from datetime import timedelta
+
+        apply_palette(
+            {
+                "deadline_colors": {"overdue": "#112233", "later": "not-a-color"},
+                "course_colors": {"eng": "#abcdef", "math": "blue"},
+            }
+        )
+        self.assertEqual(deadline_color("overdue"), "#112233")
+        self.assertEqual(deadline_color("today"), theme.DEADLINE_TODAY)
+        now = datetime.now(timezone.utc)
+        overdue, _width = deadline_border(now - timedelta(hours=1), now=now)
+        self.assertEqual(overdue, "#112233")
+        self.assertEqual(subject_ink("eng"), "#abcdef")
+        self.assertNotEqual(subject_fill("eng"), "#abcdef")
+        self.assertTrue(subject_fill("eng").startswith("#"))
+        self.assertNotEqual(subject_ink("math"), "blue")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            with patch.object(store_mod, "SETTINGS_PATH", path), patch.object(
+                store_mod, "DATA_DIR", Path(tmp)
+            ):
+                save_settings(
+                    {
+                        "deadline_colors": {"soon": "#aabbcc", "nope": "#112233"},
+                        "course_colors": {"chem": "445566", "bad": "red"},
+                    }
+                )
+                saved = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["deadline_colors"], {"soon": "#aabbcc"})
+                self.assertEqual(saved["course_colors"], {"chem": "#445566"})
+                path.write_text(
+                    json.dumps({"deadline_colors": {"week": "#010203"}, "course_colors": []}),
+                    encoding="utf-8",
+                )
+                loaded = load_settings()
+                self.assertEqual(loaded["deadline_colors"], {"week": "#010203"})
+                self.assertEqual(loaded["course_colors"], {})
+        apply_palette({})
+
     def test_content_tree_keeps_folders_and_files(self) -> None:
         from blackboard.api import content_children, content_nodes_from_items
         from blackboard.models import ContentNode
@@ -950,6 +1086,93 @@ class ColorTests(unittest.TestCase):
         self.assertEqual(files[0].extension, "pdf")
         self.assertEqual(files[0].size_bytes, 2048)
         self.assertIsNotNone(files[0].modified_at)
+
+    def test_course_contents_load_together(self) -> None:
+        from blackboard.api import crawl_course_catalog
+        from blackboard.models import Course, Snapshot
+
+        class FakeSession:
+            base_url = "https://shs.blackboardchina.cn"
+
+            def __init__(self) -> None:
+                self.batches: list[list[str]] = []
+                self.html_batches: list[list[str]] = []
+
+            def _tell(self, _message: str, _fraction: float) -> None:
+                return None
+
+            def get_json_many(self, paths: list[str]) -> list[dict]:
+                self.batches.append(list(paths))
+                rows = []
+                for path in paths:
+                    if "/attachments" in path:
+                        data = {
+                            "results": [
+                                {
+                                    "id": "_99_1",
+                                    "fileName": "lab.pdf",
+                                    "mimeType": "application/pdf",
+                                    "size": 12,
+                                }
+                            ]
+                        }
+                    elif "/children" in path:
+                        data = {
+                            "results": [
+                                {
+                                    "id": "_12_1",
+                                    "title": "Lab",
+                                    "contentHandler": {"id": "resource/x-bb-file"},
+                                }
+                            ]
+                        }
+                    else:
+                        data = {
+                            "results": [
+                                {
+                                    "id": "_10_1",
+                                    "title": "Week",
+                                    "contentHandler": {"id": "resource/x-bb-folder"},
+                                },
+                                {
+                                    "id": "_11_1",
+                                    "title": "Notes",
+                                    "contentHandler": {"id": "resource/x-bb-file"},
+                                },
+                            ]
+                        }
+                    rows.append({"url": path, "status": 200, "data": data})
+                return rows
+
+            def crawl_html_links(self, urls: list[str]) -> list[dict]:
+                self.html_batches.append(list(urls))
+                return []
+
+        session = FakeSession()
+        snapshot = Snapshot(
+            courses=[
+                Course(id="_100_1", name="Math"),
+                Course(id="_200_1", name="English"),
+            ]
+        )
+        _catalog, nodes = crawl_course_catalog(session, snapshot, include_html=True)
+        root_call = next(batch for batch in session.batches if "/children" not in batch[0] and "/attachments" not in batch[0])
+        self.assertTrue(any("_100_1" in path for path in root_call))
+        self.assertTrue(any("_200_1" in path for path in root_call))
+        child_call = next(batch for batch in session.batches if "/children" in batch[0])
+        self.assertTrue(any("_100_1" in path for path in child_call))
+        self.assertTrue(any("_200_1" in path for path in child_call))
+        file_call = next(batch for batch in session.batches if "/attachments" in batch[0])
+        self.assertTrue(any("_100_1" in path for path in file_call))
+        self.assertTrue(any("_200_1" in path for path in file_call))
+        self.assertEqual(len(session.html_batches), 1)
+        html = " ".join(session.html_batches[0])
+        self.assertIn("_100_1", html)
+        self.assertIn("_200_1", html)
+        titles = {node.title for node in nodes}
+        filenames = {node.filename for node in nodes}
+        self.assertIn("Lab", titles)
+        self.assertIn("lab.pdf", filenames)
 
     def test_format_size_and_content_node_roundtrip(self) -> None:
         from app.widgets import format_size

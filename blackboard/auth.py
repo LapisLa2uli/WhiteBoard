@@ -741,7 +741,7 @@ def _in_page_collect_links(page, urls: list[str]) -> list[dict[str, str]]:
                 }
             }
             const found = [];
-            const limit = 6;
+            const limit = 8;
             let cursor = 0;
             async function run() {
                 while (cursor < urls.length) {
@@ -966,7 +966,7 @@ def _in_page_get_json_many(page, urls: list[str]) -> list[dict[str, Any]]:
                 }
             }
             const found = new Array(urls.length);
-            const limit = 6;
+            const limit = 8;
             let cursor = 0;
             async function run() {
                 while (cursor < urls.length) {

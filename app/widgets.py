@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Callable
 from datetime import datetime, timezone
 
 import flet as ft
 
 from app import theme
+from app.palette import deadline_color
+from app.palette import subject_fill as palette_fill
+from app.palette import subject_ink as palette_ink
 
 
 def heading(text: str, size: int = 26) -> ft.Text:
@@ -100,31 +102,28 @@ def card(content: ft.Control, on_click: Callable | None = None) -> ft.Container:
 
 
 def subject_fill(course_id: str) -> str:
-    if not course_id:
-        return theme.CARD_BG
-    return theme.SUBJECT_FILLS[_stable_index(course_id, len(theme.SUBJECT_FILLS))]
+    return palette_fill(course_id)
 
 
 def subject_ink(course_id: str) -> str:
-    if not course_id:
-        return theme.TEXT
-    return theme.SUBJECT_INKS[_stable_index(course_id, len(theme.SUBJECT_INKS))]
+    return palette_ink(course_id)
 
 
-def deadline_border(due_at: datetime | None) -> tuple[str, float]:
+def deadline_border(due_at: datetime | None, *, now: datetime | None = None) -> tuple[str, float]:
     """Return (color, width) from how close the due date is."""
     if due_at is None:
         return theme.DEADLINE_NONE, 3
-    hours = (_as_utc(due_at) - datetime.now(timezone.utc)).total_seconds() / 3600
+    moment = now or datetime.now(timezone.utc)
+    hours = (_as_utc(due_at) - _as_utc(moment)).total_seconds() / 3600
     if hours < 0:
-        return theme.DEADLINE_OVERDUE, 5
+        return deadline_color("overdue"), 5
     if hours <= 24:
-        return theme.DEADLINE_TODAY, 5
+        return deadline_color("today"), 5
     if hours <= 72:
-        return theme.DEADLINE_SOON, 4.5
+        return deadline_color("soon"), 4.5
     if hours <= 168:
-        return theme.DEADLINE_WEEK, 4
-    return theme.DEADLINE_LATER, 4
+        return deadline_color("week"), 4
+    return deadline_color("later"), 4
 
 
 def assignment_card(
@@ -160,11 +159,11 @@ def assignment_card(
 
 def deadline_legend() -> ft.Control:
     swatches = [
-        (theme.DEADLINE_OVERDUE, "Overdue"),
-        (theme.DEADLINE_TODAY, "Due today"),
-        (theme.DEADLINE_SOON, "3 days"),
-        (theme.DEADLINE_WEEK, "This week"),
-        (theme.DEADLINE_LATER, "Later"),
+        (deadline_color("overdue"), "Overdue"),
+        (deadline_color("today"), "Due today"),
+        (deadline_color("soon"), "3 days"),
+        (deadline_color("week"), "This week"),
+        (deadline_color("later"), "Later"),
     ]
     items = [
         ft.Row(
@@ -324,15 +323,8 @@ def format_countdown(due_at: datetime | None, *, now: datetime | None = None) ->
 def countdown_color(due_at: datetime | None, *, now: datetime | None = None) -> str:
     if due_at is None:
         return theme.MUTED
-    moment = now or datetime.now(timezone.utc)
-    seconds = (_as_utc(due_at) - _as_utc(moment)).total_seconds()
-    if seconds < 0:
-        return theme.LATE
-    if seconds <= 3600:
-        return theme.DEADLINE_TODAY
-    if seconds <= 86400:
-        return theme.WARN
-    return theme.ACCENT
+    color, _width = deadline_border(due_at, now=now)
+    return color
 
 
 def make_countdown_text(due_at: datetime | None) -> ft.Text:
@@ -420,11 +412,6 @@ def page_scroll(controls: list[ft.Control]) -> ft.Container:
         padding=24,
         bgcolor=theme.PAGE_BG,
     )
-
-
-def _stable_index(key: str, n: int) -> int:
-    digest = hashlib.md5(key.encode("utf-8")).hexdigest()
-    return int(digest, 16) % n
 
 
 def _as_utc(value: datetime) -> datetime:

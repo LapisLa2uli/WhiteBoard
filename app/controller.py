@@ -57,7 +57,16 @@ class AppController:
         self.grade_query = ""
         self.course_query = ""
         self.list_pages: dict[str, int] = {}
+        self.viewer_url = ""
+        self.viewer_error = ""
+        self.viewer_editing = False
+        self.viewer_address = None
+        self.viewer_host = None
+        self.viewer_factory = None
         self.settings = load_settings()
+        from app.palette import apply_palette
+
+        apply_palette(self.settings)
         self.course_list_column = None
         self.assignment_list_column = None
         self.assignment_toolbar_column = None
@@ -570,6 +579,60 @@ class AppController:
 
         return normalize_page_size(self.settings.get("list_page_size"))
 
+    def set_deadline_color(self, key: str, value) -> None:
+        from app.palette import DEADLINE_ROWS, apply_palette, normalize_hex
+
+        color = normalize_hex(value)
+        allowed = {name for name, _label, _color in DEADLINE_ROWS}
+        if not color or key not in allowed:
+            return
+        colors = dict(self.settings.get("deadline_colors") or {})
+        colors[key] = color
+        self.settings["deadline_colors"] = colors
+        apply_palette(self.settings)
+        self.persist()
+        self.rebuild()
+
+    def reset_deadline_colors(self) -> None:
+        from app.palette import apply_palette
+
+        self.settings["deadline_colors"] = {}
+        apply_palette(self.settings)
+        self.persist()
+        self.rebuild()
+
+    def set_course_color(self, course_id: str, value) -> None:
+        from app.palette import apply_palette, normalize_hex
+
+        color = normalize_hex(value)
+        course_id = str(course_id or "").strip()
+        if not color or not course_id:
+            return
+        colors = dict(self.settings.get("course_colors") or {})
+        colors[course_id] = color
+        self.settings["course_colors"] = colors
+        apply_palette(self.settings)
+        self.persist()
+        self.rebuild()
+
+    def reset_course_color(self, course_id: str) -> None:
+        from app.palette import apply_palette
+
+        colors = dict(self.settings.get("course_colors") or {})
+        colors.pop(str(course_id or ""), None)
+        self.settings["course_colors"] = colors
+        apply_palette(self.settings)
+        self.persist()
+        self.rebuild()
+
+    def reset_course_colors(self) -> None:
+        from app.palette import apply_palette
+
+        self.settings["course_colors"] = {}
+        apply_palette(self.settings)
+        self.persist()
+        self.rebuild()
+
     def set_list_page_size(self, value) -> None:
         from app.paging import normalize_page_size
 
@@ -642,6 +705,7 @@ class AppController:
         self.rebuild()
 
     def logout(self) -> None:
+        self.close_viewer(rebuild=False)
         self._close_session()
         self.store.signed_in = False
         self.store.snapshot.errors.clear()
@@ -1254,12 +1318,11 @@ class AppController:
         nodes = [
             node
             for node in self.store.snapshot.content_nodes
-            if node.id in self.contents_selected
+            if node.id in self.contents_selected and (node.open_url or node.download_path)
         ]
         if not nodes:
             return
-        for node in nodes:
-            self.open_content_node(node)
+        self.open_content_node(nodes[0])
 
     def ensure_file_index(self) -> None:
         if (
@@ -1463,9 +1526,142 @@ class AppController:
     def open_blackboard(self, url: str) -> None:
         if not url:
             return
-        webbrowser.open(resolve_url(self.base_url, url))
+        target = resolve_url(self.base_url, url)
+        self.viewer_error = ""
+        self.viewer_url = target
+        self.rebuild()
+        if self.viewer_factory is not None:
+            self._ensure_viewer_host().show(target, None)
+            return
+        threading.Thread(
+            target=self._launch_viewer, args=(target,), name="bb-viewer-open", daemon=True
+        ).start()
+
+    def close_viewer(self, *, rebuild: bool = True) -> None:
+        host = self.viewer_host
+        self.viewer_host = None
+        self.viewer_url = ""
+        self.viewer_error = ""
+        self.viewer_editing = False
+        self.viewer_address = None
+        if host is not None:
+            try:
+                host.close()
+            except Exception:
+                pass
+        if rebuild:
+            self.rebuild()
+
+    def viewer_back(self) -> None:
+        if self.viewer_host is not None:
+            self.viewer_host.command("back")
+
+    def viewer_forward(self) -> None:
+        if self.viewer_host is not None:
+            self.viewer_host.command("forward")
+
+    def viewer_reload(self) -> None:
+        if self.viewer_host is not None:
+            self.viewer_host.command("reload")
+
+    def viewer_navigate(self, url: str) -> None:
+        text = (url or "").strip()
+        if not text:
+            return
+        if "://" not in text:
+            text = "https://" + text
+        self.viewer_url = text
+        self.viewer_editing = False
+        if self.viewer_host is not None:
+            self.viewer_host.command("goto", text)
+
+    def viewer_open_external(self) -> None:
+        if self.viewer_url:
+            webbrowser.open(self.viewer_url)
+
+    def _ensure_viewer_host(self):
+        if self.viewer_host is None:
+            if self.viewer_factory is not None:
+                self.viewer_host = self.viewer_factory()
+            else:
+                from app.embedded_browser import EmbeddedBrowser
+
+                self.viewer_host = EmbeddedBrowser(
+                    on_url=self._on_viewer_url,
+                    on_fail=self._on_viewer_fail,
+                    on_closed=self._on_viewer_closed,
+                    owner_hwnd=self._whiteboard_hwnd,
+                )
+        return self.viewer_host
+
+    def _launch_viewer(self, target: str) -> None:
+        storage = None
+        session = self.session
+        if session is not None:
+            try:
+                storage = session.storage_state()
+            except Exception:
+                storage = None
+
+        def start() -> None:
+            if not self.viewer_url:
+                return
+            self._ensure_viewer_host().show(self.viewer_url or target, storage)
+
+        self.ui(start)
+
+    def _on_viewer_url(self, url: str) -> None:
+        def apply() -> None:
+            if not self.viewer_url:
+                return
+            self.viewer_url = url
+            field = self.viewer_address
+            if field is not None and not self.viewer_editing and getattr(field, "value", None) != url:
+                field.value = url
+                try:
+                    field.update()
+                except Exception:
+                    pass
+
+        self.ui(apply)
+
+    def _on_viewer_fail(self, message: str) -> None:
+        def apply() -> None:
+            if not self.viewer_url:
+                return
+            self.viewer_error = message or "Couldn't open that page."
+            self.rebuild()
+
+        self.ui(apply)
+
+    def _on_viewer_closed(self) -> None:
+        def apply() -> None:
+            if not self.viewer_url:
+                return
+            self.viewer_host = None
+            self.viewer_url = ""
+            self.viewer_error = ""
+            self.viewer_address = None
+            self.rebuild()
+
+        self.ui(apply)
+
+    def _whiteboard_hwnd(self) -> int:
+        try:
+            import win32gui
+        except Exception:
+            return 0
+        hwnd = win32gui.FindWindow(None, "WhiteBoard")
+        return int(hwnd or 0)
 
     def _close_session(self) -> None:
+        host = self.viewer_host
+        self.viewer_host = None
+        if host is not None:
+            try:
+                host.close()
+            except Exception:
+                pass
         if self.session:
             try:
                 self.session.close()

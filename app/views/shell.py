@@ -20,6 +20,10 @@ from app.widgets import error_banner, format_refreshed, muted
 
 
 def build_shell(ctrl: AppController) -> ft.Control:
+    if ctrl.viewer_url:
+        from app.views.browser_shell import build_browser_shell
+
+        return build_browser_shell(ctrl)
     snapshot = ctrl.store.snapshot
     current = top_level_of(ctrl.route)
 

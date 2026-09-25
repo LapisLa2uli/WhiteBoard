@@ -1788,6 +1788,10 @@ def crawl_course_catalog(
         courses = [course for course in courses if course.id in needed][:12]
     else:
         courses = courses[:24]
+    if hasattr(session, "get_json_many"):
+        return _crawl_courses_parallel(
+            session, courses, include_html=include_html
+        )
     catalog: list[ContentEntry] = []
     nodes: list[ContentNode] = []
     total = max(len(courses), 1)
@@ -1805,6 +1809,282 @@ def crawl_course_catalog(
     if courses:
         session._tell("Finished indexing courses…", 0.75)
     return catalog, nodes
+
+
+def _crawl_courses_parallel(
+    session: BlackboardSession,
+    courses: list[Course],
+    *,
+    include_html: bool,
+) -> tuple[list[ContentEntry], list[ContentNode]]:
+    """Load several courses at once, and each course's folders and files together."""
+    catalog: list[ContentEntry] = []
+    nodes: list[ContentNode] = []
+    if not courses:
+        return catalog, nodes
+    total = len(courses)
+    session._tell(f"Indexing {total} courses together…", 0.34)
+    trees = _fetch_content_trees_parallel(session, [course.id for course in courses])
+    session._tell(f"Loading folders in {total} courses…", 0.46)
+    trees = _expand_children_parallel(session, trees)
+    built: list[tuple[str, list[ContentEntry], list[ContentNode]]] = []
+    for course in courses:
+        items = trees.get(course.id) or []
+        try:
+            entries = [
+                _entry_from_content_item(item, course.id, session.base_url) for item in items
+            ]
+            entries = [entry for entry in entries if entry.content_id or entry.title]
+            course_nodes = content_nodes_from_items(items, course.id, session.base_url)
+        except Exception:
+            continue
+        built.append((course.id, entries, course_nodes))
+    session._tell(f"Loading files in {total} courses…", 0.58)
+    _enrich_attachments_parallel(
+        session,
+        [(course_id, course_nodes) for course_id, _entries, course_nodes in built],
+        session.base_url,
+    )
+    if include_html:
+        _merge_parallel_html(session, built)
+    else:
+        for _course_id, entries, course_nodes in built:
+            _apply_open_urls_from_catalog(course_nodes, entries)
+    for _course_id, entries, course_nodes in built:
+        catalog.extend(entries)
+        nodes.extend(course_nodes)
+    session._tell("Finished indexing courses…", 0.75)
+    return catalog, nodes
+
+
+def _fetch_content_trees_parallel(
+    session: BlackboardSession, course_ids: list[str]
+) -> dict[str, list[dict[str, Any]]]:
+    found: dict[str, list[dict[str, Any]]] = {}
+    pending = list(course_ids)
+    for template in COURSE_CONTENT_PATHS:
+        if not pending:
+            break
+        paths = [
+            template.format(course_id=quote(course_id, safe="")) for course_id in pending
+        ]
+        rows = _json_rows_for(session, paths)
+        still: list[str] = []
+        for course_id, row in zip(pending, rows):
+            items = _walk_contents(row.get("data")) if _json_ok(row) else []
+            if items:
+                found[course_id] = items
+            else:
+                still.append(course_id)
+        pending = still
+    for course_id in pending:
+        found.setdefault(course_id, [])
+    return found
+
+
+def _expand_children_parallel(
+    session: BlackboardSession, trees: dict[str, list[dict[str, Any]]]
+) -> dict[str, list[dict[str, Any]]]:
+    states: dict[str, dict[str, Any]] = {}
+    for course_id, items in trees.items():
+        seen = {
+            _bb_pk(str(_pick(item, "id", "contentId") or ""))
+            for item in items
+            if _bb_pk(str(_pick(item, "id", "contentId") or ""))
+        }
+        queue = [
+            folder_id
+            for item in items
+            if _is_folder_item(item)
+            for folder_id in [_bb_pk(str(_pick(item, "id", "contentId") or ""))]
+            if folder_id
+        ]
+        states[course_id] = {"items": items, "seen": seen, "queue": queue, "done": set()}
+    while True:
+        pending: list[tuple[str, str]] = []
+        for course_id, state in states.items():
+            if len(state["items"]) >= 400:
+                continue
+            while state["queue"] and len(pending) < 48:
+                folder_id = state["queue"].pop(0)
+                if folder_id in state["done"]:
+                    continue
+                pending.append((course_id, folder_id))
+        if not pending:
+            break
+        unresolved = list(pending)
+        loaded: dict[tuple[str, str], Any] = {}
+        for template in COURSE_CONTENT_CHILDREN:
+            if not unresolved:
+                break
+            paths = [
+                template.format(
+                    course_id=quote(course_id, safe=""),
+                    content_id=quote(folder_id, safe=""),
+                )
+                for course_id, folder_id in unresolved
+            ]
+            rows = _json_rows_for(session, paths)
+            still: list[tuple[str, str]] = []
+            for pair, row in zip(unresolved, rows):
+                if _json_ok(row):
+                    loaded[pair] = row.get("data")
+                else:
+                    still.append(pair)
+            unresolved = still
+        for course_id, folder_id in pending:
+            state = states[course_id]
+            state["done"].add(folder_id)
+            data = loaded.get((course_id, folder_id))
+            if not data or len(state["items"]) >= 400:
+                continue
+            for child in _walk_contents(data):
+                child_id = _bb_pk(str(_pick(child, "id", "contentId") or ""))
+                if child_id and child_id in state["seen"]:
+                    continue
+                if child_id:
+                    state["seen"].add(child_id)
+                if folder_id and not _pick(child, "parentId", "parent_id", "_parentId"):
+                    child["_parentId"] = folder_id
+                state["items"].append(child)
+                if _is_folder_item(child) and child_id and child_id not in state["done"]:
+                    state["queue"].append(child_id)
+    return {course_id: state["items"] for course_id, state in states.items()}
+
+
+def _enrich_attachments_parallel(
+    session: BlackboardSession,
+    groups: list[tuple[str, list[ContentNode]]],
+    base_url: str,
+) -> None:
+    candidates: list[tuple[str, ContentNode]] = []
+    for course_id, nodes in groups:
+        chosen = [
+            node
+            for node in nodes
+            if node.id
+            and node.kind != "folder"
+            and (
+                node.kind == "file"
+                or "file" in (node.handler or "").lower()
+                or "document" in (node.handler or "").lower()
+            )
+        ][:80]
+        candidates.extend((course_id, node) for node in chosen)
+    fetched: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    pending = list(candidates)
+    for template in COURSE_ATTACHMENT_PATHS:
+        if not pending:
+            break
+        paths = [
+            template.format(
+                course_id=quote(course_id, safe=""),
+                content_id=quote(node.id, safe=""),
+            )
+            for course_id, node in pending
+        ]
+        rows = _json_rows_for(session, paths)
+        still: list[tuple[str, ContentNode]] = []
+        for (course_id, node), row in zip(pending, rows):
+            attachments = (
+                [item for item in _as_list(row.get("data")) if isinstance(item, dict)]
+                if _json_ok(row)
+                else []
+            )
+            if attachments:
+                fetched[(course_id, node.id)] = attachments
+            else:
+                still.append((course_id, node))
+        pending = still
+    by_course: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for (course_id, node_id), attachments in fetched.items():
+        by_course.setdefault(course_id, {})[node_id] = attachments
+    for course_id, nodes in groups:
+        _apply_fetched_attachments(nodes, by_course.get(course_id) or {}, course_id, base_url)
+
+
+def _merge_parallel_html(
+    session: BlackboardSession,
+    built: list[tuple[str, list[ContentEntry], list[ContentNode]]],
+) -> None:
+    pages: list[tuple[str, str]] = []
+    for course_id, entries, _nodes in built:
+        folder_ids = [
+            entry.content_id for entry in entries if entry.is_folder and entry.content_id
+        ][:20]
+        urls = [
+            f"/webapps/blackboard/execute/launcher?type=Course&id={course_id}",
+            f"/webapps/blackboard/execute/modulepage/view?course_id={course_id}&mode=view",
+            f"/webapps/discussionboard/do/conference?action=list_forums&course_id={course_id}&nav=discussion_board",
+            f"/webapps/discussionboard/do/conference?action=list_forums&course_id={course_id}&nav=discussion_board_entry",
+        ]
+        for folder_id in folder_ids:
+            urls.append(
+                "/webapps/blackboard/content/listContent.jsp"
+                f"?course_id={course_id}&content_id={folder_id}&mode=reset"
+            )
+        pages.extend((course_id, url) for url in urls)
+    grouped: dict[str, list[tuple[str, str]]] = {course_id: [] for course_id, _e, _n in built}
+    if pages and hasattr(session, "crawl_html_links"):
+        total = len(pages)
+        for start in range(0, total, 16):
+            chunk = pages[start : start + 16]
+            session._tell(
+                f"Reading course pages {start + 1}–{min(start + len(chunk), total)} of {total}",
+                0.62 + 0.1 * ((start + len(chunk)) / max(total, 1)),
+            )
+            try:
+                raw_links = session.crawl_html_links([url for _course_id, url in chunk])
+            except Exception:
+                raw_links = []
+            for row in raw_links or []:
+                if not isinstance(row, dict):
+                    continue
+                course_id = _course_id_from_page_url(str(row.get("source") or ""))
+                if course_id in grouped:
+                    grouped[course_id].append(
+                        (str(row.get("href") or ""), str(row.get("text") or ""))
+                    )
+    for course_id, entries, course_nodes in built:
+        _merge_html_links(entries, course_id, grouped.get(course_id) or [], session.base_url)
+        _apply_open_urls_from_catalog(course_nodes, entries)
+
+
+def _json_rows_for(session: BlackboardSession, paths: list[str]) -> list[dict[str, Any]]:
+    """One result per path, fetched together in small batches."""
+    if not paths:
+        return []
+    indexed: dict[str, dict[str, Any]] = {}
+    for start in range(0, len(paths), 24):
+        chunk = paths[start : start + 24]
+        try:
+            rows = list(session.get_json_many(chunk) or [])
+        except Exception:
+            rows = []
+        by_url = {
+            str(row.get("url") or ""): row for row in rows if isinstance(row, dict)
+        }
+        for path in chunk:
+            resolved = resolve_url(session.base_url, path).replace("/.learn/", "/learn/")
+            indexed[path] = by_url.get(resolved) or by_url.get(path) or {}
+    return [indexed.get(path) or {} for path in paths]
+
+
+def _json_ok(row: dict[str, Any] | None) -> bool:
+    if not isinstance(row, dict):
+        return False
+    status = int(row.get("status") or 0)
+    return bool(status) and status < 400 and row.get("data") is not None
+
+
+def _course_id_from_page_url(url: str) -> str:
+    query = parse_qs(urlparse(url).query)
+    for key in ("course_id", "courseId", "id"):
+        for value in query.get(key) or []:
+            if _bb_pk(str(value)):
+                return str(value)
+    match = re.search(r"/courses/(_\d+_\d+)", url or "")
+    return match.group(1) if match else ""
 
 
 def apply_content_catalog(snapshot: Snapshot, catalog: list[ContentEntry]) -> None:
@@ -2130,7 +2410,6 @@ def _extension_of(name: str, mime: str = "") -> str:
 def _enrich_file_attachments(
     session: BlackboardSession, course_id: str, nodes: list[ContentNode], base_url: str
 ) -> None:
-    extra: list[ContentNode] = []
     candidates = [
         node
         for node in nodes
@@ -2142,8 +2421,23 @@ def _enrich_file_attachments(
             or "document" in (node.handler or "").lower()
         )
     ][:80]
+    fetched: dict[str, list[dict[str, Any]]] = {}
     for node in candidates:
         attachments = _fetch_attachments(session, course_id, node.id)
+        if attachments:
+            fetched[node.id] = attachments
+    _apply_fetched_attachments(nodes, fetched, course_id, base_url)
+
+
+def _apply_fetched_attachments(
+    nodes: list[ContentNode],
+    fetched: dict[str, list[dict[str, Any]]],
+    course_id: str,
+    base_url: str,
+) -> None:
+    extra: list[ContentNode] = []
+    for node in list(nodes):
+        attachments = fetched.get(node.id) or []
         if not attachments:
             continue
         if len(attachments) == 1:

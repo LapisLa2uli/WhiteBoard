@@ -37,7 +37,7 @@ def build_contents(ctrl: AppController) -> ft.Control:
                         bgcolor=theme.ACCENT,
                     ),
                     ft.OutlinedButton(
-                        "Open in browser",
+                        "Open",
                         icon=ft.Icons.OPEN_IN_NEW,
                         disabled=not selected_count,
                         on_click=lambda e: ctrl.open_selected_contents(),
@@ -414,7 +414,7 @@ def _explorer_row(
             ft.IconButton(
                 icon=ft.Icons.OPEN_IN_NEW,
                 icon_size=16,
-                tooltip="Open in browser",
+                tooltip="Open in WhiteBoard",
                 on_click=lambda e, node=item.node: ctrl.open_content_node(node),
             )
         )
@@ -540,7 +540,7 @@ def _file_row(ctrl: AppController, node: ContentNode, depth: int) -> ft.Control:
                 ft.IconButton(
                     icon=ft.Icons.OPEN_IN_NEW,
                     icon_size=16,
-                    tooltip="Open in browser",
+                    tooltip="Open in WhiteBoard",
                     on_click=lambda e, item=node: ctrl.open_content_node(item),
                 ),
             ],

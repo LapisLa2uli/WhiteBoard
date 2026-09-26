@@ -4,6 +4,7 @@ import flet as ft
 
 from app import theme
 from app.controller import AppController
+from app.google_calendar import load_account
 from app.paging import PAGE_SIZES
 from app.palette import DEADLINE_ROWS, SWATCHES, deadline_color, normalize_hex
 from app.shortcuts import shortcut_labels
@@ -104,6 +105,8 @@ def build_settings(ctrl: AppController) -> ft.Control:
                 )
             ),
             card(_course_color_block(ctrl)),
+            heading("Google Calendar", 20),
+            card(_google_calendar_block(ctrl)),
             heading("Shortcuts", 20),
             card(
                 ft.Column(
@@ -131,6 +134,77 @@ def build_settings(ctrl: AppController) -> ft.Control:
             ),
         ]
     )
+
+
+def _google_calendar_block(ctrl: AppController) -> ft.Control:
+    account = load_account()
+    signed_in = bool(account.get("refresh_token"))
+    client_id = ft.TextField(
+        label="OAuth client ID",
+        value=str(account.get("client_id") or ""),
+        border_color=theme.BORDER,
+        focused_border_color=theme.ACCENT,
+    )
+    client_secret = ft.TextField(
+        label="OAuth client secret",
+        value=str(account.get("client_secret") or ""),
+        password=True,
+        can_reveal_password=True,
+        border_color=theme.BORDER,
+        focused_border_color=theme.ACCENT,
+    )
+
+    def client_values() -> tuple[str, str]:
+        return client_id.value or "", client_secret.value or ""
+
+    rows: list[ft.Control] = [
+        muted(
+            "Create a Desktop OAuth client in Google Cloud, enable the Google Calendar API, "
+            "and paste the client ID and secret. Sign in once. After each refresh, WhiteBoard "
+            "updates a calendar named WhiteBoard. Finished work is removed. Google has to be "
+            "reachable from this computer."
+        ),
+        client_id,
+        client_secret,
+        ft.Checkbox(
+            label="Update the WhiteBoard calendar after each refresh",
+            value=bool(ctrl.settings.get("google_sync_enabled")),
+            on_change=lambda e: ctrl.set_google_sync_enabled(
+                bool(e.control.value), *client_values()
+            ),
+        ),
+        ft.Row(
+            [
+                ft.FilledButton(
+                    "Sign in to Google",
+                    icon=ft.Icons.LOGIN,
+                    disabled=ctrl.google_busy,
+                    bgcolor=theme.ACCENT,
+                    on_click=lambda e: ctrl.start_google_sign_in(*client_values()),
+                ),
+                ft.OutlinedButton(
+                    "Sync now",
+                    disabled=ctrl.google_busy or ctrl.busy or not signed_in,
+                    on_click=lambda e: ctrl.sync_google_now(*client_values()),
+                ),
+                ft.TextButton(
+                    "Sign out",
+                    disabled=not signed_in or ctrl.google_busy,
+                    on_click=lambda e: ctrl.google_sign_out(),
+                ),
+            ],
+            wrap=True,
+            spacing=8,
+        ),
+        muted(
+            f"Signed in as {account.get('email')}" if signed_in and account.get("email")
+            else "Signed in to Google." if signed_in
+            else "Not signed in."
+        ),
+    ]
+    if ctrl.google_status:
+        rows.append(muted(ctrl.google_status))
+    return ft.Column(rows, spacing=10)
 
 
 def _save_url(ctrl: AppController, value: str) -> None:

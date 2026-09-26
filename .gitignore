@@ -16,6 +16,7 @@ storage_state.json
 .blackboard_dashboard/
 snapshot.json
 settings.json
+google_calendar.json
 blackboard_page.html
 *.html.save
 

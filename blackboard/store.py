@@ -97,6 +97,7 @@ def load_settings() -> dict:
         "list_page_size": 10,
         "deadline_colors": {},
         "course_colors": {},
+        "google_sync_enabled": False,
     }
     if not SETTINGS_PATH.exists():
         return dict(defaults)
@@ -128,6 +129,7 @@ def load_settings() -> dict:
             allowed=("overdue", "today", "soon", "week", "later"),
         )
         merged["course_colors"] = _clean_color_map(merged.get("course_colors"))
+        merged["google_sync_enabled"] = bool(merged.get("google_sync_enabled"))
         mode = str(merged.get("contents_view_mode") or "tree")
         merged["contents_view_mode"] = mode if mode in {"tree", "folder", "columns"} else "tree"
         merged["username"] = str(merged.get("username") or "")
@@ -170,6 +172,7 @@ def save_settings(settings: dict) -> None:
             allowed=("overdue", "today", "soon", "week", "later"),
         ),
         "course_colors": _clean_color_map(settings.get("course_colors")),
+        "google_sync_enabled": bool(settings.get("google_sync_enabled")),
     }
     SETTINGS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 

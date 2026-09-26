@@ -63,6 +63,8 @@ class AppController:
         self.viewer_address = None
         self.viewer_host = None
         self.viewer_factory = None
+        self.google_status = ""
+        self.google_busy = False
         self.settings = load_settings()
         from app.palette import apply_palette
 
@@ -354,6 +356,7 @@ class AppController:
                 self.login_status = "idle"
                 self.login_message = ""
                 self.loading_kind = ""
+                self._schedule_google_sync()
             except Exception as exc:
                 self.login_status = "failed"
                 self.login_message = str(exc) or (
@@ -485,6 +488,7 @@ class AppController:
                 self.store.snapshot.errors.pop("refresh", None)
                 self._on_fetch_progress("Ready.", 1.0)
                 self.route = self.loading_return_route or "/home"
+                self._schedule_google_sync()
                 self.login_status = "idle"
                 self.login_message = ""
             except AuthExpiredError as exc:
@@ -679,6 +683,118 @@ class AppController:
         self.settings["hide_calendar_events"] = bool(value)
         self.persist()
         self.rebuild()
+
+    def set_google_sync_enabled(self, enabled: bool, client_id: str = "", client_secret: str = "") -> None:
+        from app.google_calendar import remember_client
+
+        remember_client(client_id, client_secret)
+        self.settings["google_sync_enabled"] = bool(enabled)
+        self.persist()
+        self.rebuild()
+
+    def start_google_sign_in(self, client_id: str, client_secret: str) -> None:
+        if self.google_busy:
+            return
+        self.google_busy = True
+        self.google_status = "Waiting for Google sign-in in your browser…"
+        self.rebuild()
+
+        def work() -> None:
+            from app.google_calendar import GoogleCalendarError, sign_in
+
+            try:
+                account = sign_in(client_id, client_secret)
+                self.settings["google_sync_enabled"] = True
+                self.persist()
+                who = account.get("email") or "Google"
+                self.google_status = f"Signed in as {who}."
+                self._maybe_sync_google(force=True)
+            except GoogleCalendarError as exc:
+                self.google_status = str(exc)
+            except Exception as exc:
+                self.google_status = str(exc) or "Google sign-in failed."
+            finally:
+                self.google_busy = False
+                self.ui(self.rebuild)
+
+        threading.Thread(target=work, daemon=True, name="google-sign-in").start()
+
+    def google_sign_out(self) -> None:
+        from app.google_calendar import sign_out
+
+        sign_out()
+        self.settings["google_sync_enabled"] = False
+        self.google_status = "Signed out of Google."
+        self.persist()
+        self.rebuild()
+
+    def sync_google_now(self, client_id: str = "", client_secret: str = "") -> None:
+        if self.google_busy or self.busy:
+            return
+        from app.google_calendar import remember_client
+
+        remember_client(client_id, client_secret)
+        self.google_busy = True
+        self.google_status = "Updating Google Calendar…"
+        self.rebuild()
+
+        def work() -> None:
+            try:
+                self._maybe_sync_google(force=True)
+            finally:
+                self.google_busy = False
+                self.ui(self.rebuild)
+
+        threading.Thread(target=work, daemon=True, name="google-sync").start()
+
+    def _schedule_google_sync(self) -> None:
+        """Update Google after the dashboard is already on screen."""
+        if self.google_busy or not self.settings.get("google_sync_enabled"):
+            return
+        from app.google_calendar import load_account
+
+        if not load_account().get("refresh_token"):
+            return
+        self.google_busy = True
+        self.google_status = "Updating Google Calendar in the background…"
+
+        def work() -> None:
+            try:
+                self._maybe_sync_google(force=True)
+            finally:
+                self.google_busy = False
+                if self.route == "/settings":
+                    self.ui(self.rebuild)
+
+        threading.Thread(target=work, daemon=True, name="google-sync").start()
+
+    def _maybe_sync_google(self, *, force: bool = False, gen: int | None = None) -> None:
+        if gen is not None and gen != self._login_gen:
+            return
+        if not force and not self.settings.get("google_sync_enabled"):
+            return
+        from app.google_calendar import GoogleCalendarError, events_for_sync, load_account, sync_account
+
+        account = load_account()
+        if not account.get("refresh_token"):
+            self.google_status = "Sign in to Google in Settings to update the calendar."
+            return
+        try:
+            allowed = None
+            if self.hide_filtered_assignments:
+                allowed = self.visible_course_id_set() or None
+            events = events_for_sync(
+                self.store.snapshot,
+                base_url=self.base_url,
+                hide_other=self.hide_calendar_events,
+                allowed_course_ids=allowed,
+            )
+            _account, message = sync_account(account, events)
+            self.google_status = message
+        except GoogleCalendarError as exc:
+            self.google_status = str(exc)
+        except Exception as exc:
+            self.google_status = str(exc) or "Google Calendar sync failed."
 
     def set_calendar_mode(self, mode: str) -> None:
         if mode not in {"list", "week", "month"}:

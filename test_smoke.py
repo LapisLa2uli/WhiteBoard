@@ -954,6 +954,148 @@ class ViewerTests(unittest.TestCase):
         self.assertTrue(path.is_file())
 
 
+class GoogleCalendarTests(unittest.TestCase):
+    def test_google_calendar_events_and_sync(self) -> None:
+        import json
+        import tempfile
+        from datetime import datetime, timedelta, timezone
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from app import google_calendar
+        from app.google_calendar import events_for_sync, google_event_id, sync_account
+        from blackboard.models import Assignment, Course, Deadline, Snapshot
+        from blackboard.store import save_settings
+
+        event_id = google_event_id("essay")
+        self.assertEqual(event_id, google_event_id("essay"))
+        self.assertRegex(event_id, r"^bb[0-9a-v]+$")
+
+        local_midnight = datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ) + timedelta(days=3)
+        timed = local_midnight + timedelta(hours=15, minutes=30)
+        snapshot = Snapshot(
+            courses=[
+                Course(id="math", name="Math"),
+                Course(id="eng", name="English"),
+            ],
+            assignments=[
+                Assignment(id="done", course_id="math", title="Done", status="submitted"),
+            ],
+            deadlines=[
+                Deadline(id="essay", title="Essay", when=timed, course_id="math", kind="assignment"),
+                Deadline(
+                    id="done",
+                    title="Done",
+                    when=timed,
+                    course_id="math",
+                    kind="assignment",
+                    assignment_id="done",
+                ),
+                Deadline(id="trip", title="Assembly", when=local_midnight, kind="other"),
+                Deadline(id="eng1", title="Reading", when=timed, course_id="eng", kind="assignment"),
+            ],
+        )
+        events = events_for_sync(
+            snapshot,
+            base_url="https://shs.blackboardchina.cn",
+            hide_other=True,
+            allowed_course_ids={"math"},
+        )
+        summaries = [event["summary"] for event in events]
+        self.assertEqual(summaries, ["Math: Essay"])
+        self.assertIn("dateTime", events[0]["start"])
+        all_day = events_for_sync(
+            snapshot, base_url="https://shs.blackboardchina.cn", hide_other=False
+        )
+        assembly = next(event for event in all_day if event["summary"] == "Assembly")
+        self.assertEqual(assembly["start"], {"date": local_midnight.date().isoformat()})
+        self.assertNotIn("Done", " ".join(event["summary"] for event in all_day))
+
+        calls: list[tuple] = []
+
+        def _batch_ok(payload: bytes) -> str:
+            import re
+
+            ids = re.findall(r"Content-ID: <([^>]+)>", payload.decode("utf-8"))
+            boundary = "batch_resp"
+            parts = []
+            for content_id in ids:
+                parts.append(
+                    "\r\n".join(
+                        [
+                            f"--{boundary}",
+                            "Content-Type: application/http",
+                            f"Content-ID: <response-{content_id}>",
+                            "",
+                            "HTTP/1.1 200 OK",
+                            "Content-Type: application/json",
+                            "",
+                            "{}",
+                        ]
+                    )
+                )
+            return "\r\n".join(parts) + f"\r\n--{boundary}--"
+
+        def transport(method, url, headers, payload):
+            calls.append((method, url, payload))
+            if "oauth2.googleapis.com/token" in url:
+                return 200, {"access_token": "access", "expires_in": 3600}
+            if method == "GET" and url.endswith("/users/me/calendarList?maxResults=250"):
+                return 200, {"items": []}
+            if method == "POST" and url.endswith("/users/me/calendarList"):
+                return 200, {"id": "cal@group.calendar.google.com"}
+            if method == "POST" and url.endswith("/calendars"):
+                return 200, {"id": "cal@group.calendar.google.com"}
+            if "batch/calendar/v3" in url:
+                return 200, _batch_ok(payload or b"")
+            if method == "GET" and "/events" in url:
+                return 200, {"items": [{"id": "wbstale"}]}
+            return 500, {"error": {"message": url}}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "google_calendar.json"
+            with patch.object(google_calendar, "ACCOUNT_PATH", path):
+                _account, message = sync_account(
+                    {
+                        "client_id": "id",
+                        "client_secret": "secret",
+                        "refresh_token": "refresh",
+                        "expires_at": 0,
+                    },
+                    events,
+                    transport=transport,
+                )
+            saved = json.loads(path.read_text(encoding="utf-8"))
+        self.assertIn("1 event", message)
+        self.assertEqual(saved["calendar_id"], "cal@group.calendar.google.com")
+        self.assertNotIn("refresh_token", json.dumps(saved.get("password", "")))
+        methods = [method for method, url, _payload in calls]
+        self.assertEqual(methods[0], "POST")
+        batched = "\n".join(
+            (payload or b"").decode("utf-8", errors="replace")
+            for method, url, payload in calls
+            if "batch/calendar/v3" in url
+        )
+        self.assertIn("PUT /calendar/v3/", batched)
+        self.assertIn("DELETE /calendar/v3/", batched)
+        self.assertIn("wbstale", batched)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.json"
+            from blackboard import store as store_mod
+
+            with patch.object(store_mod, "SETTINGS_PATH", settings_path), patch.object(
+                store_mod, "DATA_DIR", Path(tmp)
+            ):
+                save_settings({"google_sync_enabled": True, "password": "nope", "refresh_token": "x"})
+            data = json.loads(settings_path.read_text(encoding="utf-8"))
+        self.assertTrue(data["google_sync_enabled"])
+        self.assertNotIn("password", data)
+        self.assertNotIn("refresh_token", data)
+
+
 class ColorTests(unittest.TestCase):
     def setUp(self) -> None:
         from app.palette import apply_palette

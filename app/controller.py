@@ -63,6 +63,7 @@ class AppController:
         self.viewer_address = None
         self.viewer_host = None
         self.viewer_factory = None
+        self._open_work = None
         self.google_status = ""
         self.google_busy = False
         self.settings = load_settings()
@@ -1257,7 +1258,17 @@ class AppController:
             handler=handler,
             title=title,
         )
-        self.open_blackboard(target)
+        self.open_blackboard(
+            target,
+            work={
+                "title": title,
+                "course_id": course_id,
+                "content_id": content_id,
+                "explicit": explicit or target,
+                "handler": handler,
+                "item_id": item_id,
+            },
+        )
 
     def toggle_custom_filter(self, filter_id: str) -> None:
         current = str(self.settings.get("active_custom_filter") or "")
@@ -1639,9 +1650,10 @@ class AppController:
         )
         self.page.show_dialog(dialog)
 
-    def open_blackboard(self, url: str) -> None:
+    def open_blackboard(self, url: str, *, work: dict | None = None) -> None:
         if not url:
             return
+        self._open_work = work
         target = resolve_url(self.base_url, url)
         self.viewer_error = ""
         self.viewer_url = target
@@ -1718,11 +1730,38 @@ class AppController:
                 storage = session.storage_state()
             except Exception:
                 storage = None
+        work = getattr(self, "_open_work", None)
+        deepened = target
+        if session is not None and isinstance(work, dict):
+            try:
+                from blackboard.api import deepen_work_url
+
+                deepened = deepen_work_url(
+                    session,
+                    self.store.snapshot,
+                    base_url=self.base_url,
+                    title=str(work.get("title") or ""),
+                    course_id=str(work.get("course_id") or ""),
+                    content_id=str(work.get("content_id") or ""),
+                    explicit=str(work.get("explicit") or target),
+                    handler=str(work.get("handler") or ""),
+                    item_id=str(work.get("item_id") or ""),
+                )
+            except Exception:
+                deepened = target
 
         def start() -> None:
             if not self.viewer_url:
                 return
-            self._ensure_viewer_host().show(self.viewer_url or target, storage)
+            self.viewer_url = deepened or target
+            field = self.viewer_address
+            if field is not None and not self.viewer_editing:
+                field.value = self.viewer_url
+                try:
+                    field.update()
+                except Exception:
+                    pass
+            self._ensure_viewer_host().show(self.viewer_url, storage)
 
         self.ui(start)
 

@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.parse
 from ctypes import wintypes
 from pathlib import Path
 from typing import Callable
@@ -45,6 +46,14 @@ _CHROME_CANDIDATES = (
     / "Application"
     / "chrome.exe",
 )
+
+
+def _startup_url(url: str) -> str:
+    """A same-site page to open before the assignment, so cookies can be set first."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}/ultra"
+    return url
 
 
 def browser_executable() -> Path | None:
@@ -153,10 +162,14 @@ class EmbeddedBrowser:
             raise RuntimeError("Install Edge or Chrome to open pages inside WhiteBoard.")
         profile = Path(tempfile.mkdtemp(prefix="whiteboard-viewer-"))
         self._profile = profile
+        # Start on the school site, off screen, so cookies can be added before
+        # the assignment page loads. Opening the assignment first sends
+        # Blackboard to its home page.
+        startup = _startup_url(url)
         self._proc = subprocess.Popen(
             [
                 str(executable),
-                f"--app={url}",
+                f"--app={startup}",
                 "--remote-debugging-port=0",
                 f"--user-data-dir={profile}",
                 "--window-position=-32000,-32000",
@@ -193,13 +206,16 @@ class EmbeddedBrowser:
             if not hwnd:
                 raise RuntimeError("Couldn't place the page in the window.")
             _own_window(hwnd, self._owner_hwnd())
-            self._place(hwnd)
             if self._stop:
                 return
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=45_000)
             except Exception:
-                pass
+                try:
+                    page.goto(url, wait_until="commit", timeout=20_000)
+                except Exception:
+                    pass
+            self._place(hwnd)
             self._on_url(page.url or url)
             self._loop(page, hwnd)
 

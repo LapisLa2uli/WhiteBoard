@@ -989,6 +989,97 @@ def work_launch_url(
     return resolve_url(base_url, "/ultra")
 
 
+def deepen_work_url(
+    session: BlackboardSession,
+    snapshot: Snapshot,
+    *,
+    base_url: str,
+    title: str = "",
+    course_id: str = "",
+    content_id: str = "",
+    explicit: str = "",
+    handler: str = "",
+    item_id: str = "",
+) -> str:
+    """Turn a course-outline link into the assignment, test, or discussion page."""
+    current = work_launch_url(
+        base_url,
+        item_id=item_id,
+        course_id=course_id,
+        content_id=content_id,
+        explicit=explicit,
+        handler=handler,
+        title=title,
+    )
+    if _is_deep_work_url(current, base_url):
+        return current
+    course_pk = _bb_pk(course_id)
+    if not course_pk or not (title or "").strip():
+        return current
+    match = _match_content_by_title(snapshot.content_nodes, course_pk, title)
+    if match is None:
+        try:
+            items = _fetch_course_content_tree(session, course_pk)
+        except Exception:
+            items = []
+        match = _match_content_item(items, title)
+    if not isinstance(match, dict):
+        return current
+    found_id = _bb_pk(str(_pick(match, "id", "contentId") or ""))
+    found_handler = _content_handler_id(match) or handler
+    if not found_id:
+        return current
+    return work_launch_url(
+        base_url,
+        item_id=item_id,
+        course_id=course_pk,
+        content_id=found_id,
+        explicit=current,
+        handler=found_handler,
+        title=title,
+    )
+
+
+def _match_content_by_title(nodes: list, course_id: str, title: str):
+    exact = []
+    loose = []
+    for node in nodes:
+        if getattr(node, "course_id", "") != course_id or getattr(node, "kind", "") == "folder":
+            continue
+        node_title = getattr(node, "title", "") or ""
+        if _titles_equal(node_title, title):
+            exact.append(node)
+        elif _titles_match(node_title, title):
+            loose.append(node)
+    chosen = exact or loose
+    if not chosen:
+        return None
+    node = chosen[0]
+    return {
+        "id": node.id,
+        "title": node.title,
+        "contentHandler": {"id": getattr(node, "handler", "") or ""},
+    }
+
+
+def _match_content_item(items: list[dict[str, Any]], title: str) -> dict[str, Any] | None:
+    exact = []
+    loose = []
+    for item in items:
+        if not isinstance(item, dict) or _is_folder_item(item):
+            continue
+        item_title = str(_pick(item, "title", "name") or "")
+        if _titles_equal(item_title, title):
+            exact.append(item)
+        elif _titles_match(item_title, title):
+            loose.append(item)
+    pool = exact or loose
+    if not pool:
+        return None
+    typed = [item for item in pool if _looks_assignment_content(item)]
+    return (typed or pool)[0]
+
+
 def content_id_for_work(
     snapshot: Snapshot,
     *,

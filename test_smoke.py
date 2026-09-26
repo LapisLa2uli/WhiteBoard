@@ -506,6 +506,38 @@ class ParserTests(unittest.TestCase):
         )
         self.assertIn("discussionboard", from_title)
 
+    def test_outline_link_opens_the_matching_assignment(self) -> None:
+        from blackboard.api import deepen_work_url
+        from blackboard.models import Snapshot
+
+        class Session:
+            base_url = "https://shs.blackboardchina.cn"
+
+            def get_json(self, path: str):
+                if "contents" in path and "children" not in path:
+                    return {
+                        "results": [
+                            {
+                                "id": "_55_1",
+                                "title": "Essay 3",
+                                "contentHandler": {"id": "resource/x-bb-assignment"},
+                            }
+                        ]
+                    }
+                raise RuntimeError(path)
+
+        url = deepen_work_url(
+            Session(),  # type: ignore[arg-type]
+            Snapshot(),
+            base_url=Session.base_url,
+            title="Essay 3",
+            course_id="_7949_1",
+            explicit=f"{Session.base_url}/ultra/courses/_7949_1/outline",
+        )
+        self.assertIn("uploadAssignment", url)
+        self.assertIn("content_id=_55_1", url)
+        self.assertIn("course_id=_7949_1", url)
+
     def test_content_catalog_uses_crawled_tool_urls(self) -> None:
         from blackboard.api import ContentEntry, apply_content_catalog, parse_html_links
         from blackboard.models import Assignment, Snapshot

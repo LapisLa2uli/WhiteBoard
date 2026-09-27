@@ -251,6 +251,27 @@ def _try_paths(
     snapshot: Snapshot,
     section: str,
 ) -> Any:
+    paths = list(paths)
+    if hasattr(session, "get_json_many") and len(paths) > 1:
+        try:
+            rows = list(session.get_json_many(paths) or [])
+        except Exception:
+            rows = []
+        if len(rows) == len(paths):
+            last_error = ""
+            for path, row in zip(paths, rows):
+                if not isinstance(row, dict):
+                    continue
+                status = int(row.get("status") or 0)
+                data = row.get("data")
+                if data and status < 400:
+                    snapshot.errors.pop(section, None)
+                    return data
+                if status:
+                    last_error = f"HTTP {status} for {resolve_url(session.base_url, path)}"
+            if last_error:
+                snapshot.errors[section] = last_error
+            return None
     last_error = ""
     for path in paths:
         try:
@@ -293,23 +314,37 @@ def _fetch_calendar_payloads(
     payloads: list[Any] = []
     got_full_calendar = False
     last_error = ""
-    for path in paths:
+    rows: list[Any] = []
+    if hasattr(session, "get_json_many"):
         try:
-            data = session.get_json(path)
-        except ApiRequestError as exc:
-            last_error = str(exc)
-            continue
+            rows = list(session.get_json_many(paths) or [])
         except Exception as exc:
             last_error = str(exc)
+            rows = []
+    if len(rows) != len(paths):
+        rows = []
+        for path in paths:
+            try:
+                rows.append({"status": 200, "data": session.get_json(path)})
+            except Exception as exc:
+                rows.append({"status": 0, "data": None, "error": str(exc)})
+                last_error = str(exc)
+    for path, row in zip(paths, rows):
+        if not isinstance(row, dict):
             continue
-        if not data:
+        status = int(row.get("status") or 0)
+        data = row.get("data")
+        if not data or status >= 400:
+            if status:
+                last_error = f"HTTP {status} for {resolve_url(session.base_url, path)}"
+            elif row.get("error"):
+                last_error = str(row.get("error"))
             continue
         items = _as_list(data)
         if not items:
             continue
         payloads.append(data)
-        lowered = path.lower()
-        if "duedate" not in lowered:
+        if "duedate" not in path.lower():
             got_full_calendar = True
     if not got_full_calendar and hasattr(session, "harvest_learn_json"):
         try:
@@ -1673,7 +1708,7 @@ def _check_live_submissions(
         return
     limit = 24 if quick else 60
     pending = pending[:limit]
-    batch_size = 6
+    batch_size = 24
     by_url: dict[str, bool] = {}
     total = max(len(pending), 1)
     for start in range(0, len(pending), batch_size):

@@ -1,32 +1,24 @@
-"""Start the slim WhiteBoard UI in Edge, with no Flet or Playwright."""
+"""Start the slim WhiteBoard window. No network port and no console server."""
 
 from __future__ import annotations
 
-import subprocess
-import threading
-import time
-import webbrowser
 from pathlib import Path
 
-from server import serve
+import data
 
-PORT = 18765
-EDGE = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
+data.install()
+
+from host import open_window, set_bridge
+from server import handle
+from shortcuts import install_shortcuts
+
+PAGE = Path(__file__).resolve().parent / "static" / "index.html"
 
 
 def main() -> None:
-    threading.Thread(target=lambda: serve(PORT), daemon=True).start()
-    time.sleep(0.3)
-    url = f"http://127.0.0.1:{PORT}"
-    if EDGE.is_file():
-        subprocess.Popen([str(EDGE), f"--app={url}", "--new-window"])
-    else:
-        webbrowser.open(url)
-    try:
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
-        return
+    install_shortcuts()
+    set_bridge(handle)
+    open_window(PAGE.as_uri())
 
 
 if __name__ == "__main__":

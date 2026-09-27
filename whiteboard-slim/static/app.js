@@ -1,5 +1,5 @@
 let state = null;
-let route = location.hash.slice(1) || "/home";
+let route = "/login";
 let pageSize = 10;
 let pages = {};
 let query = { assignments: "", grades: "", courses: "" };
@@ -8,162 +8,741 @@ let hideEvents = false;
 let busy = false;
 let feedback = null;
 let viewer = null;
+let calendarMode = "list";
+let calendarDays = 7;
+let calendarAnchor = startOfDay(new Date());
+let contentsMode = "tree";
+let contentsPath = [];
+let contentsExpanded = new Set();
+let contentsSelected = new Set();
+let googleDraft = { client_id: "", client_secret: "" };
+let loading = null;
+let colorDialog = null;
+let jobError = "";
+const SWATCHES = [
+  "#9f1239", "#ea580c", "#eab308", "#22c55e", "#2563eb", "#1d4ed8",
+  "#15803d", "#a16207", "#c2410c", "#7e22ce", "#0f766e", "#be185d",
+  "#4338ca", "#6d28d9", "#db2777", "#0891b2", "#65a30d", "#0f172a",
+];
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const pendingApi = new Map();
+let apiSeq = 0;
+let contentsNote = "";
+let selectMode = false;
+let selectedAssignments = new Set();
+
+function api(path, body) {
+  if (!window.chrome || !window.chrome.webview) {
+    return Promise.reject(new Error("Open WhiteBoard from its desktop window."));
+  }
+  const id = ++apiSeq;
+  return new Promise((resolve, reject) => {
+    pendingApi.set(id, { resolve, reject });
+    window.chrome.webview.postMessage(JSON.stringify({ id, path, body: body || {} }));
+  });
+}
+
+if (window.chrome && window.chrome.webview) {
+  window.chrome.webview.addEventListener("message", (event) => {
+    let message = event.data;
+    if (typeof message === "string") {
+      try { message = JSON.parse(message); } catch (error) { return; }
+    }
+    if (message && message.event === "download") {
+      showDownloadProgress(message);
+      return;
+    }
+    if (!message || message.id == null) return;
+    const waiter = pendingApi.get(message.id);
+    if (!waiter) return;
+    pendingApi.delete(message.id);
+    if (message.error) waiter.reject(new Error(message.error));
+    else waiter.resolve(message.body);
+  });
+}
+const NAV = [
+  ["/home", "Home", "home"],
+  ["/assignments", "Assignments", "assignment"],
+  ["/submitted", "Submitted", "turned-in"],
+  ["/ignored", "Ignored", "hidden"],
+  ["/grades", "Grades", "grade"],
+  ["/contents", "Contents", "folder"],
+  ["/calendar", "Calendar", "calendar"],
+  ["/settings", "Settings", "settings"],
+];
 
 async function loadState() {
-  const response = await fetch("/api/state");
-  state = await response.json();
+  state = await api("/api/state");
   pageSize = state.page_size || 10;
   hideEvents = !!state.hide_calendar_events;
+  contentsMode = state.contents_view_mode || contentsMode;
+  const google = state.google || {};
+  googleDraft.client_id = google.client_id || googleDraft.client_id;
+  googleDraft.client_secret = google.client_secret || googleDraft.client_secret;
+  if (state.job && state.job.error) jobError = state.job.error;
   if (!state.has_snapshot && route !== "/login") route = "/login";
 }
 
 async function boot() {
+  bindOnce();
+  setInterval(tickCountdowns, 1000);
   await loadState();
-  render();
+  route = "/login";
   window.addEventListener("hashchange", () => {
-    route = location.hash.slice(1) || "/home";
+    route = location.hash.slice(1) || "/login";
+    if (!state.has_snapshot && route !== "/login") route = "/login";
     render();
   });
+  if (location.hash !== "#/login") location.hash = "/login";
+  else render();
 }
 
 function go(path) {
   location.hash = path;
 }
 
+const RIPPLE_HOST = ".assign, .card, .nav-btn, .outline-btn, .fill-btn, .text-btn, .course-link, .chip-btn, .event-chip, .folder > button";
+let pointer = null;
+let rippleHost = null;
+let rippleFrame = 0;
+let pollGen = 0;
+
+function bindOnce() {
+  document.addEventListener("pointermove", rememberPointer, true);
+  document.addEventListener("pointerover", rememberPointer, true);
+  document.addEventListener("pointerenter", onRipple, true);
+  document.addEventListener("scroll", onScrollRipple, true);
+  document.addEventListener("click", onClick);
+  document.addEventListener("input", onInput);
+  document.addEventListener("change", onChange);
+  document.addEventListener("submit", onSubmit);
+}
+
+function rememberPointer(event) {
+  pointer = { x: event.clientX, y: event.clientY };
+}
+
+function hostUnderPointer() {
+  if (!pointer) return null;
+  const stack = document.elementsFromPoint(pointer.x, pointer.y);
+  for (const node of stack) {
+    if (!node.closest) continue;
+    if (node.classList && node.classList.contains("ripple")) continue;
+    const host = node.closest(RIPPLE_HOST);
+    if (host) return host;
+  }
+  return null;
+}
+
+function spawnRipple(host, x, y) {
+  const rect = host.getBoundingClientRect();
+  const size = Math.max(rect.width, rect.height) * 1.4;
+  const ink = document.createElement("span");
+  ink.className = "ripple";
+  ink.style.pointerEvents = "none";
+  ink.style.width = `${size}px`;
+  ink.style.height = `${size}px`;
+  ink.style.left = `${x - rect.left - size / 2}px`;
+  ink.style.top = `${y - rect.top - size / 2}px`;
+  host.appendChild(ink);
+  setTimeout(() => ink.remove(), 700);
+}
+
+function onRipple(event) {
+  const target = event.target;
+  if (!target || !target.closest) return;
+  const host = target.closest(RIPPLE_HOST);
+  if (!host || host === rippleHost) return;
+  if (event.relatedTarget && event.relatedTarget.closest && host.contains(event.relatedTarget)) return;
+  rippleHost = host;
+  spawnRipple(host, event.clientX, event.clientY);
+}
+
+function onScrollRipple() {
+  if (rippleFrame) return;
+  rippleFrame = requestAnimationFrame(() => {
+    rippleFrame = 0;
+    const host = hostUnderPointer();
+    if (host === rippleHost) return;
+    rippleHost = host;
+    if (host && pointer) spawnRipple(host, pointer.x, pointer.y);
+  });
+}
+
+function controlOf(event) {
+  const target = event.target;
+  return target && target.closest ? target : null;
+}
+
+function onClick(event) {
+  const source = controlOf(event);
+  if (!source) return;
+  const assignCheck = source.closest("[data-assign-select]");
+  if (assignCheck) {
+    const input = assignCheck.matches("input") ? assignCheck : assignCheck.querySelector("input");
+    if (input) {
+      if (input.checked) selectedAssignments.add(input.dataset.assignSelect);
+      else selectedAssignments.delete(input.dataset.assignSelect);
+      refreshAssignToolbar();
+    }
+    return;
+  }
+  const assignAction = source.closest("[data-assign-mark], [data-assign-undo], [data-assign-ignore], [data-assign-restore]");
+  if (assignAction) {
+    const action = assignAction.dataset.assignMark != null ? "submitted"
+      : assignAction.dataset.assignUndo != null ? "unsubmit"
+      : assignAction.dataset.assignIgnore != null ? "ignore"
+      : "restore";
+    const id = assignAction.dataset.assignMark || assignAction.dataset.assignUndo
+      || assignAction.dataset.assignIgnore || assignAction.dataset.assignRestore;
+    changeAssignments(action, [id]);
+    return;
+  }
+  if (source.closest("#assign-select")) {
+    selectMode = !selectMode;
+    if (!selectMode) selectedAssignments.clear();
+    paintPage();
+    return;
+  }
+  if (source.closest("#assign-select-all")) {
+    selectMode = true;
+    assignmentItems(assignmentMode()).forEach((item) => selectedAssignments.add(item.id));
+    paintPage();
+    return;
+  }
+  if (source.closest("#assign-mark")) {
+    const ids = assignmentItems(assignmentMode())
+      .filter((item) => selectedAssignments.has(item.id) && item.status !== "submitted")
+      .map((item) => item.id);
+    changeAssignments("submitted", ids);
+    return;
+  }
+  if (source.closest("#assign-ignore")) {
+    changeAssignments("ignore", [...selectedAssignments]);
+    return;
+  }
+  if (source.closest("#assign-restore")) {
+    changeAssignments("restore", [...selectedAssignments]);
+    return;
+  }
+  const goBtn = source.closest("[data-go]");
+  if (goBtn) {
+    const nested = source.closest("button, input, a, select, label");
+    if (!nested || nested === goBtn) {
+      go(goBtn.getAttribute("data-go"));
+      return;
+    }
+  }
+  const openBtn = source.closest("[data-open]");
+  if (openBtn) {
+    openUrl(openBtn.dataset.open, openBtn.dataset.title || "", openBtn.dataset.id || "");
+    return;
+  }
+  const folderBtn = source.closest("[data-folder]");
+  if (folderBtn) {
+    const key = folderBtn.dataset.folder;
+    openFolders[key] = !openFolders[key];
+    paintListRoot();
+    return;
+  }
+  const pageBtn = source.closest("[data-page]");
+  if (pageBtn) {
+    const [key, delta] = pageBtn.dataset.page.split(":");
+    pages[key] = Math.max(0, (pages[key] || 0) + Number(delta));
+    if (topOf(route) === "/calendar") paintCalendarRoot();
+    else if (route === "/contents") paintContentsRoot();
+    else paintListRoot();
+    return;
+  }
+  const feedbackBtn = source.closest("[data-feedback]");
+  if (feedbackBtn) {
+    event.stopPropagation();
+    feedback = [...state.graded, ...state.pending].find((item) => item.id === feedbackBtn.dataset.feedback) || null;
+    paintPage();
+    return;
+  }
+  if (source.closest("#close-feedback")) {
+    feedback = null;
+    paintPage();
+    return;
+  }
+  if (source.closest("#refresh")) {
+    refreshNow();
+    return;
+  }
+  if (source.closest("#logout")) {
+    go("/login");
+    return;
+  }
+  if (source.closest("#saved")) {
+    go("/home");
+    return;
+  }
+  if (source.closest("#sign-in")) {
+    startLogin();
+    return;
+  }
+  if (source.closest("#viewer-home") || source.closest("#viewer-back")) {
+    viewer = null;
+    render();
+    return;
+  }
+  const calMode = source.closest("[data-cal-mode]");
+  if (calMode) {
+    calendarMode = calMode.dataset.calMode;
+    pages["calendar-list"] = 0;
+    paintPage();
+    return;
+  }
+  if (source.closest("#cal-today")) {
+    calendarAnchor = startOfDay(new Date());
+    paintPage();
+    return;
+  }
+  if (source.closest("#cal-prev")) {
+    shiftCalendar(-1);
+    paintPage();
+    return;
+  }
+  if (source.closest("#cal-next")) {
+    shiftCalendar(1);
+    paintPage();
+    return;
+  }
+  const daysBtn = source.closest("[data-cal-days]");
+  if (daysBtn) {
+    calendarDays = Number(daysBtn.dataset.calDays);
+    pages["calendar-list"] = 0;
+    document.querySelectorAll("[data-cal-days]").forEach((button) => {
+      button.classList.toggle("active", Number(button.dataset.calDays) === calendarDays);
+    });
+    const title = document.getElementById("cal-period");
+    if (title) title.textContent = periodTitle();
+    paintCalendarRoot();
+    return;
+  }
+  if (source.closest("#hide-events")) {
+    hideEvents = !hideEvents;
+    source.closest("#hide-events").classList.toggle("active", hideEvents);
+    persistSettings({ hide_calendar_events: hideEvents });
+    paintCalendarRoot();
+    return;
+  }
+  const contentsModeBtn = source.closest("[data-contents-mode]");
+  if (contentsModeBtn) {
+    contentsMode = contentsModeBtn.dataset.contentsMode;
+    persistSettings({ contents_view_mode: contentsMode });
+    paintPage();
+    return;
+  }
+  const expandBtn = source.closest("[data-expand]");
+  if (expandBtn) {
+    const key = expandBtn.dataset.expand;
+    if (contentsExpanded.has(key)) contentsExpanded.delete(key);
+    else contentsExpanded.add(key);
+    paintContentsRoot();
+    return;
+  }
+  const contentsOpen = source.closest("[data-contents-open]");
+  if (contentsOpen) {
+    contentsOpenFolder(contentsOpen.dataset.contentsParent || null, contentsOpen.dataset.contentsOpen);
+    paintPage();
+    return;
+  }
+  if ((source.closest("[id]") || source).id === "contents-up") {
+    contentsPath = contentsPath.slice(0, -1);
+    paintPage();
+    return;
+  }
+  const crumb = source.closest("[data-crumb]");
+  if (crumb) {
+    const index = Number(crumb.dataset.crumb);
+    contentsPath = index < 0 ? [] : contentsPath.slice(0, index + 1);
+    paintPage();
+    return;
+  }
+  const selectBtn = source.closest("[data-select]");
+  if (selectBtn) {
+    const box = selectBtn.querySelector("input[type=checkbox]");
+    if (!box) return;
+    const apply = () => {
+      toggleContentSelected(selectBtn.dataset.select, box.checked);
+      paintContentsRoot();
+      const note = document.getElementById("contents-note");
+      if (note) {
+        note.textContent = contentsNote || (contentsSelected.size
+          ? `${contentsSelected.size} selected`
+          : "Select files to download or open.");
+      }
+      ["contents-download", "contents-open-selected"].forEach((id) => {
+        const button = document.getElementById(id);
+        if (button) button.disabled = contentsSelected.size === 0;
+      });
+    };
+    if (source.matches("input[type=checkbox]")) apply();
+    else setTimeout(apply, 0);
+    return;
+  }
+  if (source.closest("#contents-download")) {
+    downloadSelected();
+    return;
+  }
+  if ((source.closest("[id]") || source).id === "contents-open-selected") {
+    const node = (state.content_nodes || []).find((item) => contentsSelected.has(item.id) && item.url);
+    if (node) openUrl(node.url);
+    return;
+  }
+  if ((source.closest("[id]") || source).id === "google-signin") {
+    googleAction("/api/google/signin");
+    return;
+  }
+  if ((source.closest("[id]") || source).id === "google-sync") {
+    googleAction("/api/google/sync");
+    return;
+  }
+  if ((source.closest("[id]") || source).id === "google-signout") {
+    googleAction("/api/google/signout");
+    return;
+  }
+  if (source.closest("#cancel-loading")) {
+    pollGen += 1;
+    loading = null;
+    busy = false;
+    render();
+    return;
+  }
+  const deadlineColor = source.closest("[data-deadline-color]");
+  if (deadlineColor) {
+    openColorDialog(
+      `${deadlineColor.dataset.deadlineLabel} color`,
+      deadlineColor.dataset.deadlineCurrent,
+      (color) => persistSettings({ deadline_color: { key: deadlineColor.dataset.deadlineColor, color } }).then(() => { colorDialog = null; render(); })
+    );
+    return;
+  }
+  const courseColor = source.closest("[data-course-color]");
+  if (courseColor) {
+    openColorDialog(
+      courseColor.dataset.courseName,
+      courseColor.dataset.courseCurrent,
+      (color) => persistSettings({ course_color: { id: courseColor.dataset.courseColor, color } }).then(() => { colorDialog = null; render(); })
+    );
+    return;
+  }
+  if ((source.closest("[id]") || source).id === "reset-deadline-colors") {
+    persistSettings({ reset_deadline_colors: true }).then(() => render());
+    return;
+  }
+  if ((source.closest("[id]") || source).id === "reset-course-colors") {
+    persistSettings({ reset_course_colors: true }).then(() => render());
+    return;
+  }
+  const resetCourse = source.closest("[data-reset-course]");
+  if (resetCourse) {
+    persistSettings({ reset_course_color: resetCourse.dataset.resetCourse }).then(() => render());
+    return;
+  }
+  const swatch = source.closest("[data-swatch]");
+  if (swatch && colorDialog) {
+    colorDialog.current = swatch.dataset.swatch;
+    const field = document.getElementById("color-hex");
+    if (field) field.value = colorDialog.current;
+    return;
+  }
+  if ((source.closest("[id]") || source).id === "color-cancel") {
+    colorDialog = null;
+    paintPage();
+    return;
+  }
+  if ((source.closest("[id]") || source).id === "color-apply" && colorDialog) {
+    const field = document.getElementById("color-hex");
+    const value = (field && field.value) || colorDialog.current;
+    if (!/^#?[0-9a-fA-F]{6}$/.test(value.trim())) return;
+    const hex = value.trim().startsWith("#") ? value.trim() : `#${value.trim()}`;
+    const apply = colorDialog.onPick;
+    colorDialog = null;
+    apply(hex.toLowerCase());
+  }
+}
+
+function onInput(event) {
+  if (event.target.id === "course-q") {
+    query.courses = event.target.value;
+    paintCourses();
+    return;
+  }
+  if (event.target.id === "list-search") {
+    const key = event.target.dataset.key;
+    query[key] = event.target.value;
+    pages[key] = 0;
+    paintListRoot();
+    return;
+  }
+  if (event.target.id === "google-client-id") googleDraft.client_id = event.target.value;
+  if (event.target.id === "google-client-secret") googleDraft.client_secret = event.target.value;
+}
+
+function onChange(event) {
+  if (event.target.id === "page-size") {
+    pageSize = Number(event.target.value);
+    pages = {};
+    persistSettings({ list_page_size: pageSize });
+    paintPage();
+    return;
+  }
+  if (event.target.id === "google-sync-enabled") {
+    persistSettings({
+      google_sync_enabled: event.target.checked,
+      client_id: googleDraft.client_id,
+      client_secret: googleDraft.client_secret,
+    });
+  }
+}
+
+function startLogin() {
+  const username = (document.getElementById("user") || {}).value || "";
+  const password = (document.getElementById("pass") || {}).value || "";
+  const baseUrl = (document.getElementById("base-url") || {}).value || "";
+  loading = { kind: "login", percent: 0.02, message: "Signing in…" };
+  document.title = "WhiteBoard — Signing in…";
+  render();
+  api("/api/login", { username: username.trim(), password, base_url: baseUrl.trim() }).catch(() => {});
+  pollJob();
+}
+
+function onSubmit(event) {
+  if (event.target.id !== "login-form") return;
+  event.preventDefault();
+  startLogin();
+}
+
+async function pollJob() {
+  const mine = ++pollGen;
+  let sawBusy = false;
+  while (mine === pollGen) {
+    let job = null;
+    try {
+      job = await api("/api/progress");
+    } catch (error) {
+      loading = {
+        kind: (loading && loading.kind) || "login",
+        percent: loading ? loading.percent : 0,
+        message: (error && error.message) || "Could not read sign-in progress.",
+      };
+      render();
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      continue;
+    }
+    if (job.busy) sawBusy = true;
+    loading = {
+      kind: job.kind || (loading && loading.kind) || "refresh",
+      percent: job.percent || 0,
+      message: job.message || "Working…",
+    };
+    document.title = `WhiteBoard — ${loading.message}`;
+    render();
+    if (sawBusy && !job.busy) {
+      await loadState();
+      loading = null;
+      busy = false;
+      if (job.error) {
+        jobError = job.error;
+        if (!state.has_snapshot) route = "/login";
+      } else {
+        jobError = "";
+        if (state.has_snapshot && (route === "/login" || !route)) {
+          route = "/home";
+          if (location.hash !== "#/home") location.hash = "/home";
+        }
+      }
+      render();
+      const note = document.getElementById("login-note");
+      if (note && job.error) note.textContent = job.error;
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+async function persistSettings(body) {
+  state = await api("/api/settings", body);
+}
+
+async function googleAction(path) {
+  busy = true;
+  paintChrome();
+  state = await api(path, googleDraft);
+  pollGoogle();
+}
+
+async function pollGoogle() {
+  await loadState();
+  paintPage();
+  paintChrome();
+  if (state.google_busy) {
+    setTimeout(pollGoogle, 800);
+    return;
+  }
+  busy = false;
+  paintChrome();
+}
+
+async function refreshNow() {
+  busy = true;
+  loading = { kind: "refresh", percent: 0.02, message: "Refreshing from Blackboard…" };
+  document.title = "WhiteBoard — Refreshing…";
+  render();
+  api("/api/refresh", {}).catch(() => {});
+  pollJob();
+}
+
 function render() {
   const app = document.getElementById("app");
+  if (loading) {
+    app.innerHTML = loadingView();
+    return;
+  }
   if (!state || route === "/login" || !state.has_snapshot) {
     app.innerHTML = loginView();
-    bindLogin();
     return;
   }
   if (viewer) {
     app.innerHTML = viewerView();
-    bindViewer();
     return;
   }
-  app.innerHTML = shell(viewFor(route));
-  bindShell();
-  animateMeters();
-  if (feedback) bindFeedback();
+  if (!document.getElementById("shell")) {
+    app.innerHTML = shellFrame();
+  }
+  paintChrome();
+  paintCourses();
+  paintPage();
+  tickCountdowns();
+}
+
+function loadingView() {
+  const percent = Math.max(0, Math.min(100, Math.round((loading.percent || 0) * 100)));
+  const title = loading.kind === "refresh" ? "Refreshing your dashboard" : "Signing in";
+  const blurb = loading.message || (loading.kind === "refresh"
+    ? "Collecting courses, assignment links, and submission status."
+    : "Opening Blackboard…");
+  return `<div class="loading-screen"><div class="loading-card">
+    <div class="row" style="justify-content:center"><img src="logo.png" width="64" height="64" alt="" /></div>
+    <h2>${title}</h2>
+    <p>${escapeHtml(blurb)}</p>
+    <div class="row"><span class="muted">Progress</span><span class="spacer"></span><span class="muted">${percent}%</span></div>
+    <div class="load-track"><span style="width:${Math.max(percent, 4)}%"></span></div>
+    <button class="text-btn" id="cancel-loading" style="margin-top:16px">Cancel</button>
+  </div></div>`;
 }
 
 function loginView() {
+  const saved = state && state.has_snapshot
+    ? '<button class="outline-btn" type="button" id="saved">Open saved dashboard</button>'
+    : "";
   return `<div class="login"><form class="card" id="login-form">
-    <div class="row"><img src="/logo.png" width="48" height="48" alt="" /><h2>WhiteBoard</h2></div>
-    <p class="muted">Sign in to Blackboard. A saved dashboard can be opened without signing in again.</p>
-    <label>Username</label><input type="text" id="user" />
+    <div class="row"><img src="logo.png" width="48" height="48" alt="" /><h2>WhiteBoard</h2></div>
+    <p class="muted">Sign in to Blackboard in this window. WhiteBoard comes back here when your courses are loaded. This copy does not use the other WhiteBoard app.</p>
+    <label>School URL</label><input type="text" id="base-url" value="${escapeAttr((state && state.base_url) || "https://shs.blackboardchina.cn")}" />
+    <label>Username</label><input type="text" id="user" value="${escapeAttr((state && state.username) || "")}" />
     <label>Password</label><input type="password" id="pass" />
     <div class="row" style="margin-top:14px">
-      <button class="fill-btn" type="submit">Sign in</button>
-      ${state && state.has_snapshot ? '<button class="outline-btn" type="button" id="saved">Open saved dashboard</button>' : ""}
+      <button class="fill-btn" id="sign-in" type="button">Sign in</button>
+      ${saved}
     </div>
-    <p class="muted" id="login-note"></p>
+    <p class="muted" id="login-note">${escapeHtml(jobError || "")}</p>
   </form></div>`;
 }
 
-function bindLogin() {
-  const form = document.getElementById("login-form");
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    document.getElementById("login-note").textContent =
-      "Live sign-in uses the current WhiteBoard app. Open the saved dashboard to use this slim version.";
-  });
-  const saved = document.getElementById("saved");
-  if (saved) saved.onclick = () => go("/home");
-}
-
-function shell(body) {
-  const nav = [
-    ["/home", "Home"], ["/assignments", "Assignments"], ["/submitted", "Submitted"],
-    ["/ignored", "Ignored"], ["/grades", "Grades"], ["/contents", "Contents"],
-    ["/calendar", "Calendar"], ["/settings", "Settings"],
-  ].map(([path, label]) => {
-    const active = topOf(route) === path ? "active" : "";
-    return `<button class="nav-btn ${active}" data-go="${path}">${label}</button>`;
-  }).join("");
-  const courses = state.courses.filter((course) =>
-    course.name.toLowerCase().includes(query.courses.toLowerCase())
-  ).map((course) => `<button class="course-link ${route.endsWith(course.id) ? "active" : ""}" data-go="/courses/${encodeURIComponent(course.id)}" style="background:${course.fill};color:${course.ink}">${escapeHtml(course.name)}</button>`).join("");
-  return `<div class="app">
+function shellFrame() {
+  return `<div class="app" id="shell">
     <aside class="sidebar">
-      <h1><img src="/logo.png" alt="" /> Courses</h1>
+      <div class="brand"><img src="logo.png" alt="" /><span>WhiteBoard</span></div>
+      <div class="label">Your courses</div>
       <input id="course-q" placeholder="Search courses" value="${escapeAttr(query.courses)}" />
-      <div class="course-list">${courses || '<p class="muted">No courses</p>'}</div>
+      <div class="course-list" id="course-list"></div>
     </aside>
     <div class="main">
-      <header class="topbar">
-        <img src="/logo.png" alt="" />
-        ${nav}
-        <span class="spacer"></span>
-        <span class="muted">${escapeHtml(state.fetched_at)}</span>
-        <span class="muted">${escapeHtml(state.user_name || "")}</span>
-        ${busy ? '<span class="ring" style="width:18px;height:18px">…</span>' : ""}
-        <button class="outline-btn" id="refresh">Refresh</button>
-        <button class="text-btn" id="logout">Log out</button>
-      </header>
-      ${busy ? '<div class="busy-bar"><span></span></div>' : ""}
-      <div class="content">${body}</div>
+      <header class="topbar" id="topbar"></header>
+      <div id="busy-slot"></div>
+      <div class="content" id="page-body"></div>
     </div>
   </div>`;
 }
 
-function bindShell() {
-  document.querySelectorAll("[data-go]").forEach((button) => {
-    button.onclick = () => go(button.getAttribute("data-go"));
-  });
-  const courseQ = document.getElementById("course-q");
-  if (courseQ) courseQ.oninput = () => { query.courses = courseQ.value; render(); courseQ.focus(); };
-  document.getElementById("refresh").onclick = async () => {
-    busy = true; render();
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    await loadState();
-    busy = false;
-    render();
-  };
-  document.getElementById("logout").onclick = () => go("/login");
-  const search = document.getElementById("list-search");
-  if (search) {
-    search.oninput = () => {
-      const key = search.dataset.key;
-      query[key] = search.value;
-      pages[key] = 0;
-      render();
-      const again = document.getElementById("list-search");
-      if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
-    };
+function paintChrome() {
+  const topbar = document.getElementById("topbar");
+  const busySlot = document.getElementById("busy-slot");
+  if (!topbar) return;
+  const nav = NAV.map(([path, label, icon]) => {
+    const active = topOf(route) === path ? "active" : "";
+    return `<button class="nav-btn ${active}" data-go="${path}">${navIcon(icon)}<span class="label">${label}</span></button>`;
+  }).join("");
+  topbar.innerHTML = `
+    <img class="logo" src="logo.png" alt="" />
+    ${nav}
+    <span class="spacer"></span>
+    <span class="muted">${escapeHtml(state.fetched_at)}</span>
+    <span class="muted">${escapeHtml(state.user_name || "")}</span>
+    ${busy || state.google_busy ? '<span class="spin"></span>' : ""}
+    <button class="outline-btn pill" id="refresh">Refresh</button>
+    <button class="text-btn pill" id="logout">Log out</button>`;
+  if (busySlot) {
+    const on = busy || state.google_busy;
+    busySlot.innerHTML = `<div class="busy-bar ${on ? "" : "idle"}"><span></span></div>`;
   }
-  document.querySelectorAll("[data-folder]").forEach((button) => {
-    button.onclick = () => {
-      const key = button.dataset.folder;
-      openFolders[key] = !openFolders[key];
-      render();
-    };
-  });
-  document.querySelectorAll("[data-page]").forEach((button) => {
-    button.onclick = () => {
-      const [key, delta] = button.dataset.page.split(":");
-      pages[key] = Math.max(0, (pages[key] || 0) + Number(delta));
-      render();
-    };
-  });
-  document.querySelectorAll("[data-open]").forEach((node) => {
-    node.onclick = () => openUrl(node.dataset.open);
-  });
-  document.querySelectorAll("[data-feedback]").forEach((button) => {
-    button.onclick = (event) => {
-      event.stopPropagation();
-      const grade = [...state.graded, ...state.pending].find((item) => item.id === button.dataset.feedback);
-      feedback = grade || null;
-      render();
-    };
-  });
-  const size = document.getElementById("page-size");
-  if (size) size.onchange = () => { pageSize = Number(size.value); pages = {}; render(); };
-  const hide = document.getElementById("hide-events");
-  if (hide) hide.onchange = () => { hideEvents = hide.checked; render(); };
-  const close = document.getElementById("close-feedback");
-  if (close) close.onclick = () => { feedback = null; render(); };
+}
+
+function paintCourses() {
+  const box = document.getElementById("course-list");
+  if (!box) return;
+  const needle = query.courses.toLowerCase();
+  const rows = state.courses.filter((course) => course.name.toLowerCase().includes(needle));
+  box.innerHTML = rows.map((course) => {
+    const active = route.endsWith(course.id) ? "active" : "";
+    return `<button class="course-link ${active}" data-go="/courses/${encodeURIComponent(course.id)}"
+      style="background:${course.fill};border-color:${course.ink}">
+      <span class="name">${escapeHtml(course.name)}</span>
+      <span class="term">${escapeHtml(course.term || "Course")}</span>
+    </button>`;
+  }).join("") || '<p class="muted">No matching courses.</p>';
+}
+
+function paintPage() {
+  const body = document.getElementById("page-body");
+  if (!body) return;
+  const banner = jobError ? `<div class="banner">${escapeHtml(jobError)}</div>` : "";
+  body.innerHTML = banner + viewFor(route);
+  animateMeters();
+}
+
+function paintListRoot() {
+  const root = document.getElementById("list-root");
+  if (!root) {
+    paintPage();
+    return;
+  }
+  if (route === "/assignments") root.innerHTML = assignmentFolders("all");
+  else if (route === "/submitted") root.innerHTML = assignmentFolders("submitted");
+  else if (route === "/grades") root.innerHTML = gradesLists();
+  else paintPage();
+}
+
+function paintCalendarRoot() {
+  const root = document.getElementById("calendar-root");
+  if (!root) {
+    paintPage();
+    return;
+  }
+  root.innerHTML = calendarBody();
+}
+
+function paintContentsRoot() {
+  const root = document.getElementById("contents-root");
+  if (!root) {
+    paintPage();
+    return;
+  }
+  root.innerHTML = contentsBody();
 }
 
 function viewFor(path) {
@@ -171,7 +750,7 @@ function viewFor(path) {
   if (path.startsWith("/assignments/")) return assignmentView(decodeURIComponent(path.slice("/assignments/".length)));
   if (path === "/assignments") return assignmentList("all");
   if (path === "/submitted") return assignmentList("submitted");
-  if (path === "/ignored") return `<h2>Ignored</h2><p class="muted">No ignored assignments in the saved dashboard.</p>`;
+  if (path === "/ignored") return assignmentList("ignored");
   if (path === "/grades") return gradesView();
   if (path === "/calendar") return calendarView();
   if (path === "/contents") return contentsView();
@@ -180,28 +759,78 @@ function viewFor(path) {
 }
 
 function homeView() {
-  const due = state.home_due.map(assignCard).join("") || `<p class="muted">No deadlines this week.</p>`;
-  const grades = state.home_grades.map((grade) => `<div class="card row" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong>${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="muted">No new grades.</p>`;
-  return `<h2>Home</h2><p class="muted">This week at a glance.</p>
+  const due = state.home_due.map(assignCard).join("") || `<p class="empty">No deadlines this week.</p>`;
+  const grades = state.home_grades.map((grade) => `<div class="card row" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong>${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="empty">No new grades.</p>`;
+  const banners = errorBanners();
+  return `<h2>Home</h2><p class="muted">This week at a glance.</p>${banners}
     <h3>Upcoming this week</h3>${legend()}${due}
     <h3>Recent grades</h3>${grades}`;
 }
 
-function assignmentList(mode) {
+function assignmentMode() {
+  if (route === "/ignored") return "ignored";
+  if (route === "/submitted") return "submitted";
+  return "all";
+}
+
+function assignmentItems(mode) {
   const needle = query.assignments.toLowerCase();
-  let items = state.assignments.filter((item) =>
+  let items = (state.assignments || []).filter((item) =>
     `${item.title} ${item.course}`.toLowerCase().includes(needle)
   );
-  if (mode === "submitted") items = items.filter((item) => item.status === "submitted");
-  const title = mode === "submitted" ? "Submitted" : "Assignments";
-  if (mode === "submitted") {
-    return `<h2>${title}</h2>${searchBox("assignments", "Search assignments")}${paged("assignments-submitted", items, assignCard)}`;
+  if (mode === "ignored") return items.filter((item) => item.ignored);
+  items = items.filter((item) => !item.ignored);
+  if (mode === "submitted") return items.filter((item) => item.status === "submitted");
+  return items;
+}
+
+function assignmentList(mode) {
+  const title = mode === "submitted" ? "Submitted" : mode === "ignored" ? "Ignored" : "Assignments";
+  return `<h2>${title}</h2>${assignToolbar(mode)}${searchBox("assignments", "Search assignments")}<div id="list-root">${assignmentFolders(mode)}</div>`;
+}
+
+function assignToolbar(mode) {
+  const items = assignmentItems(mode);
+  const selected = items.filter((item) => selectedAssignments.has(item.id));
+  const markable = selected.filter((item) => item.status !== "submitted").length;
+  const bulk = mode === "ignored"
+    ? `<button class="outline-btn with-icon" id="assign-restore" type="button" ${selected.length ? "" : "disabled"}>${actionIcon("restore")}<span>Restore selected (${selected.length})</span></button>`
+    : `<button class="outline-btn with-icon mark-btn" id="assign-mark" type="button" ${markable ? "" : "disabled"}>${actionIcon("submitted")}<span>Mark submitted (${markable})</span></button>
+       <button class="outline-btn with-icon" id="assign-ignore" type="button" ${selected.length ? "" : "disabled"}>${actionIcon("ignore")}<span>Ignore selected (${selected.length})</span></button>`;
+  return `<div class="row" id="assign-toolbar">
+    <button class="outline-btn" id="assign-select" type="button">${selectMode ? "Done selecting" : "Select"}</button>
+    <button class="text-btn" id="assign-select-all" type="button">Select all</button>
+    ${bulk}
+    <span class="muted">Mark a card submitted, ignore it, or select several to update them together.</span>
+  </div>`;
+}
+
+function refreshAssignToolbar() {
+  const box = document.getElementById("assign-toolbar");
+  if (!box) return;
+  box.outerHTML = assignToolbar(assignmentMode());
+}
+
+function changeAssignments(action, ids) {
+  if (!ids.length) return;
+  api("/api/assignments", { action, ids }).then((next) => {
+    state = next;
+    selectedAssignments.clear();
+    selectMode = false;
+    paintPage();
+  }).catch(() => {});
+}
+
+function assignmentFolders(mode) {
+  const items = assignmentItems(mode);
+  const card = (item) => assignCard(item, true);
+  if (mode === "submitted") return paged("assignments-submitted", items, card);
+  if (mode === "ignored") {
+    return items.length ? paged("assignments-ignored", items, card) : `<p class="empty">No ignored assignments.</p>`;
   }
   const todo = items.filter((item) => item.status !== "submitted");
   const done = items.filter((item) => item.status === "submitted");
-  return `<h2>Assignments</h2>${searchBox("assignments", "Search assignments")}
-    ${folder("todo", "To do", todo, assignCard)}
-    ${folder("submitted", "Submitted", done, assignCard)}`;
+  return `${folder("todo", "To do", todo, card)}${folder("submitted", "Submitted", done, card)}`;
 }
 
 function assignmentView(id) {
@@ -211,12 +840,10 @@ function assignmentView(id) {
     <h2>${escapeHtml(item.title)}</h2>
     ${assignCard(item)}
     ${item.description ? `<div class="card"><p class="muted">Description</p><p>${escapeHtml(item.description)}</p></div>` : ""}
-    <button class="outline-btn" data-open="${escapeAttr(item.url)}">Open</button>`;
+    <button class="outline-btn" data-open="${escapeAttr(item.url)}" data-title="${escapeAttr(item.title)}" data-id="${escapeAttr(item.id)}">Open</button>`;
 }
 
 function gradesView() {
-  const needle = query.grades.toLowerCase();
-  const match = (grade) => `${grade.title} ${grade.course} ${grade.label} ${grade.note}`.toLowerCase().includes(needle);
   const lines = state.score_lines.map((line) => `<div style="margin:12px 0">
       <div class="row"><span class="swatch" style="border-color:${line.ink};background:${line.fill}"></span><strong>${escapeHtml(line.name)}</strong><span class="spacer"></span><span>${line.percent}%</span></div>
       <div class="bar"><span data-bar="${line.percent}" style="background:${line.ink}"></span></div>
@@ -224,9 +851,15 @@ function gradesView() {
   return `<h2>Grades</h2><p class="muted">Posted scores and submitted work waiting for a grade.</p>
     ${searchBox("grades", "Search grades")}
     ${lines}
-    ${folder("graded", "Graded", state.graded.filter(match), gradeCard)}
-    ${folder("pending", "Submitted, not graded", state.pending.filter(match), gradeCard)}
+    <div id="list-root">${gradesLists()}</div>
     ${feedback ? feedbackModal() : ""}`;
+}
+
+function gradesLists() {
+  const needle = query.grades.toLowerCase();
+  const match = (grade) => `${grade.title} ${grade.course} ${grade.label} ${grade.note}`.toLowerCase().includes(needle);
+  return `${folder("graded", "Graded", state.graded.filter(match), gradeCard)}
+    ${folder("pending", "Submitted, not graded", state.pending.filter(match), gradeCard)}`;
 }
 
 function courseView(id) {
@@ -234,51 +867,523 @@ function courseView(id) {
   const page = (state.course_pages || {})[id];
   if (!course || !page) return `<h2>Course</h2><p class="muted">No course data.</p>`;
   const ring = page.percent == null ? "" : `<div>${ringSvg(page.percent)}<div class="muted" style="text-align:center">${escapeHtml(page.fraction)}</div></div>`;
-  const upcoming = page.upcoming.map(assignCard).join("") || `<p class="muted">No upcoming work for this course.</p>`;
-  const grades = page.grades.map((row) => `<div class="card row"><div><strong>${escapeHtml(row.title)}</strong><div class="muted">${escapeHtml(row.due)}</div></div><span class="spacer"></span><strong>${escapeHtml(row.label)}</strong></div>`).join("") || `<p class="muted">No grades for this course yet.</p>`;
+  const upcoming = page.upcoming.map(assignCard).join("") || `<p class="empty">No upcoming work for this course.</p>`;
+  const grades = page.grades.map((row) => `<div class="card row"><div><strong>${escapeHtml(row.title)}</strong><div class="muted">${escapeHtml(row.due)}</div></div><span class="spacer"></span><strong>${escapeHtml(row.label)}</strong></div>`).join("") || `<p class="empty">No grades for this course yet.</p>`;
   return `<div class="score-row"><h2>${escapeHtml(course.name)}</h2>${ring}</div>
     <h3>Upcoming work</h3>${upcoming}<h3>Grades</h3>${grades}`;
 }
 
 function calendarView() {
-  const items = state.calendar.filter((item) => !hideEvents || item.kind !== "other");
+  return `<h2>Calendar</h2>
+    <p class="muted">Assignments, tests, and other Blackboard calendar events.</p>
+    ${legend()}
+    ${calendarToolbar()}
+    <div id="calendar-root">${calendarBody()}</div>`;
+}
+
+function calendarToolbar() {
+  const modes = [["list", "List"], ["week", "Week"], ["month", "Month"]]
+    .map(([key, label]) => `<button class="chip-btn ${calendarMode === key ? "active" : ""}" data-cal-mode="${key}">${label}</button>`)
+    .join("");
+  const days = calendarMode === "list"
+    ? `<div class="row">${[7, 14, 30].map((n) => `<button class="chip-btn ${calendarDays === n ? "active" : ""}" data-cal-days="${n}">${n} days</button>`).join("")}</div>`
+    : "";
+  return `<div class="cal-toolbar">
+    <div class="row">
+      <button class="outline-btn" id="cal-today">Today</button>
+      <button class="outline-btn" id="cal-prev" aria-label="Previous">‹</button>
+      <button class="outline-btn" id="cal-next" aria-label="Next">›</button>
+      <strong id="cal-period">${escapeHtml(periodTitle())}</strong>
+    </div>
+    <div class="row">${modes}
+      <button class="chip-btn ${hideEvents ? "active" : ""}" id="hide-events" type="button">Hide events</button>
+    </div>
+    ${days}
+  </div>`;
+}
+
+function calendarBody() {
+  if (calendarMode === "month") return monthGrid();
+  if (calendarMode === "week") return weekGrid();
+  return calendarList();
+}
+
+function visibleEvents(items) {
+  return hideEvents ? items.filter((item) => item.kind !== "other") : items;
+}
+
+function calendarList() {
+  const origin = calendarAnchor.getTime() === startOfDay(new Date()).getTime()
+    ? Date.now()
+    : calendarAnchor.getTime();
+  const limit = origin + calendarDays * 86400000;
+  const items = visibleEvents(state.calendar.filter((item) => {
+    const ts = (item.ts || 0) * 1000;
+    return ts >= origin - 12 * 3600000 && ts <= limit;
+  }));
+  if (!items.length) return `<p class="empty">No upcoming events in this range.</p>`;
+  const size = pageSize;
+  const key = "calendar-list";
+  const page = Math.min(pages[key] || 0, Math.max(0, Math.ceil(items.length / size) - 1));
+  pages[key] = page;
+  const slice = items.slice(page * size, page * size + size);
   let last = "";
-  const blocks = items.map((item) => {
+  const blocks = slice.map((item) => {
     const head = item.day_label !== last ? `<h3>${escapeHtml(item.day_label)}</h3>` : "";
     last = item.day_label;
     return head + assignCard(item);
-  }).join("") || `<p class="muted">No events.</p>`;
-  return `<h2>Calendar</h2>
-    <label class="row"><input id="hide-events" type="checkbox" ${hideEvents ? "checked" : ""}/> Hide events</label>
-    ${legend()}${blocks}`;
+  }).join("");
+  return blocks + pager(key, items.length, page, size);
+}
+
+function monthGrid() {
+  const monthStart = new Date(calendarAnchor.getFullYear(), calendarAnchor.getMonth(), 1);
+  const gridStart = weekStart(monthStart);
+  const monthEnd = addMonths(monthStart, 1);
+  const rangeEnd = addDays(gridStart, 42);
+  const byDay = eventsByDay(gridStart, rangeEnd);
+  const today = startOfDay(new Date()).getTime();
+  const header = WEEKDAYS.map((name) => `<span>${name}</span>`).join("");
+  let rows = "";
+  for (let week = 0; week < 6; week += 1) {
+    let cells = "";
+    for (let offset = 0; offset < 7; offset += 1) {
+      const day = addDays(gridStart, week * 7 + offset);
+      const inMonth = day >= monthStart && day < monthEnd;
+      const isToday = day.getTime() === today;
+      const events = (byDay.get(isoDate(day)) || []).slice(0, 3);
+      const extra = (byDay.get(isoDate(day)) || []).length - events.length;
+      cells += `<div class="cal-cell ${inMonth ? "" : "out"} ${isToday ? "today" : ""}">
+        <div class="day-num">${day.getDate()}</div>
+        ${events.map((item) => eventChip(item)).join("")}
+        ${extra > 0 ? `<div class="muted">+${extra} more</div>` : ""}
+      </div>`;
+    }
+    rows += `<div class="cal-row">${cells}</div>`;
+  }
+  return `<div class="cal-grid"><div class="cal-weekdays">${header}</div>${rows}</div>`;
+}
+
+function weekGrid() {
+  const start = weekStart(calendarAnchor);
+  const today = startOfDay(new Date()).getTime();
+  const byDay = eventsByDay(start, addDays(start, 7));
+  const heads = Array.from({ length: 7 }, (_, i) => {
+    const day = addDays(start, i);
+    const isToday = day.getTime() === today;
+    return `<div class="week-head"><div class="muted">${WEEKDAYS[i]}</div><div class="week-num ${isToday ? "today" : ""}">${day.getDate()}</div></div>`;
+  }).join("");
+  const allDay = Array.from({ length: 7 }, (_, i) => {
+    const items = (byDay.get(isoDate(addDays(start, i))) || []).filter((item) => item.all_day);
+    return `<div class="week-stack">${items.map((item) => eventChip(item)).join("") || '<span class="muted">All day</span>'}</div>`;
+  }).join("");
+  const timed = Array.from({ length: 7 }, (_, i) => {
+    const items = (byDay.get(isoDate(addDays(start, i))) || []).filter((item) => !item.all_day);
+    return `<div class="week-stack timed">${items.map((item) => eventChip(item, true)).join("")}</div>`;
+  }).join("");
+  return `<div class="week-grid">
+    <div class="week-row">${heads}</div>
+    <div class="week-label muted">All-day</div>
+    <div class="week-row">${allDay}</div>
+    <div class="week-row">${timed}</div>
+  </div>`;
+}
+
+function eventsByDay(start, end) {
+  const map = new Map();
+  visibleEvents(state.calendar).forEach((item) => {
+    if (!item.day) return;
+    const ts = (item.ts || 0) * 1000;
+    if (ts < start.getTime() || ts >= end.getTime()) return;
+    if (!map.has(item.day)) map.set(item.day, []);
+    map.get(item.day).push(item);
+  });
+  return map;
+}
+
+function eventChip(item, showTime) {
+  const dest = calendarDest(item);
+  const fill = item.kind === "other" ? "var(--event-bg)" : (item.finished ? "#e2e8f0" : item.fill);
+  const ink = item.kind === "other" ? "var(--event)" : (item.finished ? "var(--muted)" : item.ink || "var(--text)");
+  const label = showTime && item.time ? `${item.time} ${item.title}` : item.title;
+  return `<button class="event-chip" style="background:${fill};color:${ink}" data-go="${dest}">${escapeHtml(label)}</button>`;
+}
+
+function calendarDest(item) {
+  const aid = item.assignment_id || item.id;
+  if (aid && state.assignments.some((row) => row.id === aid)) return `/assignments/${encodeURIComponent(aid)}`;
+  if (item.course_id) return `/courses/${encodeURIComponent(item.course_id)}`;
+  return "/calendar";
+}
+
+function periodTitle() {
+  if (calendarMode === "month") {
+    return calendarAnchor.toLocaleString(undefined, { month: "long", year: "numeric" });
+  }
+  if (calendarMode === "week") {
+    const start = weekStart(calendarAnchor);
+    const end = addDays(start, 6);
+    if (start.getMonth() === end.getMonth()) {
+      return `${start.toLocaleString(undefined, { month: "short" })} ${start.getDate()} – ${end.getDate()}, ${end.getFullYear()}`;
+    }
+    return `${start.toLocaleString(undefined, { month: "short" })} ${start.getDate()} – ${end.toLocaleString(undefined, { month: "short" })} ${end.getDate()}, ${end.getFullYear()}`;
+  }
+  if (calendarAnchor.getTime() === startOfDay(new Date()).getTime()) return `Next ${calendarDays} days`;
+  return `From ${calendarAnchor.toLocaleString(undefined, { month: "short" })} ${calendarAnchor.getDate()}`;
+}
+
+function shiftCalendar(delta) {
+  if (calendarMode === "month") calendarAnchor = addMonths(calendarAnchor, delta);
+  else if (calendarMode === "week") calendarAnchor = addDays(calendarAnchor, delta * 7);
+  else calendarAnchor = addDays(calendarAnchor, delta * calendarDays);
 }
 
 function contentsView() {
-  return `<h2>Contents</h2><p class="muted">Course files. ${state.content_count} indexed.</p>
-    <p class="muted">${state.content_count ? "Open a course folder from the sidebar." : "Course files load when you open this page in the full app, or after Refresh."}</p>`;
+  return `<h2>Contents</h2>
+    <p class="muted">Course files. Metadata loads with Refresh; files download only when you choose Download.</p>
+    <div class="row">
+      ${["tree", "folder", "columns"].map((mode) => {
+        const label = mode[0].toUpperCase() + mode.slice(1);
+        return `<button class="${contentsMode === mode ? "fill-btn" : "outline-btn"}" data-contents-mode="${mode}">${label}</button>`;
+      }).join("")}
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="fill-btn" id="contents-download" type="button" ${contentsSelected.size ? "" : "disabled"}>Download</button>
+      <button class="outline-btn" id="contents-open-selected" type="button" ${contentsSelected.size ? "" : "disabled"}>Open</button>
+      <span class="muted" id="contents-note">${escapeHtml(contentsNote || (contentsSelected.size ? `${contentsSelected.size} selected` : "Select files to download or open."))}</span>
+    </div>
+    <div id="contents-root">${contentsBody()}</div>`;
+}
+
+function contentsBody() {
+  const courses = state.courses || [];
+  const nodes = state.content_nodes || [];
+  if (!courses.length) return `<p class="empty">No courses in this filter.</p>`;
+  const hint = !nodes.length
+    ? `<p class="empty">${state.files_indexed
+      ? "No course files indexed yet. Use Refresh after signing in."
+      : "Course files load when you open this page. Sign in, or use Refresh to index everything."}</p>`
+    : "";
+  if (contentsMode === "folder") return hint + folderView(courses, nodes);
+  if (contentsMode === "columns") return hint + columnsView(courses, nodes);
+  return hint + treeView(courses, nodes);
+}
+
+function treeView(courses, nodes) {
+  const size = pageSize;
+  const key = "contents-tree";
+  const page = Math.min(pages[key] || 0, Math.max(0, Math.ceil(courses.length / size) - 1));
+  pages[key] = page;
+  const shown = courses.slice(page * size, page * size + size);
+  const header = fileHeader();
+  const rows = shown.flatMap((course) => {
+    const courseKey = `course:${course.id}`;
+    const expanded = contentsExpanded.has(courseKey);
+    const bits = [folderRow(courseKey, course.name, 0, expanded, "—", "", true)];
+    if (expanded) bits.push(treeRows(nodes, course.id, "", 1));
+    return bits;
+  });
+  return header + rows.join("") + pager(key, courses.length, page, size);
+}
+
+function treeRows(nodes, courseId, parentId, depth) {
+  return contentChildren(nodes, courseId, parentId).map((node) => {
+    if (node.kind === "folder") {
+      const expanded = contentsExpanded.has(node.id);
+      const row = folderRow(node.id, node.name, depth, expanded, "—", node.date, false, node);
+      return row + (expanded ? treeRows(nodes, courseId, node.id, depth + 1) : "");
+    }
+    return fileRow(node, depth);
+  }).join("");
+}
+
+function folderView(courses, nodes) {
+  const parentKey = contentsPath[contentsPath.length - 1] || null;
+  const items = explorerItems(courses, nodes, parentKey);
+  if (!items.length) {
+    const empty = parentKey == null && !nodes.length
+      ? "No course files indexed yet. Use Refresh after signing in."
+      : "This folder is empty.";
+    return `${breadcrumb(courses, nodes)}${fileHeader()}<p class="empty">${empty}</p>`;
+  }
+  const key = `contents-folder:${parentKey || "root"}`;
+  const size = pageSize;
+  const page = Math.min(pages[key] || 0, Math.max(0, Math.ceil(items.length / size) - 1));
+  pages[key] = page;
+  const shown = items.slice(page * size, page * size + size);
+  return `${breadcrumb(courses, nodes)}${fileHeader()}${shown.map((item) => explorerRow(item, parentKey, true)).join("")}${pager(key, items.length, page, size)}`;
+}
+
+function columnsView(courses, nodes) {
+  const specs = millerColumns(contentsPath);
+  const cols = specs.map(([parentKey, selectedKey]) => {
+    const items = explorerItems(courses, nodes, parentKey);
+    const title = parentKey == null ? "Courses" : pathLabel(courses, nodes, parentKey);
+    const key = `contents-col:${parentKey || "root"}`;
+    const size = pageSize;
+    const selectedIndex = items.findIndex((item) => item.key === selectedKey);
+    let page = pages[key] || 0;
+    if (selectedIndex >= 0) page = Math.floor(selectedIndex / size);
+    const pageCount = Math.max(1, Math.ceil(items.length / size));
+    page = Math.min(page, pageCount - 1);
+    pages[key] = page;
+    const shown = items.slice(page * size, page * size + size);
+    const body = shown.map((item) => explorerRow(item, parentKey, false, item.key === selectedKey)).join("")
+      || `<div class="muted" style="padding:12px">Empty</div>`;
+    return `<div class="column"><h4>${escapeHtml(title)}</h4><div class="body">${body}${pager(key, items.length, page, size)}</div></div>`;
+  });
+  while (cols.length < 3) cols.push(`<div class="column"></div>`);
+  return `${breadcrumb(courses, nodes)}<div class="columns">${cols.join("")}</div>`;
+}
+
+function explorerItems(courses, nodes, parentKey) {
+  if (parentKey == null) {
+    return courses.map((course) => ({
+      key: `course:${course.id}`,
+      name: course.name,
+      isFolder: true,
+      isCourse: true,
+      node: null,
+    }));
+  }
+  if (parentKey.startsWith("course:")) {
+    return contentChildren(nodes, parentKey.slice(7), "").map(nodeToItem);
+  }
+  const folder = nodes.find((node) => node.id === parentKey);
+  if (!folder) return [];
+  return contentChildren(nodes, folder.course_id, folder.id).map(nodeToItem);
+}
+
+function nodeToItem(node) {
+  return {
+    key: node.id,
+    name: node.name,
+    isFolder: node.kind === "folder",
+    isCourse: false,
+    node,
+  };
+}
+
+function explorerRow(item, parentKey, showMeta, highlighted) {
+  const selected = item.node && !item.isFolder && contentsSelected.has(item.node.id);
+  const cls = [highlighted ? "hi" : "", selected ? "selected" : ""].filter(Boolean).join(" ");
+  const open = item.isFolder ? `data-contents-open="${escapeAttr(item.key)}" data-contents-parent="${escapeAttr(parentKey || "")}"` : "";
+  const check = item.isCourse
+    ? `<span></span>`
+    : `<label data-select="${escapeAttr(item.node ? item.node.id : "")}"><input type="checkbox" ${selected ? "checked" : ""} ${item.node ? "" : "disabled"} /></label>`;
+  const icon = item.isFolder ? folderSvg(false) : fileSvg(item.node);
+  const meta = showMeta
+    ? `<span class="muted">${item.isFolder ? "—" : escapeHtml(item.node ? item.node.size_label : "—")}</span>
+       <span class="muted">${item.node ? escapeHtml(item.node.date) : "—"}</span>`
+    : "";
+  const openBtn = item.node && !item.isFolder
+    ? `<button class="text-btn" data-open="${escapeAttr(item.node.url)}">${openSvg()}</button>`
+    : `<span></span>`;
+  return `<div class="file-row ${cls}">
+    <span></span>${check}<span ${open}>${icon}</span>
+    <span class="name ${item.isFolder ? "folder" : ""}" ${open}>${escapeHtml(item.name)}</span>
+    ${meta}${openBtn}
+  </div>`;
+}
+
+function folderRow(key, name, depth, expanded, sizeLabel, dateLabel, isCourse, node) {
+  const pad = 8 + depth * 16;
+  const selected = node && folderSelected(node);
+  const check = isCourse
+    ? `<span></span>`
+    : `<label data-select="${escapeAttr(node.id)}"><input type="checkbox" ${selected ? "checked" : ""} /></label>`;
+  return `<div class="file-row ${depth % 2 ? "alt" : ""}" style="padding-left:${pad}px">
+    <button class="chevron" data-expand="${escapeAttr(key)}">${expanded ? "▾" : "▸"}</button>
+    ${check}
+    ${folderSvg(expanded)}
+    <span class="name folder">${escapeHtml(name)}</span>
+    <span class="muted">${escapeHtml(sizeLabel)}</span>
+    <span class="muted">${escapeHtml(dateLabel || "—")}</span>
+    <span></span>
+  </div>`;
+}
+
+function fileRow(node, depth) {
+  const selected = contentsSelected.has(node.id);
+  const pad = 8 + depth * 16;
+  return `<div class="file-row ${selected ? "selected" : depth % 2 ? "alt" : ""}" style="padding-left:${pad}px">
+    <span></span>
+    <label data-select="${escapeAttr(node.id)}"><input type="checkbox" ${selected ? "checked" : ""} /></label>
+    ${fileSvg(node)}
+    <span class="name">${escapeHtml(node.name)}</span>
+    <span class="muted">${escapeHtml(node.size_label)}</span>
+    <span class="muted">${escapeHtml(node.date)}</span>
+    <button class="text-btn" data-open="${escapeAttr(node.url)}">${openSvg()}</button>
+  </div>`;
+}
+
+function fileHeader() {
+  return `<div class="file-header"><span></span><span></span><span></span><span>Name</span><span>Size</span><span>Date modified</span><span></span></div>`;
+}
+
+function breadcrumb(courses, nodes) {
+  const crumbs = [`<button data-crumb="-1">Courses</button>`];
+  contentsPath.forEach((key, index) => {
+    crumbs.push(`<span class="muted">/</span><button data-crumb="${index}">${escapeHtml(pathLabel(courses, nodes, key))}</button>`);
+  });
+  return `<div class="crumb">
+    <button class="outline-btn" id="contents-up" ${contentsPath.length ? "" : "disabled"}>Up</button>
+    ${crumbs.join("")}
+  </div>`;
+}
+
+function pathLabel(courses, nodes, key) {
+  if (key.startsWith("course:")) {
+    const course = courses.find((item) => item.id === key.slice(7));
+    return course ? course.name : key;
+  }
+  const node = nodes.find((item) => item.id === key);
+  return node ? node.name : key;
+}
+
+function contentsOpenFolder(parentKey, childKey) {
+  if (!parentKey) {
+    contentsPath = [childKey];
+    return;
+  }
+  const index = contentsPath.indexOf(parentKey);
+  contentsPath = index >= 0 ? contentsPath.slice(0, index + 1).concat(childKey) : [parentKey, childKey];
+}
+
+function millerColumns(path) {
+  const n = Math.min(3, path.length + 1);
+  const start = path.length + 1 - n;
+  const columns = [];
+  for (let offset = 0; offset < n; offset += 1) {
+    const parentIndex = start + offset - 1;
+    const parentKey = parentIndex < 0 ? null : path[parentIndex];
+    const selected = start + offset < path.length ? path[start + offset] : null;
+    columns.push([parentKey, selected]);
+  }
+  return columns;
+}
+
+function contentChildren(nodes, courseId, parentId) {
+  return nodes
+    .filter((node) => node.course_id === courseId && (node.parent_id || "") === (parentId || ""))
+    .slice()
+    .sort((a, b) => (a.kind === "folder" ? 0 : 1) - (b.kind === "folder" ? 0 : 1) || a.name.localeCompare(b.name));
+}
+
+function descendantFiles(folder) {
+  const nodes = state.content_nodes || [];
+  const found = [];
+  const walk = (parentId) => {
+    contentChildren(nodes, folder.course_id, parentId).forEach((node) => {
+      if (node.kind === "folder") walk(node.id);
+      else found.push(node);
+    });
+  };
+  walk(folder.id);
+  return found;
+}
+
+function folderSelected(folder) {
+  const files = descendantFiles(folder);
+  return files.length > 0 && files.every((node) => contentsSelected.has(node.id));
+}
+
+function toggleContentSelected(id, checked) {
+  const node = (state.content_nodes || []).find((item) => item.id === id);
+  if (!node) return;
+  const targets = node.kind === "folder" ? descendantFiles(node) : [node];
+  targets.forEach((item) => {
+    if (checked) contentsSelected.add(item.id);
+    else contentsSelected.delete(item.id);
+  });
 }
 
 function settingsView() {
   const colors = state.deadline_colors || {};
   const swatches = Object.entries({ overdue: "Overdue", today: "Due today", soon: "Within 3 days", week: "This week", later: "Later" })
-    .map(([key, label]) => `<div class="row"><span class="swatch" style="border-color:${colors[key]}"></span><span>${label}</span><span class="muted">${colors[key] || ""}</span></div>`).join("");
-  return `<h2>Settings</h2>
-    <div class="card"><h3>Lists</h3>
-      <p class="muted">How many items to show at once.</p>
-      <select id="page-size">
-        ${[10, 20, 50].map((size) => `<option ${size === pageSize ? "selected" : ""}>${size}</option>`).join("")}
-      </select>
-      <p style="color:${pageSize > 20 ? "var(--warn)" : "var(--muted)"}">More than 20 items on one page can make the app lag.</p>
+    .map(([key, label]) => `<div class="row">
+      <span class="color-dot" style="border:4px solid ${colors[key]}"></span>
+      <span style="width:130px">${label}</span>
+      <span class="muted">${colors[key] || ""}</span>
+      <button class="text-btn" data-deadline-color="${key}" data-deadline-label="${escapeAttr(label)}" data-deadline-current="${escapeAttr(colors[key] || "")}">Change</button>
+    </div>`).join("");
+  const google = state.google || {};
+  const signed = google.signed_in;
+  const who = signed && google.email ? `Signed in as ${google.email}` : signed ? "Signed in to Google." : "Not signed in.";
+  const courseColors = state.courses.map((course) => `<div class="card">
+    <div class="row">
+      <span class="color-dot" style="background:${course.fill};border:3px solid ${course.ink}"></span>
+      <span style="flex:1">${escapeHtml(course.name)}</span>
+      <button class="text-btn" data-course-color="${escapeAttr(course.id)}" data-course-name="${escapeAttr(course.name)}" data-course-current="${escapeAttr(course.ink)}">Change</button>
+      ${course.custom ? `<button class="text-btn" data-reset-course="${escapeAttr(course.id)}">Reset</button>` : ""}
     </div>
-    <div class="card"><h3>Colors</h3><p class="muted">Borders show how close a deadline is. Fills show the course.</p>${swatches}</div>
-    <div class="card"><h3>Google Calendar</h3><p class="muted">Sign-in and sync stay available from the full WhiteBoard app. This slim view reads the same saved dashboard.</p></div>`;
+  </div>`).join("") || `<div class="card"><p class="muted">Sign in and refresh to choose course colors.</p></div>`;
+  return `<h2>Settings</h2>
+    <div class="card">
+      <label>Blackboard base URL</label>
+      <input class="settings-input" type="text" value="${escapeAttr(state.base_url || "")}" readonly />
+      <p class="muted">${escapeHtml(state.fetched_at)}</p>
+    </div>
+    <p class="muted">This app is for your own account only. Course materials stay on Blackboard; do not republish them.</p>
+    <h2 style="font-size:20px">Lists</h2>
+    <div class="card">
+      <p class="muted">How many items to show at once on assignments, grades, the calendar, course pages, and Contents.</p>
+      <select id="page-size">
+        ${[10, 20, 50].map((size) => `<option value="${size}" ${size === pageSize ? "selected" : ""}>Show ${size} at once</option>`).join("")}
+      </select>
+      <p style="color:${pageSize > 20 ? "var(--warn)" : "var(--muted)"};font-weight:${pageSize > 20 ? 600 : 400}">More than 20 items on one page can make the app lag.</p>
+    </div>
+    <h2 style="font-size:20px">Colors</h2>
+    <div class="card"><p class="muted">Borders show how close a deadline is. Fills show which course an item belongs to.</p>${swatches}
+      <button class="text-btn" id="reset-deadline-colors">Reset deadline colors</button></div>
+    <p class="muted">Pick a color for each course. Courses you leave alone keep an automatic color.</p>
+    ${courseColors}
+    ${state.courses.some((course) => course.custom) ? '<button class="text-btn" id="reset-course-colors">Reset course colors</button>' : ""}
+    ${colorDialog ? colorModal() : ""}
+    <h2 style="font-size:20px">Google Calendar</h2>
+    <div class="card">
+      <p class="muted">Create a Desktop OAuth client in Google Cloud, enable the Google Calendar API, and paste the client ID and secret. Sign in once. After each refresh, WhiteBoard updates a calendar named WhiteBoard. Finished work is removed. Google has to be reachable from this computer.</p>
+      <label>OAuth client ID</label>
+      <input class="settings-input" id="google-client-id" type="text" value="${escapeAttr(googleDraft.client_id)}" />
+      <label>OAuth client secret</label>
+      <input class="settings-input" id="google-client-secret" type="password" value="${escapeAttr(googleDraft.client_secret)}" />
+      <label class="row"><input id="google-sync-enabled" type="checkbox" ${google.sync_enabled ? "checked" : ""}/> Update the WhiteBoard calendar after each refresh</label>
+      <div class="row">
+        <button class="fill-btn" id="google-signin" ${state.google_busy ? "disabled" : ""}>Sign in to Google</button>
+        <button class="outline-btn" id="google-sync" ${state.google_busy || !signed ? "disabled" : ""}>Sync now</button>
+        <button class="text-btn" id="google-signout" ${!signed || state.google_busy ? "disabled" : ""}>Sign out</button>
+      </div>
+      <p class="muted">${escapeHtml(who)}</p>
+      ${google.status ? `<p class="muted">${escapeHtml(google.status)}</p>` : ""}
+    </div>`;
 }
 
-function assignCard(item) {
+function assignCard(item, withActions) {
   const dest = item.assignment_id || item.id;
-  return `<article class="assign" style="border-color:${item.border};background:${item.fill}" data-go="/assignments/${encodeURIComponent(dest)}">
-    <div><strong>${escapeHtml(item.title)}</strong><div class="muted">${escapeHtml(item.when || "")} · ${escapeHtml(item.course || "")}</div></div>
-    <div><div class="countdown" style="color:${item.border}">${escapeHtml(item.countdown || "")}</div><span class="chip ${item.kind || ""}">${escapeHtml(item.kind || item.status || "")}</span></div>
+  const submitted = item.status === "submitted";
+  const extra = [item.kind === "other" ? "event" : "", submitted || item.finished ? "dimmed" : ""].filter(Boolean).join(" ");
+  const kind = item.kind || item.status || "";
+  const background = submitted ? "#e2e8f0" : (item.kind === "other" ? "" : item.fill);
+  const check = withActions && selectMode
+    ? `<input class="assign-check" type="checkbox" data-assign-select="${escapeAttr(item.id)}" ${selectedAssignments.has(item.id) ? "checked" : ""} />`
+    : "";
+  let actions = "";
+  if (withActions && route === "/ignored") {
+    actions = actionButton(`data-assign-restore="${escapeAttr(item.id)}"`, "Restore", "restore");
+  } else if (withActions) {
+    const mark = submitted
+      ? (item.manual ? actionButton(`data-assign-undo="${escapeAttr(item.id)}"`, "Undo", "undo") : "")
+      : actionButton(`data-assign-mark="${escapeAttr(item.id)}"`, "Mark submitted", "submitted", "mark-btn");
+    actions = `${mark}${actionButton(`data-assign-ignore="${escapeAttr(item.id)}"`, "Ignore", "ignore")}`;
+  }
+  return `<article class="assign ${extra}" style="border-color:${submitted ? "#94a3b8" : item.border};background:${background}" data-go="/assignments/${encodeURIComponent(dest)}">
+    ${check}
+    <div class="assign-main"><strong>${escapeHtml(item.title)}</strong><div class="muted">${escapeHtml(item.when || "")} · ${escapeHtml(item.course || "")}</div></div>
+    <div class="assign-meta">
+      <div class="countdown" data-due="${item.ts || 0}" style="color:${submitted ? "#64748b" : item.border}">${escapeHtml(item.countdown || formatCountdown(item.ts || 0))}</div>
+      <span class="chip ${kind}">${escapeHtml(kind)}</span>
+      <div class="row">${actions}</div>
+    </div>
   </article>`;
 }
 
@@ -302,13 +1407,17 @@ function paged(key, items, renderItem) {
   pages[key] = page;
   const slice = items.slice(page * size, page * size + size);
   const cards = slice.map(renderItem).join("") || `<p class="muted">Nothing in this list.</p>`;
-  if (items.length <= size) return cards;
+  return cards + pager(key, items.length, page, size);
+}
+
+function pager(key, total, page, size) {
+  if (total <= size) return "";
   const start = page * size + 1;
-  const end = Math.min(items.length, page * size + size);
-  return `${cards}<div class="pager">
+  const end = Math.min(total, page * size + size);
+  return `<div class="pager">
     <button class="outline-btn" data-page="${key}:-1" ${page === 0 ? "disabled" : ""}>Previous</button>
-    <span class="muted">${start}–${end} of ${items.length}</span>
-    <button class="outline-btn" data-page="${key}:1" ${end >= items.length ? "disabled" : ""}>Next</button>
+    <span class="muted">${start}–${end} of ${total}</span>
+    <button class="outline-btn" data-page="${key}:1" ${end >= total ? "disabled" : ""}>Next</button>
   </div>`;
 }
 
@@ -320,7 +1429,23 @@ function legend() {
   const colors = state.deadline_colors || {};
   const bits = [["overdue", "Overdue"], ["today", "Due today"], ["soon", "3 days"], ["week", "This week"], ["later", "Later"]]
     .map(([key, label]) => `<span class="row"><span class="swatch" style="border-color:${colors[key]}"></span>${label}</span>`).join("");
-  return `<div class="legend"><span>Border: deadline</span>${bits}<span>Fill: course</span></div>`;
+  return `<div class="legend"><span>Border: deadline</span>${bits}<span>Fill: course</span>
+    <span class="row"><span class="swatch" style="border-color:var(--event);background:var(--event-bg)"></span>Event</span></div>`;
+}
+
+function errorBanners() {
+  const labels = {
+    harvest: "Could not read Ultra pages",
+    profile: "Could not load your profile",
+    calendar: "Couldn't load deadlines",
+    grades: "Couldn't load grades",
+    courses: "Couldn't load courses",
+    refresh: "Refresh failed",
+  };
+  return Object.entries(labels).map(([key, label]) => {
+    const text = (state.errors || {})[key];
+    return text ? `<div class="banner">${escapeHtml(label)}: ${escapeHtml(text)}</div>` : "";
+  }).join("");
 }
 
 function ringSvg(percent) {
@@ -361,28 +1486,192 @@ function viewerView() {
     <div class="chrome">
       <button class="outline-btn" id="viewer-back">Back</button>
       <div class="url">${escapeHtml(viewer)}</div>
-      <button class="fill-btn" id="viewer-home">WhiteBoard</button>
+      <button class="fill-btn pill" id="viewer-home">WhiteBoard</button>
     </div>
     <iframe src="${escapeAttr(viewer)}" style="flex:1;border:0"></iframe>
   </div>`;
 }
 
-function bindViewer() {
-  document.getElementById("viewer-home").onclick = () => { viewer = null; render(); };
-  document.getElementById("viewer-back").onclick = () => { viewer = null; render(); };
+async function openUrl(url, title, id) {
+  if (!url && !id) return;
+  try {
+    await api("/api/open", { url: url || "", title: title || "", id: id || "" });
+  } catch (error) {
+    contentsNote = (error && error.message) || "Could not open that page.";
+    const note = document.getElementById("contents-note");
+    if (note) note.textContent = contentsNote;
+  }
 }
 
-async function openUrl(url) {
-  if (!url) return;
-  viewer = url;
-  render();
-  await fetch("/api/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+function showDownloadProgress(message) {
+  const banner = document.getElementById("download-banner");
+  const label = document.getElementById("download-label");
+  const fill = document.getElementById("download-fill");
+  if (!banner || !label || !fill) return;
+  banner.hidden = false;
+  const percent = Math.max(0, Math.min(100, Math.round((message.percent || 0) * 100)));
+  label.textContent = message.done ? "Download finished." : `Downloading ${message.name}...`;
+  fill.style.width = `${Math.max(percent, 4)}%`;
+  if (message.done) {
+    setTimeout(() => { banner.hidden = true; }, 1600);
+  }
+}
+
+async function downloadSelected() {
+  const ids = [...contentsSelected];
+  if (!ids.length) return;
+  contentsNote = "Downloading…";
+  const note = document.getElementById("contents-note");
+  if (note) note.textContent = contentsNote;
+  showDownloadProgress({ name: "files", percent: 0.02, done: false });
+  const button = document.getElementById("contents-download");
+  if (button) button.disabled = true;
+  try {
+    const result = await api("/api/download", { ids });
+    contentsNote = (result && result.message) || "Download finished.";
+  } catch (error) {
+    contentsNote = (error && error.message) || "Download failed.";
+  }
+  if (note) note.textContent = contentsNote;
+  if (button) button.disabled = contentsSelected.size === 0;
 }
 
 function topOf(path) {
   if (path.startsWith("/courses")) return "/home";
   if (path.startsWith("/assignments")) return "/assignments";
   return path;
+}
+
+function actionButton(attrs, label, icon, extraClass) {
+  const cls = extraClass ? ` ${extraClass}` : "";
+  return `<button class="outline-btn with-icon${cls}" type="button" title="${escapeAttr(label)}" ${attrs}>${actionIcon(icon)}<span>${label}</span></button>`;
+}
+
+function actionIcon(name) {
+  const icons = {
+    submitted: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8"/><path d="M8.5 12.2 11 14.7 15.8 9.5"/></svg>`,
+    ignore: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5l18 14M10.5 10.7A3 3 0 0 0 13.3 13.5M9.9 6.1A10 10 0 0 1 12 5.8c5 0 8.5 4.2 9.4 5.4a1.3 1.3 0 0 1 0 1.6 12 12 0 0 1-3.2 3.1M6.2 8.3A12 12 0 0 0 2.6 12.8a1.3 1.3 0 0 0 0 1.6C3.5 15.6 7 19.8 12 19.8c1.2 0 2.3-.2 3.4-.6"/></svg>`,
+    undo: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 7H4v4"/><path d="M5 10a7 7 0 1 1-1 4"/></svg>`,
+    restore: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M2.5 12S6 6.8 12 6.8 21.5 12 21.5 12 18 17.2 12 17.2 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.4"/></svg>`,
+  };
+  return icons[name] || "";
+}
+
+function navIcon(name) {
+  const icons = {
+    home: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"/></svg>`,
+    assignment: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="6" y="3.5" width="12" height="17" rx="2"/><path d="M9 3.5h6v3H9zM8 11h8M8 15h6"/></svg>`,
+    "turned-in": `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="6" y="3.5" width="12" height="17" rx="2"/><path d="M9 3.5h6v3H9zM8.5 13.2l2.2 2.2 4.8-4.8"/></svg>`,
+    hidden: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5l18 14M10.5 10.7A3 3 0 0 0 13.3 13.5M9.9 6.1A10 10 0 0 1 12 5.8c5 0 8.5 4.2 9.4 5.4a1.3 1.3 0 0 1 0 1.6 12 12 0 0 1-3.2 3.1M6.2 8.3A12 12 0 0 0 2.6 12.8a1.3 1.3 0 0 0 0 1.6C3.5 15.6 7 19.8 12 19.8c1.2 0 2.3-.2 3.4-.6"/></svg>`,
+    grade: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m12 3.8 2.3 4.7 5.2.8-3.8 3.6.9 5.2L12 15.7 7.4 18.1l.9-5.2-3.8-3.6 5.2-.8z"/></svg>`,
+    folder: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7.5h6l2 2H20v9.2a1.3 1.3 0 0 1-1.3 1.3H5.3A1.3 1.3 0 0 1 4 18.7z"/></svg>`,
+    calendar: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3.5v3M16 3.5v3M4 10h16"/></svg>`,
+    settings: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 13a7.8 7.8 0 0 0 .1-2l2-1.2-2-3.4-2.2.6a8 8 0 0 0-1.7-1L15.2 3h-6.4l-.4 2.8a8 8 0 0 0-1.7 1L4.5 6.4l-2 3.4 2 1.2a7.8 7.8 0 0 0 0 2l-2 1.2 2 3.4 2.2-.6a8 8 0 0 0 1.7 1l.4 2.8h6.4l.4-2.8a8 8 0 0 0 1.7-1l2.2.6 2-3.4z"/></svg>`,
+  };
+  return icons[name] || "";
+}
+
+function folderSvg(open) {
+  return open
+    ? `<svg class="file-icon folder" viewBox="0 0 24 24" fill="currentColor"><path d="M3 7h6l2 2h10v10H3z"/></svg>`
+    : `<svg class="file-icon folder" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h7l2 2h9v11H3z"/></svg>`;
+}
+
+function fileSvg(node) {
+  const kind = node && node.kind;
+  const cls = kind === "link" ? "file-icon link" : "file-icon";
+  return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M7 3.5h7l5 5V20a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.5A1 1 0 0 1 7 3.5z"/><path d="M14 3.5V9h5"/></svg>`;
+}
+
+function openSvg() {
+  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 5h5v5M19 5l-8 8"/><path d="M11 6H6a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-5"/></svg>`;
+}
+
+function openColorDialog(title, current, onPick) {
+  colorDialog = { title, current: current || "#2563eb", onPick };
+  paintPage();
+}
+
+function colorModal() {
+  const current = colorDialog.current || "#2563eb";
+  const picks = SWATCHES.map((color) =>
+    `<button class="swatch-pick ${color === current ? "current" : ""}" data-swatch="${color}" style="background:${color}" title="${color}"></button>`
+  ).join("");
+  return `<div class="modal-back"><div class="modal">
+    <h3>${escapeHtml(colorDialog.title)}</h3>
+    <p class="muted">Choose a swatch, or type a hex color.</p>
+    <div class="row">${picks}</div>
+    <label>Hex color</label>
+    <input id="color-hex" type="text" value="${escapeAttr(current)}" />
+    <div class="row" style="margin-top:12px">
+      <button class="text-btn" id="color-cancel">Cancel</button>
+      <button class="fill-btn" id="color-apply">Use this color</button>
+    </div>
+  </div></div>`;
+}
+
+function formatCountdown(ts) {
+  if (!ts) return "";
+  let seconds = Math.trunc(ts - Date.now() / 1000);
+  const overdue = seconds < 0;
+  seconds = Math.abs(seconds);
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  const clock = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  const body = days ? `${days}d ${clock}` : clock;
+  return overdue ? `Overdue ${body}` : `Due in ${body}`;
+}
+
+function colorForDue(ts) {
+  if (!ts) return "#94a3b8";
+  const hours = (ts - Date.now() / 1000) / 3600;
+  const colors = state && state.deadline_colors || {};
+  if (hours < 0) return colors.overdue || "#9f1239";
+  if (hours <= 24) return colors.today || "#ea580c";
+  if (hours <= 72) return colors.soon || "#eab308";
+  if (hours <= 168) return colors.week || "#22c55e";
+  return colors.later || "#2563eb";
+}
+
+function tickCountdowns() {
+  document.querySelectorAll(".countdown[data-due]").forEach((node) => {
+    const ts = Number(node.dataset.due || 0);
+    if (!ts) return;
+    node.textContent = formatCountdown(ts);
+    node.style.color = colorForDue(ts);
+    const card = node.closest(".assign");
+    if (card && !card.classList.contains("event") && !card.classList.contains("dimmed")) {
+      card.style.borderColor = colorForDue(ts);
+    }
+  });
+}
+
+function startOfDay(value) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+
+function weekStart(value) {
+  const day = startOfDay(value);
+  const delta = (day.getDay() + 6) % 7;
+  return addDays(day, -delta);
+}
+
+function addDays(value, amount) {
+  const next = new Date(value);
+  next.setDate(next.getDate() + amount);
+  return startOfDay(next);
+}
+
+function addMonths(value, amount) {
+  return new Date(value.getFullYear(), value.getMonth() + amount, 1);
+}
+
+function isoDate(value) {
+  const month = `${value.getMonth() + 1}`.padStart(2, "0");
+  const day = `${value.getDate()}`.padStart(2, "0");
+  return `${value.getFullYear()}-${month}-${day}`;
 }
 
 function escapeHtml(value) {

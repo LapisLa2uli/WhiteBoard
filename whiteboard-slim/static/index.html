@@ -4,10 +4,25 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>WhiteBoard</title>
-  <link rel="stylesheet" href="/app.css" />
+  <link rel="icon" href="logo.png" />
+  <link rel="stylesheet" href="app.css?v=7" />
 </head>
 <body>
-  <div id="app"></div>
-  <script src="/app.js"></script>
+  <div id="app">
+    <div class="loading-screen">
+      <div class="loading-card">
+        <div class="row" style="justify-content:center"><img src="logo.png" width="64" height="64" alt="" /></div>
+        <h2>Loading your dashboard</h2>
+        <p class="muted">Signing in and collecting courses, assignment links, and submission status.</p>
+        <div class="row"><span class="muted">Loading…</span><span class="spacer"></span><span class="muted">0%</span></div>
+        <div class="load-track"><span style="width:8%"></span></div>
+      </div>
+    </div>
+  </div>
+  <div id="download-banner" class="download-banner" hidden>
+    <div id="download-label">Downloading…</div>
+    <div class="load-track"><span id="download-fill" style="width:4%"></span></div>
+  </div>
+  <script src="app.js?v=17"></script>
 </body>
 </html>

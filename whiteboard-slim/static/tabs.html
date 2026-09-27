@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Tabs</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #dee1e6; font: 13px "Segoe UI", sans-serif; color: #202124; }
+    #bar { display: flex; align-items: flex-end; height: 100%; padding: 6px 8px 0; gap: 4px; box-sizing: border-box; overflow: hidden; }
+    button.tab {
+      display: flex; align-items: center; gap: 8px; max-width: 220px; min-width: 0;
+      height: 34px; padding: 0 8px 0 12px; border: 0; border-radius: 10px 10px 0 0;
+      background: transparent; color: inherit; cursor: pointer;
+    }
+    button.tab.active { background: #fff; }
+    button.tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button.tab .close {
+      border: 0; background: transparent; width: 18px; height: 18px; border-radius: 9px;
+      color: #5f6368; cursor: pointer; line-height: 16px;
+    }
+    button.tab .close:hover { background: #e8eaed; }
+  </style>
+</head>
+<body>
+  <div id="bar"></div>
+  <script>
+    function render(tabs) {
+      const bar = document.getElementById("bar");
+      bar.innerHTML = (tabs || []).map((tab) => `
+        <button class="tab ${tab.active ? "active" : ""}" data-id="${tab.id}" type="button">
+          <span>${tab.title || "Blackboard"}</span>
+          <i class="close" data-close="${tab.id}">×</i>
+        </button>`).join("");
+    }
+    document.getElementById("bar").addEventListener("click", (event) => {
+      const close = event.target.closest("[data-close]");
+      const tab = event.target.closest("[data-id]");
+      if (close) {
+        event.stopPropagation();
+        window.chrome.webview.postMessage(JSON.stringify({ kind: "tabs", action: "close", id: close.dataset.close }));
+        return;
+      }
+      if (tab) {
+        window.chrome.webview.postMessage(JSON.stringify({ kind: "tabs", action: "activate", id: tab.dataset.id }));
+      }
+    });
+    window.chrome.webview.addEventListener("message", (event) => {
+      let message = event.data;
+      if (typeof message === "string") {
+        try { message = JSON.parse(message); } catch (error) { return; }
+      }
+      if (message && message.event === "tabs") render(message.tabs || []);
+    });
+    window.chrome.webview.postMessage(JSON.stringify({ kind: "tabs", action: "ready" }));
+  </script>
+</body>
+</html>

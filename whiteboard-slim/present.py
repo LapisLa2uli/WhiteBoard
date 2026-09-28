@@ -39,13 +39,25 @@ from app.google_calendar import load_account
 from app.palette import deadline_color, subject_fill, subject_ink, apply_palette
 
 
+_snapshot_cache: dict = {"key": None, "snapshot": None}
+
+
 def load_snapshot() -> Snapshot:
     if not SNAPSHOT_PATH.exists():
+        _snapshot_cache["key"] = None
+        _snapshot_cache["snapshot"] = None
         return Snapshot()
+    key = SNAPSHOT_PATH.stat().st_mtime_ns
+    cached = _snapshot_cache.get("snapshot")
+    if cached is not None and _snapshot_cache.get("key") == key:
+        return cached
     import json
 
     data = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
-    return Snapshot.from_dict(data)
+    snapshot = Snapshot.from_dict(data)
+    _snapshot_cache["key"] = key
+    _snapshot_cache["snapshot"] = snapshot
+    return snapshot
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -134,6 +146,8 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
             "id": course.id,
             "name": course.name,
             "term": course.term or "Course",
+            "instructor": course.instructor or "",
+            "activity": int(_as_utc(course.last_activity).timestamp()) if course.last_activity else 0,
             "fill": subject_fill(course.id),
             "ink": subject_ink(course.id),
             "custom": course.id in (settings.get("course_colors") or {}),
@@ -187,6 +201,7 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
                 "course": course_name.get(item.course_id, ""),
                 "when": format_dt(item.due_at),
                 "status": status,
+                "base_status": item.status or "todo",
                 "manual": manual,
                 "ignored": ignored,
                 "description": item.description,
@@ -294,6 +309,11 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
         "page_size": int(settings.get("list_page_size") or 10),
         "hide_calendar_events": bool(settings.get("hide_calendar_events")),
         "contents_view_mode": settings.get("contents_view_mode") or "tree",
+        "inactivity": _inactivity_key(settings),
+        "custom_filters": _custom_filters(settings),
+        "active_custom_filter": str(settings.get("active_custom_filter") or ""),
+        "hide_filtered_assignments": bool(settings.get("hide_filtered_assignments")),
+        "load_filter_courses_only": bool(settings.get("load_filter_courses_only")),
         "base_url": settings.get("base_url") or "",
         "deadline_colors": {
             "overdue": deadline_color("overdue"),
@@ -324,6 +344,26 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
         },
         "errors": snapshot.errors,
     }
+
+
+def _inactivity_key(settings: dict) -> str:
+    value = str(settings.get("inactivity") or "all")
+    return value if value in {"all", "1w", "1m", "3m", "6m", "1y"} else "all"
+
+
+def _custom_filters(settings: dict) -> list[dict]:
+    rows = []
+    for item in settings.get("custom_filters") or []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        rows.append(
+            {
+                "id": str(item.get("id")),
+                "name": str(item.get("name") or "Filter"),
+                "course_ids": [str(cid) for cid in (item.get("course_ids") or []) if cid],
+            }
+        )
+    return rows
 
 
 def _trim(value: float) -> str:

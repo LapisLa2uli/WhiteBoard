@@ -2,7 +2,7 @@ let state = null;
 let route = "/login";
 let pageSize = 10;
 let pages = {};
-let query = { assignments: "", grades: "", courses: "" };
+let query = { assignments: "", grades: "", courses: "", contents: "" };
 let openFolders = { todo: true, submitted: false, graded: true, pending: true };
 let hideEvents = false;
 let busy = false;
@@ -30,6 +30,7 @@ let apiSeq = 0;
 let contentsNote = "";
 let selectMode = false;
 let selectedAssignments = new Set();
+let filterDialog = null;
 
 function api(path, body) {
   if (!window.chrome || !window.chrome.webview) {
@@ -225,6 +226,10 @@ function onClick(event) {
     changeAssignments("restore", [...selectedAssignments]);
     return;
   }
+  if (source.closest("#assign-undo-open") || source.closest("#cal-undo-open")) {
+    changeAssignments("undo_not_due", []);
+    return;
+  }
   const goBtn = source.closest("[data-go]");
   if (goBtn) {
     const nested = source.closest("button, input, a, select, label");
@@ -264,6 +269,46 @@ function onClick(event) {
   if (source.closest("#close-feedback")) {
     feedback = null;
     paintPage();
+    return;
+  }
+  if (source.closest("#filter-new")) {
+    filterDialog = { kind: "new", name: "", selected: new Set(), error: "" };
+    paintFilterDialog();
+    return;
+  }
+  const filterToggle = source.closest("[data-filter-toggle]");
+  if (filterToggle) {
+    const id = filterToggle.dataset.filterToggle;
+    const current = state.active_custom_filter || "";
+    saveFilters({ active_custom_filter: current === id ? "" : id });
+    return;
+  }
+  const filterDelete = source.closest("[data-filter-delete]");
+  if (filterDelete) {
+    const id = filterDelete.dataset.filterDelete;
+    const item = (state.custom_filters || []).find((row) => row.id === id);
+    filterDialog = { kind: "delete", id, name: item ? item.name : "this filter" };
+    paintFilterDialog();
+    return;
+  }
+  if (source.closest("#filter-cancel")) {
+    filterDialog = null;
+    paintFilterDialog();
+    return;
+  }
+  if (source.closest("#filter-save")) {
+    saveNewFilter();
+    return;
+  }
+  if (source.closest("#filter-delete-confirm") && filterDialog) {
+    const id = filterDialog.id;
+    filterDialog = null;
+    saveFilters({ delete_custom_filter: id });
+    return;
+  }
+  const reveal = source.closest("[data-reveal]");
+  if (reveal) {
+    revealContent(reveal.dataset.reveal);
     return;
   }
   if (source.closest("#refresh")) {
@@ -469,7 +514,17 @@ function onInput(event) {
   if (event.target.id === "course-q") {
     query.courses = event.target.value;
     paintCourses();
+    if (route === "/contents" || route === "/grades") paintPage();
     return;
+  }
+  if (event.target.id === "contents-search") {
+    query.contents = event.target.value;
+    pages["contents-search"] = 0;
+    paintContentsRoot();
+    return;
+  }
+  if (event.target.id === "filter-name" && filterDialog) {
+    filterDialog.name = event.target.value;
   }
   if (event.target.id === "list-search") {
     const key = event.target.dataset.key;
@@ -483,6 +538,24 @@ function onInput(event) {
 }
 
 function onChange(event) {
+  if (event.target.id === "course-activity") {
+    saveFilters({ inactivity: event.target.value });
+    return;
+  }
+  if (event.target.id === "hide-filtered") {
+    saveFilters({ hide_filtered_assignments: event.target.checked });
+    return;
+  }
+  if (event.target.id === "load-filter") {
+    saveFilters({ load_filter_courses_only: event.target.checked });
+    return;
+  }
+  if (event.target.matches("[data-filter-course]") && filterDialog) {
+    const id = event.target.dataset.filterCourse;
+    if (event.target.checked) filterDialog.selected.add(id);
+    else filterDialog.selected.delete(id);
+    return;
+  }
   if (event.target.id === "page-size") {
     pageSize = Number(event.target.value);
     pages = {};
@@ -538,6 +611,9 @@ async function pollJob() {
       kind: job.kind || (loading && loading.kind) || "refresh",
       percent: job.percent || 0,
       message: job.message || "Working…",
+      detail: job.detail || "",
+      log: job.log || [],
+      counts: job.counts || null,
     };
     document.title = `WhiteBoard — ${loading.message}`;
     render();
@@ -614,7 +690,9 @@ function render() {
     app.innerHTML = shellFrame();
   }
   paintChrome();
+  paintFilterChrome();
   paintCourses();
+  paintFilterDialog();
   paintPage();
   tickCountdowns();
 }
@@ -625,12 +703,23 @@ function loadingView() {
   const blurb = loading.message || (loading.kind === "refresh"
     ? "Collecting courses, assignment links, and submission status."
     : "Opening Blackboard…");
+  const counts = loading.counts || {};
+  const countLine = (counts.courses || counts.folders || counts.files)
+    ? `${counts.courses || 0} courses · ${counts.folders || 0} folders · ${counts.files || 0} files`
+    : "";
+  const latest = loading.detail
+    ? `<p class="load-latest"><span class="muted">Latest</span><br>${escapeHtml(loading.detail)}</p>`
+    : "";
+  const log = (loading.log || []).map((line) => `<li>${escapeHtml(line)}</li>`).join("");
   return `<div class="loading-screen"><div class="loading-card">
     <div class="row" style="justify-content:center"><img src="logo.png" width="64" height="64" alt="" /></div>
     <h2>${title}</h2>
     <p>${escapeHtml(blurb)}</p>
     <div class="row"><span class="muted">Progress</span><span class="spacer"></span><span class="muted">${percent}%</span></div>
     <div class="load-track"><span style="width:${Math.max(percent, 4)}%"></span></div>
+    ${countLine ? `<p class="load-counts">${escapeHtml(countLine)}</p>` : ""}
+    ${latest}
+    ${log ? `<ul class="load-log">${log}</ul>` : ""}
     <button class="text-btn" id="cancel-loading" style="margin-top:16px">Cancel</button>
   </div></div>`;
 }
@@ -659,7 +748,16 @@ function shellFrame() {
       <div class="brand"><img src="logo.png" alt="" /><span>WhiteBoard</span></div>
       <div class="label">Your courses</div>
       <input id="course-q" placeholder="Search courses" value="${escapeAttr(query.courses)}" />
+      <label class="side-note" for="course-activity">Activity</label>
+      <select id="course-activity">
+        ${activityOptions()}
+      </select>
+      <div class="filter-head"><span>Custom filters</span><button id="filter-new" type="button">New</button></div>
+      <div class="filter-chips" id="filter-chips"></div>
+      <label class="check"><input id="hide-filtered" type="checkbox" /> Hide assignments outside this filter</label>
+      <label class="check"><input id="load-filter" type="checkbox" /> Next launch, only load this filter</label>
       <div class="course-list" id="course-list"></div>
+      <div id="filter-modal"></div>
     </aside>
     <div class="main">
       <header class="topbar" id="topbar"></header>
@@ -692,19 +790,168 @@ function paintChrome() {
   }
 }
 
+const INACTIVITY_DAYS = { "1w": 7, "1m": 30, "3m": 90, "6m": 180, "1y": 365 };
+
+function activityOptions() {
+  const current = (state && state.inactivity) || "all";
+  return [
+    ["all", "Any activity"],
+    ["1w", "Past 1 week"],
+    ["1m", "Past 1 month"],
+    ["3m", "Past 3 months"],
+    ["6m", "Past 6 months"],
+    ["1y", "Past 1 year"],
+  ].map(([key, label]) => `<option value="${key}" ${key === current ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function activeCustomFilter() {
+  const id = (state && state.active_custom_filter) || "";
+  return ((state && state.custom_filters) || []).find((item) => item.id === id) || null;
+}
+
+function courseFilteredOut(course) {
+  const custom = activeCustomFilter();
+  if (custom) {
+    const allowed = new Set(custom.course_ids || []);
+    if (!allowed.has(course.id)) return true;
+  }
+  const days = INACTIVITY_DAYS[state.inactivity || "all"];
+  if (days && course.activity && course.activity < Date.now() / 1000 - days * 86400) return true;
+  return false;
+}
+
+function visibleCourseIds() {
+  return new Set((state.courses || []).filter((course) => !courseFilteredOut(course)).map((course) => course.id));
+}
+
+function inActiveFilter(courseId) {
+  if (!state.hide_filtered_assignments) return true;
+  const allowed = visibleCourseIds();
+  if (!allowed.size) return true;
+  return allowed.has(courseId);
+}
+
+function listedCourses() {
+  const needle = query.courses.trim().toLowerCase();
+  const rows = [];
+  (state.courses || []).forEach((course) => {
+    const hidden = courseFilteredOut(course);
+    if (needle) {
+      const haystack = `${course.name} ${course.term || ""} ${course.instructor || ""}`.toLowerCase();
+      if (haystack.includes(needle)) rows.push({ course, hidden });
+    } else if (!hidden) {
+      rows.push({ course, hidden: false });
+    }
+  });
+  return rows;
+}
+
+function shownCourses() {
+  return listedCourses()
+    .filter((row) => !(row.hidden && state.hide_filtered_assignments))
+    .map((row) => row.course);
+}
+
+function paintFilterChrome() {
+  const chips = document.getElementById("filter-chips");
+  if (!chips) return;
+  const active = state.active_custom_filter || "";
+  const filters = state.custom_filters || [];
+  chips.innerHTML = filters.length
+    ? filters.map((item) => `<span class="filter-chip ${item.id === active ? "on" : ""}">
+        <button class="name" type="button" data-filter-toggle="${escapeAttr(item.id)}">${escapeHtml(item.name)}</button>
+        <button class="x" type="button" data-filter-delete="${escapeAttr(item.id)}" aria-label="Delete filter">×</button>
+      </span>`).join("")
+    : `<p class="side-note">No custom filters yet.</p>`;
+  const activity = document.getElementById("course-activity");
+  if (activity && document.activeElement !== activity) activity.value = state.inactivity || "all";
+  const hide = document.getElementById("hide-filtered");
+  if (hide) hide.checked = !!state.hide_filtered_assignments;
+  const load = document.getElementById("load-filter");
+  if (load) load.checked = !!state.load_filter_courses_only;
+}
+
+function paintFilterDialog() {
+  const host = document.getElementById("filter-modal");
+  if (!host) return;
+  host.innerHTML = filterDialog ? filterModal() : "";
+}
+
+function filterModal() {
+  if (filterDialog.kind === "delete") {
+    return `<div class="modal-back"><div class="modal">
+      <h3>Delete filter?</h3>
+      <p>Delete "${escapeHtml(filterDialog.name)}"? This cannot be undone.</p>
+      <div class="row" style="margin-top:12px">
+        <button class="text-btn" id="filter-cancel" type="button">Cancel</button>
+        <button class="fill-btn danger" id="filter-delete-confirm" type="button">Delete</button>
+      </div>
+    </div></div>`;
+  }
+  const boxes = (state.courses || []).map((course) => `<label class="check">
+      <input type="checkbox" data-filter-course="${escapeAttr(course.id)}" ${filterDialog.selected.has(course.id) ? "checked" : ""} />
+      <span>${escapeHtml(course.name)}</span>
+    </label>`).join("");
+  return `<div class="modal-back"><div class="modal">
+    <h3>New course filter</h3>
+    <p class="muted">Only the courses you check appear in the left list when this filter is on. Assignments and deadlines from other courses still show until you hide them.</p>
+    <label>Filter name</label>
+    <input id="filter-name" type="text" value="${escapeAttr(filterDialog.name || "")}" />
+    <div class="filter-courses">${boxes || `<p class="muted">Sign in to choose courses.</p>`}</div>
+    <p class="warn" id="filter-error">${escapeHtml(filterDialog.error || "")}</p>
+    <div class="row">
+      <button class="text-btn" id="filter-cancel" type="button">Cancel</button>
+      <button class="fill-btn" id="filter-save" type="button">Save</button>
+    </div>
+  </div></div>`;
+}
+
+function saveFilters(body) {
+  persistSettings(body).then(() => {
+    paintFilterChrome();
+    paintCourses();
+    paintFilterDialog();
+    paintPage();
+  }).catch(() => {});
+}
+
+function saveNewFilter() {
+  const field = document.getElementById("filter-name");
+  const name = ((field && field.value) || "").trim();
+  const ids = [...(filterDialog ? filterDialog.selected : [])];
+  if (!name) {
+    filterDialog.error = "Give the filter a name.";
+    const note = document.getElementById("filter-error");
+    if (note) note.textContent = filterDialog.error;
+    return;
+  }
+  if (!ids.length) {
+    filterDialog.error = "Select at least one course for the whitelist.";
+    const note = document.getElementById("filter-error");
+    if (note) note.textContent = filterDialog.error;
+    return;
+  }
+  filterDialog = null;
+  saveFilters({ add_custom_filter: { name, course_ids: ids } });
+}
+
 function paintCourses() {
   const box = document.getElementById("course-list");
   if (!box) return;
-  const needle = query.courses.toLowerCase();
-  const rows = state.courses.filter((course) => course.name.toLowerCase().includes(needle));
-  box.innerHTML = rows.map((course) => {
+  const rows = listedCourses();
+  const empty = query.courses.trim() ? "No matching courses." : "No courses in this filter.";
+  box.innerHTML = rows.map(({ course, hidden }) => {
     const active = route.endsWith(course.id) ? "active" : "";
-    return `<button class="course-link ${active}" data-go="/courses/${encodeURIComponent(course.id)}"
-      style="background:${course.fill};border-color:${course.ink}">
+    const style = hidden
+      ? "background:#e2e8f0;border-color:#cbd5e1;opacity:0.55"
+      : `background:${course.fill};border-color:${course.ink}`;
+    const flag = hidden ? `<span class="flag">Filtered out</span>` : "";
+    return `<button class="course-link ${active}" data-go="/courses/${encodeURIComponent(course.id)}" style="${style}">
       <span class="name">${escapeHtml(course.name)}</span>
       <span class="term">${escapeHtml(course.term || "Course")}</span>
+      ${flag}
     </button>`;
-  }).join("") || '<p class="muted">No matching courses.</p>';
+  }).join("") || `<p class="side-note">${empty}</p>`;
 }
 
 function paintPage() {
@@ -723,6 +970,7 @@ function paintListRoot() {
   }
   if (route === "/assignments") root.innerHTML = assignmentFolders("all");
   else if (route === "/submitted") root.innerHTML = assignmentFolders("submitted");
+  else if (route === "/ignored") root.innerHTML = assignmentFolders("ignored");
   else if (route === "/grades") root.innerHTML = gradesLists();
   else paintPage();
 }
@@ -759,8 +1007,10 @@ function viewFor(path) {
 }
 
 function homeView() {
-  const due = state.home_due.map(assignCard).join("") || `<p class="empty">No deadlines this week.</p>`;
-  const grades = state.home_grades.map((grade) => `<div class="card row" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong>${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="empty">No new grades.</p>`;
+  const dueItems = (state.home_due || []).filter((item) => !item.course_id || inActiveFilter(item.course_id));
+  const gradeItems = (state.home_grades || []).filter((grade) => inActiveFilter(grade.course_id));
+  const due = dueItems.map(assignCard).join("") || `<p class="empty">No deadlines this week.</p>`;
+  const grades = gradeItems.map((grade) => `<div class="card row" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong>${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="empty">No new grades.</p>`;
   const banners = errorBanners();
   return `<h2>Home</h2><p class="muted">This week at a glance.</p>${banners}
     <h3>Upcoming this week</h3>${legend()}${due}
@@ -776,7 +1026,7 @@ function assignmentMode() {
 function assignmentItems(mode) {
   const needle = query.assignments.toLowerCase();
   let items = (state.assignments || []).filter((item) =>
-    `${item.title} ${item.course}`.toLowerCase().includes(needle)
+    `${item.title} ${item.course}`.toLowerCase().includes(needle) && inActiveFilter(item.course_id)
   );
   if (mode === "ignored") return items.filter((item) => item.ignored);
   items = items.filter((item) => !item.ignored);
@@ -793,14 +1043,17 @@ function assignToolbar(mode) {
   const items = assignmentItems(mode);
   const selected = items.filter((item) => selectedAssignments.has(item.id));
   const markable = selected.filter((item) => item.status !== "submitted").length;
+  const undoOpen = notDueMarked().length;
   const bulk = mode === "ignored"
     ? `<button class="outline-btn with-icon" id="assign-restore" type="button" ${selected.length ? "" : "disabled"}>${actionIcon("restore")}<span>Restore selected (${selected.length})</span></button>`
     : `<button class="outline-btn with-icon mark-btn" id="assign-mark" type="button" ${markable ? "" : "disabled"}>${actionIcon("submitted")}<span>Mark submitted (${markable})</span></button>
        <button class="outline-btn with-icon" id="assign-ignore" type="button" ${selected.length ? "" : "disabled"}>${actionIcon("ignore")}<span>Ignore selected (${selected.length})</span></button>`;
+  const undoButton = `<button class="outline-btn with-icon" id="assign-undo-open" type="button" title="Clear the submitted mark on every item that is not due yet." ${undoOpen ? "" : "disabled"}>${actionIcon("undo")}<span>Undo not due yet</span></button>`;
   return `<div class="row" id="assign-toolbar">
     <button class="outline-btn" id="assign-select" type="button">${selectMode ? "Done selecting" : "Select"}</button>
     <button class="text-btn" id="assign-select-all" type="button">Select all</button>
     ${bulk}
+    ${undoButton}
     <span class="muted">Mark a card submitted, ignore it, or select several to update them together.</span>
   </div>`;
 }
@@ -811,14 +1064,106 @@ function refreshAssignToolbar() {
   box.outerHTML = assignToolbar(assignmentMode());
 }
 
+let assignmentWrite = 0;
+
+function notDueMarked() {
+  const now = Date.now() / 1000;
+  return (state.assignments || []).filter((item) => item.manual && (!item.ts || item.ts > now));
+}
+
+function previewUpdates(action, ids) {
+  const now = Date.now() / 1000;
+  const wanted = new Set(ids || []);
+  const updates = [];
+  (state.assignments || []).forEach((item) => {
+    const hit = action === "undo_not_due"
+      ? item.manual && (!item.ts || item.ts > now)
+      : wanted.has(item.id);
+    if (!hit) return;
+    let manual = !!item.manual;
+    let ignored = !!item.ignored;
+    if (action === "submitted") manual = true;
+    else if (action === "unsubmit" || action === "undo_not_due") manual = false;
+    else if (action === "ignore") ignored = true;
+    else if (action === "restore") ignored = false;
+    const base = item.base_status || (item.manual ? "todo" : (item.status || "todo"));
+    updates.push({
+      id: item.id,
+      status: base === "submitted" || manual ? "submitted" : base,
+      manual,
+      ignored,
+    });
+  });
+  return updates;
+}
+
+function applyAssignmentUpdates(updates) {
+  const byId = new Map((updates || []).map((row) => [row.id, row]));
+  if (!byId.size) return;
+  (state.assignments || []).forEach((item) => {
+    const next = byId.get(item.id);
+    if (!next) return;
+    item.status = next.status;
+    item.manual = !!next.manual;
+    item.ignored = !!next.ignored;
+  });
+  const touch = (item) => {
+    const next = byId.get(item.assignment_id) || byId.get(item.id);
+    if (!next) return;
+    item.finished = next.status === "submitted";
+  };
+  (state.calendar || []).forEach(touch);
+  (state.home_due || []).forEach(touch);
+  Object.values(state.course_pages || {}).forEach((page) => {
+    (page.upcoming || []).forEach(touch);
+  });
+  state.home_due = (state.home_due || []).filter((item) => {
+    const next = byId.get(item.assignment_id) || byId.get(item.id);
+    return !next || !next.ignored;
+  });
+}
+
+function paintAssignmentSurface() {
+  const undo = document.getElementById("cal-undo-open");
+  if (undo) undo.disabled = notDueMarked().length === 0;
+  if (route === "/assignments" || route === "/submitted" || route === "/ignored") {
+    refreshAssignToolbar();
+    paintListRoot();
+    return;
+  }
+  if (topOf(route) === "/calendar") {
+    paintCalendarRoot();
+    return;
+  }
+  paintPage();
+}
+
 function changeAssignments(action, ids) {
-  if (!ids.length) return;
-  api("/api/assignments", { action, ids }).then((next) => {
-    state = next;
+  if (action !== "undo_not_due" && !(ids && ids.length)) return;
+  const token = ++assignmentWrite;
+  const before = (state.assignments || []).filter((item) =>
+    action === "undo_not_due" || (ids || []).includes(item.id)
+  ).map((item) => ({
+    id: item.id,
+    status: item.status,
+    manual: !!item.manual,
+    ignored: !!item.ignored,
+  }));
+  applyAssignmentUpdates(previewUpdates(action, ids));
+  if (action !== "undo_not_due") {
     selectedAssignments.clear();
     selectMode = false;
-    paintPage();
-  }).catch(() => {});
+  }
+  paintAssignmentSurface();
+  api("/api/assignments", { action, ids: ids || [] }).then((result) => {
+    if (token !== assignmentWrite) return;
+    applyAssignmentUpdates((result && result.updates) || []);
+    paintAssignmentSurface();
+  }).catch(() => {
+    if (token !== assignmentWrite) return;
+    applyAssignmentUpdates(before);
+    paintAssignmentSurface();
+  });
 }
 
 function assignmentFolders(mode) {
@@ -844,7 +1189,8 @@ function assignmentView(id) {
 }
 
 function gradesView() {
-  const lines = state.score_lines.map((line) => `<div style="margin:12px 0">
+  const allowed = new Set(shownCourses().map((course) => course.id));
+  const lines = (state.score_lines || []).filter((line) => allowed.has(line.id)).map((line) => `<div style="margin:12px 0">
       <div class="row"><span class="swatch" style="border-color:${line.ink};background:${line.fill}"></span><strong>${escapeHtml(line.name)}</strong><span class="spacer"></span><span>${line.percent}%</span></div>
       <div class="bar"><span data-bar="${line.percent}" style="background:${line.ink}"></span></div>
     </div>`).join("");
@@ -857,7 +1203,7 @@ function gradesView() {
 
 function gradesLists() {
   const needle = query.grades.toLowerCase();
-  const match = (grade) => `${grade.title} ${grade.course} ${grade.label} ${grade.note}`.toLowerCase().includes(needle);
+  const match = (grade) => inActiveFilter(grade.course_id) && `${grade.title} ${grade.course} ${grade.label} ${grade.note}`.toLowerCase().includes(needle);
   return `${folder("graded", "Graded", state.graded.filter(match), gradeCard)}
     ${folder("pending", "Submitted, not graded", state.pending.filter(match), gradeCard)}`;
 }
@@ -897,6 +1243,7 @@ function calendarToolbar() {
     </div>
     <div class="row">${modes}
       <button class="chip-btn ${hideEvents ? "active" : ""}" id="hide-events" type="button">Hide events</button>
+      <button class="outline-btn with-icon" id="cal-undo-open" type="button" title="Clear the submitted mark on every item that is not due yet." ${notDueMarked().length ? "" : "disabled"}>${actionIcon("undo")}<span>Undo not due yet</span></button>
     </div>
     ${days}
   </div>`;
@@ -909,7 +1256,11 @@ function calendarBody() {
 }
 
 function visibleEvents(items) {
-  return hideEvents ? items.filter((item) => item.kind !== "other") : items;
+  return items.filter((item) => {
+    if (hideEvents && item.kind === "other") return false;
+    if (!item.course_id) return true;
+    return inActiveFilter(item.course_id);
+  });
 }
 
 function calendarList() {
@@ -920,7 +1271,7 @@ function calendarList() {
   const items = visibleEvents(state.calendar.filter((item) => {
     const ts = (item.ts || 0) * 1000;
     return ts >= origin - 12 * 3600000 && ts <= limit;
-  }));
+  })).sort((a, b) => (a.ts || 0) - (b.ts || 0));
   if (!items.length) return `<p class="empty">No upcoming events in this range.</p>`;
   const size = pageSize;
   const key = "calendar-list";
@@ -1052,12 +1403,15 @@ function contentsView() {
       <button class="outline-btn" id="contents-open-selected" type="button" ${contentsSelected.size ? "" : "disabled"}>Open</button>
       <span class="muted" id="contents-note">${escapeHtml(contentsNote || (contentsSelected.size ? `${contentsSelected.size} selected` : "Select files to download or open."))}</span>
     </div>
+    <input class="search" id="contents-search" placeholder="Search folder, file name, or extension" value="${escapeAttr(query.contents || "")}" />
     <div id="contents-root">${contentsBody()}</div>`;
 }
 
 function contentsBody() {
-  const courses = state.courses || [];
-  const nodes = state.content_nodes || [];
+  const courses = shownCourses();
+  const nodes = (state.content_nodes || []).filter((node) => courses.some((course) => course.id === node.course_id));
+  const needle = (query.contents || "").trim();
+  if (needle) return contentsSearchView(courses, nodes, needle);
   if (!courses.length) return `<p class="empty">No courses in this filter.</p>`;
   const hint = !nodes.length
     ? `<p class="empty">${state.files_indexed
@@ -1067,6 +1421,117 @@ function contentsBody() {
   if (contentsMode === "folder") return hint + folderView(courses, nodes);
   if (contentsMode === "columns") return hint + columnsView(courses, nodes);
   return hint + treeView(courses, nodes);
+}
+
+function nodeMatches(node, needle) {
+  const raw = needle.trim().toLowerCase();
+  if (!raw) return true;
+  const name = (node.name || "").toLowerCase();
+  if (name.includes(raw)) return true;
+  if (node.kind === "folder") return false;
+  const ext = String(node.extension || "").replace(/^\./, "").toLowerCase();
+  const bare = raw.replace(/^\./, "");
+  return !!ext && ext === bare;
+}
+
+function folderTrail(nodes, node) {
+  const names = [];
+  let parent = node.parent_id || "";
+  const seen = new Set();
+  while (parent && !seen.has(parent)) {
+    seen.add(parent);
+    const folder = nodes.find((item) => item.id === parent);
+    if (!folder) break;
+    names.unshift(folder.name);
+    parent = folder.parent_id || "";
+  }
+  return names.join(" / ");
+}
+
+function contentsSearchView(courses, nodes, needle) {
+  const courseHits = courses
+    .filter((course) => course.name.toLowerCase().includes(needle.toLowerCase()))
+    .map((course) => ({
+      key: `course:${course.id}`,
+      name: course.name,
+      kind: "folder",
+      path: "Courses",
+      node: null,
+    }));
+  const fileHits = nodes.filter((node) => nodeMatches(node, needle)).map((node) => {
+    const course = courses.find((item) => item.id === node.course_id);
+    const trail = folderTrail(nodes, node);
+    const where = [course ? course.name : "", trail].filter(Boolean).join(" / ");
+    return {
+      key: node.id,
+      name: node.name,
+      kind: node.kind === "folder" ? "folder" : (node.extension || "file"),
+      path: where || "Courses",
+      node,
+    };
+  });
+  const items = courseHits.concat(fileHits).sort((a, b) => {
+    const folderDelta = (a.kind === "folder" ? 0 : 1) - (b.kind === "folder" ? 0 : 1);
+    return folderDelta || a.name.localeCompare(b.name);
+  });
+  if (!items.length) return `<p class="empty">No folders or files match that search.</p>`;
+  const key = "contents-search";
+  const size = pageSize;
+  const page = Math.min(pages[key] || 0, Math.max(0, Math.ceil(items.length / size) - 1));
+  pages[key] = page;
+  const shown = items.slice(page * size, page * size + size);
+  const rows = shown.map((item) => {
+    const reveal = item.kind === "folder" ? `data-reveal="${escapeAttr(item.key)}"` : "";
+    const selected = item.node && item.node.kind !== "folder" && contentsSelected.has(item.node.id);
+    const check = item.node && item.node.kind !== "folder"
+      ? `<label data-select="${escapeAttr(item.node.id)}"><input type="checkbox" ${selected ? "checked" : ""} /></label>`
+      : `<span></span>`;
+    const icon = item.kind === "folder" ? folderSvg(false) : fileSvg(item.node);
+    const openBtn = item.node && item.node.kind !== "folder"
+      ? `<button class="text-btn" data-open="${escapeAttr(item.node.url)}" data-title="${escapeAttr(item.node.name)}">${openSvg()}</button>`
+      : `<span></span>`;
+    const extRaw = item.node && item.node.kind !== "folder"
+      ? String(item.node.extension || "").replace(/^\./, "")
+      : "";
+    const showExt = extRaw && !item.name.toLowerCase().endsWith(`.${extRaw.toLowerCase()}`);
+    const ext = showExt ? `<span class="muted">.${escapeHtml(extRaw)}</span>` : "";
+    return `<div class="file-row ${selected ? "selected" : ""}">
+      <span></span>${check}<span ${reveal}>${icon}</span>
+      <span class="name stack ${item.kind === "folder" ? "folder" : ""}" ${reveal}>
+        ${escapeHtml(item.name)} ${ext}
+        <span class="path">${escapeHtml(item.path)}</span>
+      </span>
+      <span class="muted">${item.node && item.node.kind !== "folder" ? escapeHtml(item.node.size_label) : "—"}</span>
+      <span class="muted">${item.node ? escapeHtml(item.node.date) : "—"}</span>
+      ${openBtn}
+    </div>`;
+  }).join("");
+  return `${fileHeader()}${rows}${pager(key, items.length, page, size)}`;
+}
+
+function revealContent(key) {
+  query.contents = "";
+  const nodes = state.content_nodes || [];
+  if (key.startsWith("course:")) {
+    contentsPath = [key];
+    contentsExpanded.add(key);
+  } else {
+    const node = nodes.find((item) => item.id === key);
+    if (!node) return;
+    const chain = [];
+    let cursor = node.kind === "folder" ? node.id : (node.parent_id || "");
+    const seen = new Set();
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      chain.unshift(cursor);
+      const folder = nodes.find((item) => item.id === cursor);
+      cursor = folder ? (folder.parent_id || "") : "";
+    }
+    contentsPath = [`course:${node.course_id}`, ...chain];
+    contentsExpanded.add(`course:${node.course_id}`);
+    chain.forEach((id) => contentsExpanded.add(id));
+  }
+  paintPage();
 }
 
 function treeView(courses, nodes) {

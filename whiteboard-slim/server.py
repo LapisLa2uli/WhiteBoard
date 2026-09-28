@@ -6,6 +6,8 @@ import json
 import mimetypes
 import sys
 import threading
+import uuid
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
@@ -56,6 +58,66 @@ def _state() -> dict:
     return payload
 
 
+_INACTIVITY = {"all", "1w", "1m", "3m", "6m", "1y"}
+
+
+def _apply_course_filters(settings: dict, body: dict) -> None:
+    if "inactivity" in body:
+        key = str(body.get("inactivity") or "all")
+        if key in _INACTIVITY:
+            settings["inactivity"] = key
+    if "hide_filtered_assignments" in body:
+        settings["hide_filtered_assignments"] = bool(body.get("hide_filtered_assignments"))
+    if "load_filter_courses_only" in body:
+        settings["load_filter_courses_only"] = bool(body.get("load_filter_courses_only"))
+    if "active_custom_filter" in body:
+        settings["active_custom_filter"] = str(body.get("active_custom_filter") or "")
+    delete_id = str(body.get("delete_custom_filter") or "")
+    if delete_id:
+        settings["custom_filters"] = [
+            item
+            for item in (settings.get("custom_filters") or [])
+            if not (isinstance(item, dict) and str(item.get("id") or "") == delete_id)
+        ]
+        if str(settings.get("active_custom_filter") or "") == delete_id:
+            settings["active_custom_filter"] = ""
+    added = body.get("add_custom_filter")
+    if isinstance(added, dict):
+        name = str(added.get("name") or "").strip()
+        ids = [str(item) for item in (added.get("course_ids") or []) if item]
+        if name and ids:
+            item = {"id": uuid.uuid4().hex[:10], "name": name, "course_ids": ids}
+            filters = [
+                row for row in (settings.get("custom_filters") or []) if isinstance(row, dict)
+            ]
+            filters.append(item)
+            settings["custom_filters"] = filters
+            settings["active_custom_filter"] = item["id"]
+    if settings.get("load_filter_courses_only"):
+        _sync_load_course_ids(settings)
+
+
+def _sync_load_course_ids(settings: dict) -> None:
+    from app.filters import visible_course_ids
+
+    active_id = str(settings.get("active_custom_filter") or "")
+    custom = next(
+        (
+            item
+            for item in (settings.get("custom_filters") or [])
+            if isinstance(item, dict) and str(item.get("id") or "") == active_id
+        ),
+        None,
+    )
+    settings["load_course_ids"] = sorted(
+        visible_course_ids(
+            load_snapshot(),
+            inactivity=str(settings.get("inactivity") or "all"),
+            custom_filter=custom,
+        )
+    )
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -63,15 +125,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_state())
             return
         if parsed.path == "/api/progress":
-            self._json(
-                {
-                    "busy": bool(progress.get("busy")),
-                    "kind": progress.get("kind") or "",
-                    "message": progress.get("message") or "",
-                    "percent": progress.get("percent") or 0,
-                    "error": progress.get("error") or "",
-                }
-            )
+            self._json(_progress_payload())
             return
         if parsed.path == "/logo.png":
             logo = STATIC / "logo.png"
@@ -165,6 +219,7 @@ class Handler(BaseHTTPRequestHandler):
                 colors = dict(settings.get("course_colors") or {})
                 colors[course_id] = color
                 settings["course_colors"] = colors
+        _apply_course_filters(settings, body)
         apply_palette(settings)
         save_settings(settings)
         return _state()
@@ -268,12 +323,20 @@ def _run_sync(client_id: str, client_secret: str, status: str = "") -> None:
 
 
 def _progress_payload() -> dict:
+    counts = progress.get("counts") if isinstance(progress.get("counts"), dict) else {}
     return {
         "busy": bool(progress.get("busy")),
         "kind": progress.get("kind") or "",
         "message": progress.get("message") or "",
         "percent": progress.get("percent") or 0,
         "error": progress.get("error") or "",
+        "detail": progress.get("detail") or "",
+        "log": list(progress.get("log") or [])[-8:],
+        "counts": {
+            "courses": int(counts.get("courses") or 0),
+            "folders": int(counts.get("folders") or 0),
+            "files": int(counts.get("files") or 0),
+        },
     }
 
 
@@ -390,12 +453,32 @@ def _remember(settings: dict, name: str, items: list, *, add: bool) -> None:
     settings[name] = raw
 
 
-def _assignment_action(body: dict) -> dict:
-    action = str(body.get("action") or "")
-    wanted = {str(item) for item in (body.get("ids") or []) if str(item)}
-    snapshot = load_snapshot()
+def _assignment_update(item, marked: set[str], ignored_keys: set[str]) -> dict:
+    from present import _item_flagged
+
+    manual = _item_flagged(item, marked)
+    ignored = _item_flagged(item, ignored_keys)
+    base = item.status or "todo"
+    return {
+        "id": item.id,
+        "status": "submitted" if base == "submitted" or manual else base,
+        "manual": manual,
+        "ignored": ignored,
+    }
+
+
+def _not_due(when) -> bool:
+    from present import _as_utc
+
+    if when is None:
+        return True
+    return _as_utc(when) > datetime.now(timezone.utc)
+
+
+def _apply_assignment_action(settings: dict, snapshot, action: str, wanted: set[str]) -> list[dict]:
+    from present import _item_flagged, _setting_keys
+
     chosen = [item for item in snapshot.assignments if item.id in wanted]
-    settings = load_settings()
     if action == "submitted":
         _remember(settings, "marked_submitted_assignments", chosen, add=True)
     elif action == "unsubmit":
@@ -404,10 +487,48 @@ def _assignment_action(body: dict) -> dict:
         _remember(settings, "ignored_assignments", chosen, add=True)
     elif action == "restore":
         _remember(settings, "ignored_assignments", chosen, add=False)
+    elif action == "undo_not_due":
+        marked = _setting_keys(settings, "marked_submitted_assignments")
+        by_assignment = {item.id: item for item in snapshot.assignments}
+        pending = []
+        seen: set[str] = set()
+        extras = [item for item in snapshot.deadlines if item.id not in by_assignment]
+        for item in list(snapshot.assignments) + extras:
+            if item.id in seen or not _item_flagged(item, marked):
+                continue
+            seen.add(item.id)
+            when = getattr(item, "due_at", None) or getattr(item, "when", None)
+            if _not_due(when):
+                pending.append(item)
+        chosen = pending
+        _remember(settings, "marked_submitted_assignments", chosen, add=False)
     else:
         raise RuntimeError("That action is not available.")
+    marked = _setting_keys(settings, "marked_submitted_assignments")
+    ignored_keys = _setting_keys(settings, "ignored_assignments")
+    by_id = {item.id: item for item in snapshot.assignments}
+    updates = []
+    seen_ids: set[str] = set()
+    for item in chosen:
+        if item.id in seen_ids:
+            continue
+        seen_ids.add(item.id)
+        assignment = by_id.get(item.id)
+        if assignment is not None:
+            updates.append(_assignment_update(assignment, marked, ignored_keys))
+        else:
+            updates.append({"id": item.id, "status": "todo", "manual": False, "ignored": False})
+    return updates
+
+
+def _assignment_action(body: dict) -> dict:
+    action = str(body.get("action") or "")
+    wanted = {str(item) for item in (body.get("ids") or []) if str(item)}
+    snapshot = load_snapshot()
+    settings = load_settings()
+    updates = _apply_assignment_action(settings, snapshot, action, wanted)
     save_settings(settings)
-    return _state()
+    return {"updates": updates}
 
 
 def _download_files(body: dict) -> dict:

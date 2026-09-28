@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from blackboard.api import fetch_snapshot, index_course_files
@@ -86,6 +87,8 @@ def load_settings() -> dict:
         "custom_filters": [],
         "active_custom_filter": "",
         "hide_overdue": "off",
+        "assignment_history": "off",
+        "assignment_history_date": "",
         "ignored_assignments": [],
         "marked_submitted_assignments": [],
         "hide_filtered_assignments": False,
@@ -115,6 +118,12 @@ def load_settings() -> dict:
             merged["marked_submitted_assignments"] = []
         if not isinstance(merged.get("load_course_ids"), list):
             merged["load_course_ids"] = []
+        history = str(merged.get("assignment_history") or "off")
+        merged["assignment_history"] = (
+            history if history in {"off", "1w", "1m", "3m", "6m", "1y", "date"} else "off"
+        )
+        history_date = str(merged.get("assignment_history_date") or "").strip()
+        merged["assignment_history_date"] = history_date if len(history_date) == 10 else ""
         merged["hide_filtered_assignments"] = bool(merged.get("hide_filtered_assignments"))
         merged["load_filter_courses_only"] = bool(merged.get("load_filter_courses_only"))
         merged["shortcut_prompt_done"] = bool(merged.get("shortcut_prompt_done"))
@@ -139,6 +148,18 @@ def load_settings() -> dict:
         return dict(defaults)
 
 
+_settings_lock = threading.Lock()
+
+
+def update_settings(mutator) -> dict:
+    """Load, edit, and save settings as one step so two saves cannot drop each other."""
+    with _settings_lock:
+        settings = load_settings()
+        mutator(settings)
+        save_settings(settings)
+        return settings
+
+
 def save_settings(settings: dict) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -148,6 +169,12 @@ def save_settings(settings: dict) -> None:
         "custom_filters": settings.get("custom_filters") or [],
         "active_custom_filter": settings.get("active_custom_filter") or "",
         "hide_overdue": settings.get("hide_overdue") or "off",
+        "assignment_history": (
+            settings.get("assignment_history")
+            if settings.get("assignment_history") in {"off", "1w", "1m", "3m", "6m", "1y", "date"}
+            else "off"
+        ),
+        "assignment_history_date": str(settings.get("assignment_history_date") or "")[:10],
         "ignored_assignments": settings.get("ignored_assignments") or [],
         "marked_submitted_assignments": settings.get("marked_submitted_assignments") or [],
         "hide_filtered_assignments": bool(settings.get("hide_filtered_assignments")),

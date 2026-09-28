@@ -31,6 +31,9 @@ let contentsNote = "";
 let selectMode = false;
 let selectedAssignments = new Set();
 let filterDialog = null;
+let contentIndex = null;
+let courseFilterCache = null;
+let manualMarks = new Set();
 
 function api(path, body) {
   if (!window.chrome || !window.chrome.webview) {
@@ -64,7 +67,6 @@ if (window.chrome && window.chrome.webview) {
 const NAV = [
   ["/home", "Home", "home"],
   ["/assignments", "Assignments", "assignment"],
-  ["/submitted", "Submitted", "turned-in"],
   ["/ignored", "Ignored", "hidden"],
   ["/grades", "Grades", "grade"],
   ["/contents", "Contents", "folder"],
@@ -82,6 +84,10 @@ async function loadState() {
   googleDraft.client_secret = google.client_secret || googleDraft.client_secret;
   if (state.job && state.job.error) jobError = state.job.error;
   if (!state.has_snapshot && route !== "/login") route = "/login";
+  contentIndex = null;
+  courseFilterCache = null;
+  manualMarks = new Set((state.assignments || []).filter((item) => item.manual).map((item) => item.id));
+  reapplyManualMarks();
 }
 
 async function boot() {
@@ -91,6 +97,7 @@ async function boot() {
   route = "/login";
   window.addEventListener("hashchange", () => {
     route = location.hash.slice(1) || "/login";
+    if (route === "/submitted") route = "/assignments";
     if (!state.has_snapshot && route !== "/login") route = "/login";
     render();
   });
@@ -125,14 +132,9 @@ function rememberPointer(event) {
 
 function hostUnderPointer() {
   if (!pointer) return null;
-  const stack = document.elementsFromPoint(pointer.x, pointer.y);
-  for (const node of stack) {
-    if (!node.closest) continue;
-    if (node.classList && node.classList.contains("ripple")) continue;
-    const host = node.closest(RIPPLE_HOST);
-    if (host) return host;
-  }
-  return null;
+  const node = document.elementFromPoint(pointer.x, pointer.y);
+  if (!node || !node.closest) return null;
+  return node.closest(RIPPLE_HOST);
 }
 
 function spawnRipple(host, x, y) {
@@ -228,6 +230,20 @@ function onClick(event) {
   }
   if (source.closest("#assign-undo-open") || source.closest("#cal-undo-open")) {
     changeAssignments("undo_not_due", []);
+    return;
+  }
+  if (source.closest("#assign-mark-late")) {
+    const count = lateAssignments().length;
+    if (!count) return;
+    filterDialog = { kind: "late", count };
+    paintFilterDialog();
+    return;
+  }
+  if (source.closest("#mark-late-confirm")) {
+    const ids = lateAssignments().map((item) => item.id);
+    filterDialog = null;
+    paintFilterDialog();
+    changeAssignments("submitted", ids);
     return;
   }
   const goBtn = source.closest("[data-go]");
@@ -538,6 +554,18 @@ function onInput(event) {
 }
 
 function onChange(event) {
+  if (event.target.id === "history-mode") {
+    const mode = event.target.value;
+    saveFilters({
+      assignment_history: mode,
+      assignment_history_date: state.assignment_history_date || "",
+    });
+    return;
+  }
+  if (event.target.id === "history-date") {
+    saveFilters({ assignment_history: "date", assignment_history_date: event.target.value });
+    return;
+  }
   if (event.target.id === "course-activity") {
     saveFilters({ inactivity: event.target.value });
     return;
@@ -641,7 +669,49 @@ async function pollJob() {
 }
 
 async function persistSettings(body) {
-  state = await api("/api/settings", body);
+  const result = await api("/api/settings", body);
+  if (result && Array.isArray(result.courses)) {
+    const kept = new Set(manualMarks);
+    (result.assignments || []).forEach((item) => {
+      if (item.manual) kept.add(item.id);
+    });
+    manualMarks = kept;
+    state = result;
+    reapplyManualMarks();
+    contentIndex = null;
+    courseFilterCache = null;
+    pageSize = state.page_size || pageSize;
+    hideEvents = !!state.hide_calendar_events;
+    return state;
+  }
+  if (result && result.patch) {
+    Object.assign(state, result.patch);
+    courseFilterCache = null;
+    reapplyManualMarks();
+    if (result.patch.page_size) pageSize = result.patch.page_size;
+    if ("hide_calendar_events" in result.patch) hideEvents = !!result.patch.hide_calendar_events;
+    if ("google_sync_enabled" in result.patch && state.google) {
+      state.google.sync_enabled = !!result.patch.google_sync_enabled;
+    }
+  }
+  return state;
+}
+
+function reapplyManualMarks() {
+  if (!state || !manualMarks.size) return;
+  const flag = (item) => {
+    if (!item) return;
+    if (!manualMarks.has(item.id) && !manualMarks.has(item.assignment_id)) return;
+    item.manual = true;
+    item.status = "submitted";
+    item.finished = true;
+  };
+  (state.assignments || []).forEach(flag);
+  (state.calendar || []).forEach(flag);
+  (state.home_due || []).forEach(flag);
+  Object.values(state.course_pages || {}).forEach((page) => {
+    (page.upcoming || []).forEach(flag);
+  });
 }
 
 async function googleAction(path) {
@@ -773,7 +843,8 @@ function paintChrome() {
   if (!topbar) return;
   const nav = NAV.map(([path, label, icon]) => {
     const active = topOf(route) === path ? "active" : "";
-    return `<button class="nav-btn ${active}" data-go="${path}">${navIcon(icon)}<span class="label">${label}</span></button>`;
+    const badge = path === "/assignments" ? todoBadge() : "";
+    return `<button class="nav-btn ${active}" data-go="${path}">${navIcon(icon)}<span class="label">${label}</span>${badge}</button>`;
   }).join("");
   topbar.innerHTML = `
     <img class="logo" src="logo.png" alt="" />
@@ -821,7 +892,12 @@ function courseFilteredOut(course) {
 }
 
 function visibleCourseIds() {
-  return new Set((state.courses || []).filter((course) => !courseFilteredOut(course)).map((course) => course.id));
+  const filter = activeCustomFilter();
+  const stamp = `${state.inactivity}|${filter ? filter.id : ""}|${(state.courses || []).length}`;
+  if (courseFilterCache && courseFilterCache.stamp === stamp) return courseFilterCache.ids;
+  const ids = new Set((state.courses || []).filter((course) => !courseFilteredOut(course)).map((course) => course.id));
+  courseFilterCache = { stamp, ids };
+  return ids;
 }
 
 function inActiveFilter(courseId) {
@@ -878,6 +954,18 @@ function paintFilterDialog() {
 }
 
 function filterModal() {
+  if (filterDialog.kind === "late") {
+    const count = filterDialog.count || 0;
+    const noun = count === 1 ? "assignment" : "assignments";
+    return `<div class="modal-back"><div class="modal">
+      <h3>Mark late assignments as submitted?</h3>
+      <p>This will mark ${count} late ${noun} as submitted. You can undo each one from its card.</p>
+      <div class="row" style="margin-top:12px">
+        <button class="text-btn" id="filter-cancel" type="button">Cancel</button>
+        <button class="fill-btn" id="mark-late-confirm" type="button">Mark submitted</button>
+      </div>
+    </div></div>`;
+  }
   if (filterDialog.kind === "delete") {
     return `<div class="modal-back"><div class="modal">
       <h3>Delete filter?</h3>
@@ -907,11 +995,22 @@ function filterModal() {
 }
 
 function saveFilters(body) {
+  const local = {};
+  ["inactivity", "hide_filtered_assignments", "load_filter_courses_only", "active_custom_filter", "assignment_history", "assignment_history_date"].forEach((key) => {
+    if (key in body) local[key] = body[key];
+  });
+  Object.assign(state, local);
+  courseFilterCache = null;
+  paintFilterChrome();
+  paintCourses();
+  paintFilterDialog();
+  paintPage();
+  updateTodoBadge();
   persistSettings(body).then(() => {
     paintFilterChrome();
     paintCourses();
-    paintFilterDialog();
     paintPage();
+    updateTodoBadge();
   }).catch(() => {});
 }
 
@@ -968,8 +1067,7 @@ function paintListRoot() {
     paintPage();
     return;
   }
-  if (route === "/assignments") root.innerHTML = assignmentFolders("all");
-  else if (route === "/submitted") root.innerHTML = assignmentFolders("submitted");
+  if (route === "/assignments" || route === "/submitted") root.innerHTML = assignmentFolders("all");
   else if (route === "/ignored") root.innerHTML = assignmentFolders("ignored");
   else if (route === "/grades") root.innerHTML = gradesLists();
   else paintPage();
@@ -996,8 +1094,7 @@ function paintContentsRoot() {
 function viewFor(path) {
   if (path.startsWith("/courses/")) return courseView(decodeURIComponent(path.slice("/courses/".length)));
   if (path.startsWith("/assignments/")) return assignmentView(decodeURIComponent(path.slice("/assignments/".length)));
-  if (path === "/assignments") return assignmentList("all");
-  if (path === "/submitted") return assignmentList("submitted");
+  if (path === "/assignments" || path === "/submitted") return assignmentList("all");
   if (path === "/ignored") return assignmentList("ignored");
   if (path === "/grades") return gradesView();
   if (path === "/calendar") return calendarView();
@@ -1007,7 +1104,9 @@ function viewFor(path) {
 }
 
 function homeView() {
-  const dueItems = (state.home_due || []).filter((item) => !item.course_id || inActiveFilter(item.course_id));
+  const dueItems = (state.home_due || []).filter((item) =>
+    keptByHistory(item) && (!item.course_id || inActiveFilter(item.course_id))
+  );
   const gradeItems = (state.home_grades || []).filter((grade) => inActiveFilter(grade.course_id));
   const due = dueItems.map(assignCard).join("") || `<p class="empty">No deadlines this week.</p>`;
   const grades = gradeItems.map((grade) => `<div class="card row" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong>${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="empty">No new grades.</p>`;
@@ -1019,24 +1118,98 @@ function homeView() {
 
 function assignmentMode() {
   if (route === "/ignored") return "ignored";
-  if (route === "/submitted") return "submitted";
   return "all";
 }
 
+function todoCount() {
+  if (!state || !state.assignments) return 0;
+  return assignmentItems("all").filter((item) => item.status !== "submitted").length;
+}
+
+function todoBadge() {
+  const count = todoCount();
+  return `<span class="todo-badge" id="todo-badge" ${count ? "" : "hidden"}>${count}</span>`;
+}
+
+function updateTodoBadge() {
+  const badge = document.getElementById("todo-badge");
+  if (!badge) return;
+  const count = todoCount();
+  badge.textContent = String(count);
+  badge.hidden = count === 0;
+}
+
+const HISTORY_DAYS = { "1w": 7, "1m": 30, "3m": 90, "6m": 180, "1y": 365 };
+
+function historyCutoff() {
+  const mode = (state && state.assignment_history) || "off";
+  if (mode === "date") {
+    const raw = state.assignment_history_date || "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return 0;
+    const ts = new Date(`${raw}T00:00:00`).getTime() / 1000;
+    return Number.isFinite(ts) ? ts : 0;
+  }
+  const days = HISTORY_DAYS[mode];
+  if (!days) return 0;
+  return Date.now() / 1000 - days * 86400;
+}
+
+function keptByHistory(item) {
+  const cutoff = historyCutoff();
+  if (!cutoff) return true;
+  const ts = item.ts || 0;
+  if (!ts || item.kind === "other") return true;
+  return ts >= cutoff;
+}
+
+function historyControl() {
+  const mode = state.assignment_history || "off";
+  const options = [
+    ["off", "Load all assignments"],
+    ["1w", "Skip due more than 1 week ago"],
+    ["1m", "Skip due more than 1 month ago"],
+    ["3m", "Skip due more than 3 months ago"],
+    ["6m", "Skip due more than 6 months ago"],
+    ["1y", "Skip due more than 1 year ago"],
+    ["date", "Skip due before a date"],
+  ].map(([key, label]) => `<option value="${key}" ${mode === key ? "selected" : ""}>${label}</option>`).join("");
+  const date = mode === "date"
+    ? `<input id="history-date" type="date" value="${escapeAttr(state.assignment_history_date || "")}" />`
+    : "";
+  return `<div class="row">
+      <label class="muted" for="history-mode">Old assignments</label>
+      <select id="history-mode">${options}</select>
+      ${date}
+    </div>
+    <p class="muted">Assignments due before this stay off the lists. The next refresh does not load them.</p>`;
+}
+
+function byDueSoonest(a, b) {
+  const left = a.ts || 0;
+  const right = b.ts || 0;
+  if (!left && !right) return (a.title || "").localeCompare(b.title || "");
+  if (!left) return 1;
+  if (!right) return -1;
+  return left - right || (a.title || "").localeCompare(b.title || "");
+}
+
 function assignmentItems(mode) {
+  reapplyManualMarks();
   const needle = query.assignments.toLowerCase();
   let items = (state.assignments || []).filter((item) =>
-    `${item.title} ${item.course}`.toLowerCase().includes(needle) && inActiveFilter(item.course_id)
+    keptByHistory(item)
+    && `${item.title} ${item.course}`.toLowerCase().includes(needle)
+    && inActiveFilter(item.course_id)
   );
-  if (mode === "ignored") return items.filter((item) => item.ignored);
+  if (mode === "ignored") return items.filter((item) => item.ignored).sort(byDueSoonest);
   items = items.filter((item) => !item.ignored);
-  if (mode === "submitted") return items.filter((item) => item.status === "submitted");
-  return items;
+  if (mode === "submitted") return items.filter((item) => item.status === "submitted").sort(byDueSoonest);
+  return items.sort(byDueSoonest);
 }
 
 function assignmentList(mode) {
   const title = mode === "submitted" ? "Submitted" : mode === "ignored" ? "Ignored" : "Assignments";
-  return `<h2>${title}</h2>${assignToolbar(mode)}${searchBox("assignments", "Search assignments")}<div id="list-root">${assignmentFolders(mode)}</div>`;
+  return `<h2>${title}</h2>${historyControl()}${assignToolbar(mode)}${searchBox("assignments", "Search assignments")}<div id="list-root">${assignmentFolders(mode)}</div>`;
 }
 
 function assignToolbar(mode) {
@@ -1044,15 +1217,18 @@ function assignToolbar(mode) {
   const selected = items.filter((item) => selectedAssignments.has(item.id));
   const markable = selected.filter((item) => item.status !== "submitted").length;
   const undoOpen = notDueMarked().length;
+  const late = mode === "ignored" ? [] : lateAssignments();
   const bulk = mode === "ignored"
     ? `<button class="outline-btn with-icon" id="assign-restore" type="button" ${selected.length ? "" : "disabled"}>${actionIcon("restore")}<span>Restore selected (${selected.length})</span></button>`
     : `<button class="outline-btn with-icon mark-btn" id="assign-mark" type="button" ${markable ? "" : "disabled"}>${actionIcon("submitted")}<span>Mark submitted (${markable})</span></button>
        <button class="outline-btn with-icon" id="assign-ignore" type="button" ${selected.length ? "" : "disabled"}>${actionIcon("ignore")}<span>Ignore selected (${selected.length})</span></button>`;
   const undoButton = `<button class="outline-btn with-icon" id="assign-undo-open" type="button" title="Clear the submitted mark on every item that is not due yet." ${undoOpen ? "" : "disabled"}>${actionIcon("undo")}<span>Undo not due yet</span></button>`;
+  const lateButton = mode === "ignored" ? "" : `<button class="outline-btn with-icon mark-btn" id="assign-mark-late" type="button" title="Mark every overdue assignment as submitted." ${late.length ? "" : "disabled"}>${actionIcon("submitted")}<span>Mark late as submitted (${late.length})</span></button>`;
   return `<div class="row" id="assign-toolbar">
     <button class="outline-btn" id="assign-select" type="button">${selectMode ? "Done selecting" : "Select"}</button>
     <button class="text-btn" id="assign-select-all" type="button">Select all</button>
     ${bulk}
+    ${lateButton}
     ${undoButton}
     <span class="muted">Mark a card submitted, ignore it, or select several to update them together.</span>
   </div>`;
@@ -1065,6 +1241,19 @@ function refreshAssignToolbar() {
 }
 
 let assignmentWrite = 0;
+
+function lateAssignments() {
+  reapplyManualMarks();
+  const now = Date.now() / 1000;
+  return (state.assignments || []).filter((item) =>
+    !item.ignored
+    && item.status !== "submitted"
+    && item.ts
+    && item.ts < now
+    && keptByHistory(item)
+    && inActiveFilter(item.course_id)
+  );
+}
 
 function notDueMarked() {
   const now = Date.now() / 1000;
@@ -1106,6 +1295,8 @@ function applyAssignmentUpdates(updates) {
     item.status = next.status;
     item.manual = !!next.manual;
     item.ignored = !!next.ignored;
+    if (item.manual) manualMarks.add(item.id);
+    else manualMarks.delete(item.id);
   });
   const touch = (item) => {
     const next = byId.get(item.assignment_id) || byId.get(item.id);
@@ -1126,7 +1317,8 @@ function applyAssignmentUpdates(updates) {
 function paintAssignmentSurface() {
   const undo = document.getElementById("cal-undo-open");
   if (undo) undo.disabled = notDueMarked().length === 0;
-  if (route === "/assignments" || route === "/submitted" || route === "/ignored") {
+  updateTodoBadge();
+  if (route === "/assignments" || route === "/ignored") {
     refreshAssignToolbar();
     paintListRoot();
     return;
@@ -1213,7 +1405,7 @@ function courseView(id) {
   const page = (state.course_pages || {})[id];
   if (!course || !page) return `<h2>Course</h2><p class="muted">No course data.</p>`;
   const ring = page.percent == null ? "" : `<div>${ringSvg(page.percent)}<div class="muted" style="text-align:center">${escapeHtml(page.fraction)}</div></div>`;
-  const upcoming = page.upcoming.map(assignCard).join("") || `<p class="empty">No upcoming work for this course.</p>`;
+  const upcoming = (page.upcoming || []).filter(keptByHistory).map(assignCard).join("") || `<p class="empty">No upcoming work for this course.</p>`;
   const grades = page.grades.map((row) => `<div class="card row"><div><strong>${escapeHtml(row.title)}</strong><div class="muted">${escapeHtml(row.due)}</div></div><span class="spacer"></span><strong>${escapeHtml(row.label)}</strong></div>`).join("") || `<p class="empty">No grades for this course yet.</p>`;
   return `<div class="score-row"><h2>${escapeHtml(course.name)}</h2>${ring}</div>
     <h3>Upcoming work</h3>${upcoming}<h3>Grades</h3>${grades}`;
@@ -1257,6 +1449,7 @@ function calendarBody() {
 
 function visibleEvents(items) {
   return items.filter((item) => {
+    if (!keptByHistory(item)) return false;
     if (hideEvents && item.kind === "other") return false;
     if (!item.course_id) return true;
     return inActiveFilter(item.course_id);
@@ -1407,9 +1600,42 @@ function contentsView() {
     <div id="contents-root">${contentsBody()}</div>`;
 }
 
+function ensureContentIndex() {
+  const nodes = (state && state.content_nodes) || [];
+  if (contentIndex && contentIndex.source === nodes) return contentIndex;
+  const byParent = new Map();
+  const byCourse = new Map();
+  const byId = new Map();
+  nodes.forEach((node) => {
+    byId.set(node.id, node);
+    const courseList = byCourse.get(node.course_id);
+    if (courseList) courseList.push(node);
+    else byCourse.set(node.course_id, [node]);
+    const key = `${node.course_id}\n${node.parent_id || ""}`;
+    const siblings = byParent.get(key);
+    if (siblings) siblings.push(node);
+    else byParent.set(key, [node]);
+  });
+  byParent.forEach((list) => {
+    list.sort((a, b) => (a.kind === "folder" ? 0 : 1) - (b.kind === "folder" ? 0 : 1) || a.name.localeCompare(b.name));
+  });
+  contentIndex = { source: nodes, byParent, byCourse, byId };
+  return contentIndex;
+}
+
+function nodesForCourses(courses) {
+  const index = ensureContentIndex();
+  const out = [];
+  courses.forEach((course) => {
+    const list = index.byCourse.get(course.id);
+    if (list) out.push(...list);
+  });
+  return out;
+}
+
 function contentsBody() {
   const courses = shownCourses();
-  const nodes = (state.content_nodes || []).filter((node) => courses.some((course) => course.id === node.course_id));
+  const nodes = nodesForCourses(courses);
   const needle = (query.contents || "").trim();
   if (needle) return contentsSearchView(courses, nodes, needle);
   if (!courses.length) return `<p class="empty">No courses in this filter.</p>`;
@@ -1728,11 +1954,9 @@ function millerColumns(path) {
   return columns;
 }
 
-function contentChildren(nodes, courseId, parentId) {
-  return nodes
-    .filter((node) => node.course_id === courseId && (node.parent_id || "") === (parentId || ""))
-    .slice()
-    .sort((a, b) => (a.kind === "folder" ? 0 : 1) - (b.kind === "folder" ? 0 : 1) || a.name.localeCompare(b.name));
+function contentChildren(_nodes, courseId, parentId) {
+  const index = ensureContentIndex();
+  return index.byParent.get(`${courseId}\n${parentId || ""}`) || [];
 }
 
 function descendantFiles(folder) {
@@ -1754,7 +1978,7 @@ function folderSelected(folder) {
 }
 
 function toggleContentSelected(id, checked) {
-  const node = (state.content_nodes || []).find((item) => item.id === id);
+  const node = ensureContentIndex().byId.get(id);
   if (!node) return;
   const targets = node.kind === "folder" ? descendantFiles(node) : [node];
   targets.forEach((item) => {
@@ -2101,14 +2325,20 @@ function colorForDue(ts) {
 }
 
 function tickCountdowns() {
-  document.querySelectorAll(".countdown[data-due]").forEach((node) => {
+  const nodes = document.querySelectorAll(".countdown[data-due]");
+  if (!nodes.length) return;
+  nodes.forEach((node) => {
     const ts = Number(node.dataset.due || 0);
     if (!ts) return;
-    node.textContent = formatCountdown(ts);
-    node.style.color = colorForDue(ts);
+    const text = formatCountdown(ts);
+    if (node.textContent !== text) node.textContent = text;
+    const band = colorForDue(ts);
+    if (node.dataset.band === band) return;
+    node.dataset.band = band;
+    node.style.color = band;
     const card = node.closest(".assign");
     if (card && !card.classList.contains("event") && !card.classList.contains("dimmed")) {
-      card.style.borderColor = colorForDue(ts);
+      card.style.borderColor = band;
     }
   });
 }

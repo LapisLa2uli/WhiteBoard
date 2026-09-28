@@ -228,6 +228,7 @@ def fetch_snapshot(
         snapshot.announcements = _fetch_announcements(session, snapshot)
 
     _merge_assignments_from_deadlines(snapshot)
+    _drop_old_assignments(snapshot)
     _enrich_assignment_links(session, snapshot, quick=quick, include_files=include_files)
     _check_live_submissions(session, snapshot, quick=quick)
     snapshot.files_indexed = bool(include_files)
@@ -1700,6 +1701,46 @@ def html_indicates_submission(html: str) -> bool:
     if 'id="currentAttempt_submissionList"' in text and "attachment" in text.lower():
         return True
     return False
+
+
+def _history_cutoff(settings: dict) -> datetime | None:
+    mode = str(settings.get("assignment_history") or "off")
+    if mode == "date":
+        raw = str(settings.get("assignment_history_date") or "").strip()
+        try:
+            day = datetime.strptime(raw, "%Y-%m-%d")
+        except ValueError:
+            return None
+        local = day.replace(tzinfo=datetime.now().astimezone().tzinfo)
+        return local.astimezone(timezone.utc)
+    days = {"1w": 7, "1m": 30, "3m": 90, "6m": 180, "1y": 365}.get(mode)
+    if not days:
+        return None
+    return datetime.now(timezone.utc) - timedelta(days=days)
+
+
+def _due_is_kept(when: datetime | None, cutoff: datetime | None) -> bool:
+    if cutoff is None or when is None:
+        return True
+    moment = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc) >= cutoff
+
+
+def _drop_old_assignments(snapshot: Snapshot) -> None:
+    """Leave assignments and assignment deadlines dated before the chosen cutoff unloaded."""
+    from blackboard.store import load_settings
+
+    cutoff = _history_cutoff(load_settings())
+    if cutoff is None:
+        return
+    snapshot.assignments = [
+        item for item in snapshot.assignments if _due_is_kept(item.due_at, cutoff)
+    ]
+    snapshot.deadlines = [
+        item
+        for item in snapshot.deadlines
+        if item.kind == "other" or _due_is_kept(item.when, cutoff)
+    ]
 
 
 def _check_live_submissions(

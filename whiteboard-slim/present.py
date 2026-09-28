@@ -187,9 +187,13 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
 
     marked = _setting_keys(settings, "marked_submitted_assignments")
     ignored_keys = _setting_keys(settings, "ignored_assignments")
+    history_cutoff = _history_cutoff_ts(settings)
     assignments = []
     for item in snapshot.assignments:
         due_local = _as_utc(item.due_at).astimezone() if item.due_at else None
+        due_ts = int(due_local.timestamp()) if due_local else 0
+        if not _kept_history(due_ts, "assignment", history_cutoff):
+            continue
         manual = _item_flagged(item, marked)
         ignored = _item_flagged(item, ignored_keys)
         status = "submitted" if item.status == "submitted" or manual else item.status
@@ -252,9 +256,13 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
         percent = course_score_percent(snapshot, course.id)
         totals = course_score_totals(snapshot, course.id)
         upcoming_items = [
-            pack_deadline(item)
-            for item in upcoming(snapshot, 21)
-            if item.course_id == course.id and not deadline_is_finished(snapshot, item)
+            row
+            for row in (
+                pack_deadline(item)
+                for item in upcoming(snapshot, 21)
+                if item.course_id == course.id and not deadline_is_finished(snapshot, item)
+            )
+            if _kept_history(row["ts"], row.get("kind") or "", history_cutoff)
         ]
         results = []
         for title, label, due, aid in course_result_rows(snapshot, course.id):
@@ -276,12 +284,20 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
         }
 
     home_due = [
-        pack_deadline(item)
-        for item in upcoming(snapshot, 7)
-        if not deadline_is_finished(snapshot, item) and not _item_flagged(item, ignored_keys)
+        row
+        for row in (
+            pack_deadline(item)
+            for item in upcoming(snapshot, 7)
+            if not deadline_is_finished(snapshot, item) and not _item_flagged(item, ignored_keys)
+        )
+        if _kept_history(row["ts"], row.get("kind") or "", history_cutoff)
     ]
     home_grades = [pack_grade(grade) for grade in recent_grades(snapshot, 8)[:5]]
-    calendar = [pack_deadline(item) for item in snapshot.deadlines if item.when]
+    calendar = [
+        row
+        for row in (pack_deadline(item) for item in snapshot.deadlines if item.when)
+        if _kept_history(row["ts"], row.get("kind") or "", history_cutoff)
+    ]
     account = load_account()
     content_nodes = []
     for node in snapshot.content_nodes:
@@ -314,6 +330,8 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
         "active_custom_filter": str(settings.get("active_custom_filter") or ""),
         "hide_filtered_assignments": bool(settings.get("hide_filtered_assignments")),
         "load_filter_courses_only": bool(settings.get("load_filter_courses_only")),
+        "assignment_history": _history_mode(settings),
+        "assignment_history_date": str(settings.get("assignment_history_date") or ""),
         "base_url": settings.get("base_url") or "",
         "deadline_colors": {
             "overdue": deadline_color("overdue"),
@@ -344,6 +362,26 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
         },
         "errors": snapshot.errors,
     }
+
+
+def _history_mode(settings: dict) -> str:
+    value = str(settings.get("assignment_history") or "off")
+    return value if value in {"off", "1w", "1m", "3m", "6m", "1y", "date"} else "off"
+
+
+def _history_cutoff_ts(settings: dict) -> int:
+    from blackboard.api import _history_cutoff
+
+    cutoff = _history_cutoff(settings)
+    if cutoff is None:
+        return 0
+    return int(cutoff.timestamp())
+
+
+def _kept_history(ts: int, kind: str, cutoff: int) -> bool:
+    if not cutoff or not ts or kind == "other":
+        return True
+    return ts >= cutoff
 
 
 def _inactivity_key(settings: dict) -> str:

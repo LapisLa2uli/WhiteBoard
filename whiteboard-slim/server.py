@@ -23,7 +23,7 @@ import data
 
 data.install()
 
-from blackboard.store import load_settings, save_settings
+from blackboard.store import load_settings, update_settings
 from crawl import progress, start_login, start_refresh
 from present import build_state, load_snapshot
 
@@ -93,6 +93,14 @@ def _apply_course_filters(settings: dict, body: dict) -> None:
             filters.append(item)
             settings["custom_filters"] = filters
             settings["active_custom_filter"] = item["id"]
+    if "assignment_history" in body:
+        mode = str(body.get("assignment_history") or "off")
+        settings["assignment_history"] = (
+            mode if mode in {"off", "1w", "1m", "3m", "6m", "1y", "date"} else "off"
+        )
+    if "assignment_history_date" in body:
+        raw = str(body.get("assignment_history_date") or "").strip()
+        settings["assignment_history_date"] = raw if len(raw) == 10 else ""
     if settings.get("load_filter_courses_only"):
         _sync_load_course_ids(settings)
 
@@ -116,6 +124,28 @@ def _sync_load_course_ids(settings: dict) -> None:
             custom_filter=custom,
         )
     )
+
+
+def _settings_patch(settings: dict) -> dict:
+    from present import _custom_filters, _history_mode, _inactivity_key
+
+    try:
+        page_size = int(settings.get("list_page_size") or 10)
+    except (TypeError, ValueError):
+        page_size = 10
+    return {
+        "inactivity": _inactivity_key(settings),
+        "custom_filters": _custom_filters(settings),
+        "active_custom_filter": str(settings.get("active_custom_filter") or ""),
+        "hide_filtered_assignments": bool(settings.get("hide_filtered_assignments")),
+        "load_filter_courses_only": bool(settings.get("load_filter_courses_only")),
+        "assignment_history": _history_mode(settings),
+        "assignment_history_date": str(settings.get("assignment_history_date") or ""),
+        "page_size": page_size if page_size in (10, 20, 50) else 10,
+        "hide_calendar_events": bool(settings.get("hide_calendar_events")),
+        "contents_view_mode": settings.get("contents_view_mode") or "tree",
+        "google_sync_enabled": bool(settings.get("google_sync_enabled")),
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -173,7 +203,25 @@ class Handler(BaseHTTPRequestHandler):
         return
 
     def _save_settings(self, body: dict) -> dict:
-        settings = load_settings()
+        def edit(settings: dict) -> None:
+            self._edit_settings(settings, body)
+
+        settings = update_settings(edit)
+        colors_changed = any(
+            key in body
+            for key in (
+                "deadline_color",
+                "reset_deadline_colors",
+                "course_color",
+                "reset_course_color",
+                "reset_course_colors",
+            )
+        )
+        if colors_changed:
+            return _state()
+        return {"patch": _settings_patch(settings)}
+
+    def _edit_settings(self, settings: dict, body: dict) -> None:
         if "list_page_size" in body:
             try:
                 size = int(body.get("list_page_size") or 10)
@@ -221,8 +269,6 @@ class Handler(BaseHTTPRequestHandler):
                 settings["course_colors"] = colors
         _apply_course_filters(settings, body)
         apply_palette(settings)
-        save_settings(settings)
-        return _state()
 
     def _google_signin(self, body: dict) -> dict:
         with _google_lock:
@@ -236,9 +282,11 @@ class Handler(BaseHTTPRequestHandler):
         def work() -> None:
             try:
                 account = sign_in(client_id, client_secret)
-                settings = load_settings()
-                settings["google_sync_enabled"] = True
-                save_settings(settings)
+
+                def edit(settings: dict) -> None:
+                    settings["google_sync_enabled"] = True
+
+                update_settings(edit)
                 who = account.get("email") or "Google"
                 _run_sync(client_id, client_secret, status=f"Signed in as {who}.")
             except GoogleCalendarError as exc:
@@ -272,9 +320,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _google_signout(self) -> dict:
         sign_out()
-        settings = load_settings()
-        settings["google_sync_enabled"] = False
-        save_settings(settings)
+
+        def edit(settings: dict) -> None:
+            settings["google_sync_enabled"] = False
+
+        update_settings(edit)
         _google["status"] = "Signed out of Google."
         _google["busy"] = False
         return _state()
@@ -525,9 +575,13 @@ def _assignment_action(body: dict) -> dict:
     action = str(body.get("action") or "")
     wanted = {str(item) for item in (body.get("ids") or []) if str(item)}
     snapshot = load_snapshot()
-    settings = load_settings()
-    updates = _apply_assignment_action(settings, snapshot, action, wanted)
-    save_settings(settings)
+    updates: list[dict] = []
+
+    def edit(settings: dict) -> None:
+        nonlocal updates
+        updates = _apply_assignment_action(settings, snapshot, action, wanted)
+
+    update_settings(edit)
     return {"updates": updates}
 
 

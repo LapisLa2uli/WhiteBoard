@@ -80,12 +80,21 @@ button { cursor: pointer; }
 .nav-btn {
   border: 0; background: transparent; color: var(--text); padding: 6px 8px;
   border-radius: 8px; display: inline-flex; align-items: center; gap: 6px;
-  position: relative; overflow: hidden;
+  position: relative; overflow: hidden; flex: 0 0 auto;
 }
 .nav-btn svg { width: 16px; height: 16px; flex: 0 0 auto; color: var(--muted); }
 .nav-btn.active { color: var(--accent); font-weight: 600; }
 .nav-btn.active svg { color: var(--accent); }
 .nav-btn .label { font-size: 13px; }
+.todo-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; box-sizing: border-box;
+  min-width: 18px; height: 16px; padding: 0 6px; margin-left: 2px;
+  border-radius: 999px; background: #dc2626; color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 16px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.todo-badge[hidden] { display: none; }
 .text-btn, .outline-btn, .fill-btn, .chip-btn {
   border-radius: 8px; border: 0; background: transparent; color: var(--muted); padding: 6px 10px;
   position: relative; overflow: hidden;

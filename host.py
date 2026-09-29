@@ -770,13 +770,7 @@ def _is_home_page(url: str) -> bool:
         return True
     if path.startswith("/webapps/portal"):
         return True
-    if (
-        "/ultra/courses/" in path
-        and path.endswith("/outline")
-        and "/cl/" not in path
-        and "/assessment/" not in path
-        and "/discussion/" not in path
-    ):
+    if path.startswith("/ultra"):
         return True
     return False
 

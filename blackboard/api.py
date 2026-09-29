@@ -1039,59 +1039,81 @@ def browser_open_url(
     content_id: str = "",
     handler: str = "",
 ) -> str:
-    """Open the Ultra page that stays on this item.
+    """Open the classic Blackboard tool page.
 
-    A bare ``/ultra/courses/<id>/outline`` link, and a classic assignment
-    tool opened on its own, both land on the Blackboard home dashboard.
+    On this school, ``/ultra/courses/...`` links — including ``/cl/outline``
+    and assessment overview links — redirect to the portal home page.
     """
     resolved = resolve_url(base_url, (url or "").strip())
     if not resolved:
         return ""
     parsed = urlparse(resolved)
-    path = parsed.path or ""
-    lowered = path.lower().rstrip("/")
-    query = parse_qs(parsed.query)
+    lowered = (parsed.path or "").lower()
     extracted_content, extracted_course = _ids_from_launch_url(resolved)
     content_pk = _bb_pk(content_id) or extracted_content
     course_pk = _bb_pk(course_id) or extracted_course
-    if "/outline/assessment/" in lowered or "/outline/discussion/" in lowered:
-        if course_pk and "courseid" not in (parsed.query or "").lower():
-            segment = "discussion" if "/outline/discussion/" in lowered else "assessment"
-            return _ultra_item_url(base_url, course_pk, content_pk, segment)
-        return resolved
-    if "/cl/outline" in lowered:
-        return resolved
     kind = _handler_kind(handler)
-    classic_work = (
-        "/webapps/assignment/uploadassignment" in lowered
-        or "/webapps/assessment/take/launchassessment.jsp" in lowered
-    )
-    if content_pk and course_pk and (classic_work or kind in {"assignment", "assessment"}):
-        return _ultra_item_url(base_url, course_pk, content_pk, "assessment")
-    if "/webapps/discussionboard/" in lowered and course_pk:
-        legacy = path + (("?" + parsed.query) if parsed.query else "")
-        return resolve_url(
-            base_url,
-            f"/ultra/courses/{course_pk}/cl/outline?{urlencode({'legacyUrl': legacy})}",
-        )
-    if (
-        course_pk
-        and "/ultra/courses/" in lowered
-        and lowered.endswith("/outline")
-        and "/assessment/" not in lowered
-        and "/discussion/" not in lowered
+    if _keeps_classic_tool(resolved, lowered, kind):
+        return resolved
+    if content_pk and course_pk:
+        if kind == "discussion" or "/outline/discussion/" in lowered:
+            forum_id, conf_id = _forum_ids_from_url(resolved)
+            if forum_id:
+                return _discussion_launch_url(
+                    base_url,
+                    course_pk,
+                    content_id=content_pk,
+                    forum_id=forum_id,
+                    conf_id=conf_id,
+                )
+            return _content_launch_link(base_url, course_pk, content_pk)
+        if kind == "assessment":
+            return _launch_url_for_handler(
+                base_url, course_pk, content_pk, "resource/x-bb-asmt-test-link"
+            )
+        if kind in {"file", "document", "folder", "link"} and "/ultra/" not in lowered:
+            return resolved
+        return _assignment_upload_url(base_url, course_pk, content_pk)
+    if course_pk and (
+        "/ultra/" in lowered
+        or "/execute/launcher" in lowered
+        or "coursemain" in lowered
+        or _is_shallow_blackboard_url(resolved, base_url)
     ):
-        return resolve_url(base_url, f"/ultra/courses/{course_pk}/cl/outline")
+        if "/execute/launcher" in lowered or "coursemain" in lowered:
+            return resolved
+        return _course_launcher_url(base_url, course_pk)
+    if "/ultra/" in lowered and course_pk:
+        return _course_launcher_url(base_url, course_pk)
     return resolved
 
 
-def _ultra_item_url(base_url: str, course_id: str, content_id: str, segment: str) -> str:
-    piece = "discussion" if segment == "discussion" else "assessment"
-    query = urlencode({"courseId": course_id})
-    return resolve_url(
-        base_url,
-        f"/ultra/courses/{course_id}/outline/{piece}/{content_id}/overview?{query}",
-    )
+def _keeps_classic_tool(url: str, lowered: str, kind: str) -> bool:
+    if "/ultra/" in lowered or not _is_deep_work_url(url, ""):
+        return False
+    if _url_kind_mismatch(url, kind):
+        return False
+    if kind == "assignment" and "/webapps/assignment/" not in lowered:
+        return False
+    if kind == "assessment" and "/webapps/assessment/" not in lowered:
+        return False
+    if (
+        kind == "discussion"
+        and "/webapps/discussionboard/" not in lowered
+        and "launchlink.jsp" not in lowered
+    ):
+        return False
+    return True
+
+
+def _course_launcher_url(base_url: str, course_id: str) -> str:
+    query = urlencode({"type": "Course", "id": course_id, "url": ""})
+    return resolve_url(base_url, f"/webapps/blackboard/execute/launcher?{query}")
+
+
+def _content_launch_link(base_url: str, course_id: str, content_id: str) -> str:
+    query = urlencode({"course_id": course_id, "content_id": content_id, "mode": "view"})
+    return resolve_url(base_url, f"/webapps/blackboard/content/launchLink.jsp?{query}")
 
 
 def deepen_work_url(

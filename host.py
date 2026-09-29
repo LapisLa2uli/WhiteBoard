@@ -1,4 +1,4 @@
-"""Native WhiteBoard window that hosts the slim UI in WebView2.
+"""Native WhiteBoard window that hosts the UI in WebView2.
 
 Uses only the Python standard library and the WebView2 runtime already
 installed on Windows. No pip packages and no Edge --app browser window.
@@ -15,6 +15,7 @@ import threading
 import time
 from ctypes import POINTER, WINFUNCTYPE, Structure, byref, c_int, c_ssize_t, c_ulong, c_void_p
 from pathlib import Path
+from urllib.parse import urlparse
 
 ole32 = ctypes.windll.ole32
 user32 = ctypes.windll.user32
@@ -71,8 +72,14 @@ IID_CTRL_DONE = "{6C4819F3-C9B7-4260-8127-C9F5BDE7F68C}"
 IID_SCRIPT_DONE = "{49511172-CC67-4BCA-9923-137112F4C4CC}"
 IID_WEB_MESSAGE = "{57213F19-00E6-49FA-8E3D-5B8E5A0B0B0E}"
 
-ROOT = Path(__file__).resolve().parent
-ICON_PATH = ROOT.parent / "assets" / "logo.ico"
+def _resource_root() -> Path:
+    import data
+
+    return data.resource_root()
+
+
+ROOT = _resource_root()
+ICON_PATH = ROOT / "assets" / "logo.ico"
 WEBVIEW_CLIENT = r"SOFTWARE\Microsoft\EdgeUpdate\ClientState\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 WEBVIEW_CLIENTS = r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 
@@ -172,6 +179,7 @@ PUT_VISIBLE = WINFUNCTYPE(HRESULT, c_void_p, ctypes.c_int)
 PUT_BOUNDS = WINFUNCTYPE(HRESULT, c_void_p, RECT)
 GET_WEBVIEW = WINFUNCTYPE(HRESULT, c_void_p, POINTER(c_void_p))
 NAVIGATE = WINFUNCTYPE(HRESULT, c_void_p, wt.LPCWSTR)
+GET_SOURCE = WINFUNCTYPE(HRESULT, c_void_p, POINTER(c_void_p))
 MOVE_FOCUS = WINFUNCTYPE(HRESULT, c_void_p, ctypes.c_int)
 CLOSE_CTRL = WINFUNCTYPE(HRESULT, c_void_p)
 ADDREF = WINFUNCTYPE(c_ulong, c_void_p)
@@ -712,18 +720,65 @@ def _on_popup(controller: int, token: int) -> None:
 
 
 def _retry_tab_navigation(tab_id: str, url: str) -> None:
-    """Navigate again after the new tab finishes restoring the last Blackboard page."""
+    """Open the assignment again if the tab fell back to the Blackboard home page."""
 
-    def later() -> None:
-        def work() -> None:
-            tab = next((item for item in list(_docs.get("tabs") or []) if item.get("id") == tab_id), None)
-            web = int((tab or {}).get("webview") or 0)
-            if web and url:
+    def attempt(delay: float, left: int) -> None:
+        def later() -> None:
+            def work() -> None:
+                tab = next((item for item in list(_docs.get("tabs") or []) if item.get("id") == tab_id), None)
+                web = int((tab or {}).get("webview") or 0)
+                if not web or not url:
+                    return
+                href = _webview_source(web)
+                if href and not _is_home_page(href):
+                    return
                 NAVIGATE(_vtable_slot(web, 5))(web, url)
+                if left > 0:
+                    attempt(1.6, left - 1)
 
-        _queue_call(work)
+            _queue_call(work)
 
-    threading.Timer(0.8, later).start()
+        threading.Timer(delay, later).start()
+
+    attempt(1.2, 2)
+
+
+def _webview_source(web: int) -> str:
+    pointer = c_void_p()
+    try:
+        hr = GET_SOURCE(_vtable_slot(web, 4))(web, byref(pointer))
+    except OSError:
+        return ""
+    if hr < 0 or not pointer.value:
+        return ""
+    try:
+        return ctypes.wstring_at(pointer.value)
+    finally:
+        ole32.CoTaskMemFree(pointer)
+
+
+def _is_home_page(url: str) -> bool:
+    path = (urlparse(url).path or "/").rstrip("/").lower() or "/"
+    if path in {
+        "/",
+        "/ultra",
+        "/ultra/stream",
+        "/ultra/course",
+        "/ultra/institution",
+        "/ultra/institution-page",
+    }:
+        return True
+    if path.startswith("/webapps/portal"):
+        return True
+    if (
+        "/ultra/courses/" in path
+        and path.endswith("/outline")
+        and "/cl/" not in path
+        and "/assessment/" not in path
+        and "/discussion/" not in path
+    ):
+        return True
+    return False
 
 
 def _on_strip(controller: int, token: int) -> None:
@@ -860,7 +915,7 @@ def _user_data() -> str:
 
 def _claim_app_id() -> None:
     try:
-        shell32.SetCurrentProcessExplicitAppUserModelID("WhiteBoard.Slim")
+        shell32.SetCurrentProcessExplicitAppUserModelID("WhiteBoard")
     except Exception:
         return
 
@@ -1161,9 +1216,9 @@ def _eval_js(expression: str, timeout: float, *, target: str):
 
 
 def open_window(url: str) -> None:
-    """Create a WhiteBoard window and load the local slim UI."""
+    """Create a WhiteBoard window and load the local UI."""
     if sys.platform != "win32":
-        raise RuntimeError("The slim WhiteBoard window host is Windows-only.")
+        raise RuntimeError("The WhiteBoard window host is Windows-only.")
     bridge = _state.get("bridge")
     _state.clear()
     if callable(bridge):

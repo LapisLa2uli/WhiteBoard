@@ -1,8 +1,6 @@
-"""Start the slim WhiteBoard window. No network port and no console server."""
+"""Start the WhiteBoard window. No network port and no console server."""
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import data
 
@@ -12,7 +10,7 @@ from host import open_window, set_bridge
 from server import handle
 from shortcuts import install_shortcuts
 
-PAGE = Path(__file__).resolve().parent / "static" / "index.html"
+PAGE = data.resource_root() / "static" / "index.html"
 
 
 def main() -> None:

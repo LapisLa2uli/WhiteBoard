@@ -1031,6 +1031,69 @@ def work_launch_url(
     return resolve_url(base_url, "/ultra")
 
 
+def browser_open_url(
+    base_url: str,
+    url: str,
+    *,
+    course_id: str = "",
+    content_id: str = "",
+    handler: str = "",
+) -> str:
+    """Open the Ultra page that stays on this item.
+
+    A bare ``/ultra/courses/<id>/outline`` link, and a classic assignment
+    tool opened on its own, both land on the Blackboard home dashboard.
+    """
+    resolved = resolve_url(base_url, (url or "").strip())
+    if not resolved:
+        return ""
+    parsed = urlparse(resolved)
+    path = parsed.path or ""
+    lowered = path.lower().rstrip("/")
+    query = parse_qs(parsed.query)
+    extracted_content, extracted_course = _ids_from_launch_url(resolved)
+    content_pk = _bb_pk(content_id) or extracted_content
+    course_pk = _bb_pk(course_id) or extracted_course
+    if "/outline/assessment/" in lowered or "/outline/discussion/" in lowered:
+        if course_pk and "courseid" not in (parsed.query or "").lower():
+            segment = "discussion" if "/outline/discussion/" in lowered else "assessment"
+            return _ultra_item_url(base_url, course_pk, content_pk, segment)
+        return resolved
+    if "/cl/outline" in lowered:
+        return resolved
+    kind = _handler_kind(handler)
+    classic_work = (
+        "/webapps/assignment/uploadassignment" in lowered
+        or "/webapps/assessment/take/launchassessment.jsp" in lowered
+    )
+    if content_pk and course_pk and (classic_work or kind in {"assignment", "assessment"}):
+        return _ultra_item_url(base_url, course_pk, content_pk, "assessment")
+    if "/webapps/discussionboard/" in lowered and course_pk:
+        legacy = path + (("?" + parsed.query) if parsed.query else "")
+        return resolve_url(
+            base_url,
+            f"/ultra/courses/{course_pk}/cl/outline?{urlencode({'legacyUrl': legacy})}",
+        )
+    if (
+        course_pk
+        and "/ultra/courses/" in lowered
+        and lowered.endswith("/outline")
+        and "/assessment/" not in lowered
+        and "/discussion/" not in lowered
+    ):
+        return resolve_url(base_url, f"/ultra/courses/{course_pk}/cl/outline")
+    return resolved
+
+
+def _ultra_item_url(base_url: str, course_id: str, content_id: str, segment: str) -> str:
+    piece = "discussion" if segment == "discussion" else "assessment"
+    query = urlencode({"courseId": course_id})
+    return resolve_url(
+        base_url,
+        f"/ultra/courses/{course_id}/outline/{piece}/{content_id}/overview?{query}",
+    )
+
+
 def deepen_work_url(
     session: BlackboardSession,
     snapshot: Snapshot,

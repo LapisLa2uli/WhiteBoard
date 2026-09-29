@@ -1,4 +1,4 @@
-"""Blackboard session that runs inside the slim app's hidden WebView2 view.
+"""Blackboard session that runs inside WhiteBoard's hidden WebView2 view.
 
 The signed-in page fetches Learn JSON with the browser cookies. No Playwright.
 """

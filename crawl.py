@@ -1,4 +1,4 @@
-"""Sign in and refresh the slim app's own Blackboard snapshot."""
+"""Sign in and refresh WhiteBoard's Blackboard snapshot."""
 
 from __future__ import annotations
 
@@ -153,7 +153,7 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
             except Exception:
                 pass
 
-    threading.Thread(target=work, daemon=True, name="bb-slim").start()
+    threading.Thread(target=work, daemon=True, name="bb-refresh").start()
 
 
 def _load_course_ids() -> set[str] | None:

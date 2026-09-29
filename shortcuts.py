@@ -6,19 +6,26 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-RUN = ROOT / "run.py"
-ICON = ROOT.parent / "assets" / "logo.ico"
-NAME = "WhiteBoard Slim"
+import data
+
+ROOT = data.resource_root()
+RUN = Path(__file__).resolve().parent / "run.py"
+ICON = ROOT / "assets" / "logo.ico"
+NAME = "WhiteBoard"
 
 
 def install_shortcuts() -> None:
     """Point Desktop and Start menu entries at this window. Safe to run again."""
+    if getattr(sys, "frozen", False):
+        return
     python = Path(sys.executable)
     if python.name.lower() == "python.exe":
         windowless = python.with_name("pythonw.exe")
         if windowless.is_file():
             python = windowless
+    run_arg = str(RUN)
+    workdir = RUN.parent
+    icon = ICON
     desktop = Path.home() / "Desktop"
     start = Path.home() / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs"
     script = r"""
@@ -27,7 +34,7 @@ function Save-Link($folder) {
   if (-not (Test-Path -LiteralPath $folder)) { return }
   $link = $shell.CreateShortcut((Join-Path $folder $env:WB_LINK_NAME))
   $link.TargetPath = $env:WB_PYTHON
-  $link.Arguments = '"' + $env:WB_RUN + '"'
+  if ($env:WB_RUN) { $link.Arguments = '"' + $env:WB_RUN + '"' }
   $link.WorkingDirectory = $env:WB_WORKDIR
   $link.WindowStyle = 1
   $link.Description = 'WhiteBoard'
@@ -40,9 +47,9 @@ Save-Link $env:WB_START
     env = {
         "WB_LINK_NAME": f"{NAME}.lnk",
         "WB_PYTHON": str(python),
-        "WB_RUN": str(RUN),
-        "WB_WORKDIR": str(ROOT),
-        "WB_ICON": str(ICON),
+        "WB_RUN": run_arg,
+        "WB_WORKDIR": str(workdir),
+        "WB_ICON": str(icon),
         "WB_DESKTOP": str(desktop),
         "WB_START": str(start),
     }

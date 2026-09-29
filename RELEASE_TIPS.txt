@@ -53,7 +53,10 @@ Re-tagging
 
 How to cut a release
 --------------------
-1. Bump APP_VERSION (app/branding.py and packaging/whiteboard.iss).
+The app you develop and run is the repository root (`python run.py`).
+The previous Flet app, its installer, and its tests are in archive/original/.
+
+1. Bump APP_VERSION (archive/original/app/branding.py and archive/original/packaging/whiteboard.iss) only when releasing that archived app.
 2. Add CHANGELOG.md notes using the three headings above.
 3. Commit, push master, tag vX.Y.Z, push the tag.
 4. Confirm GitHub Actions built Windows + both Mac disk images.

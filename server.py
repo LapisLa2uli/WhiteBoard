@@ -1,4 +1,4 @@
-"""Local server for the slim WhiteBoard UI. Standard library only."""
+"""WhiteBoard UI bridge. Standard library only."""
 
 from __future__ import annotations
 
@@ -12,16 +12,10 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
-ROOT = Path(__file__).resolve().parent
-PARENT = ROOT.parent
-if str(PARENT) not in sys.path:
-    sys.path.insert(0, str(PARENT))
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 import data
 
 data.install()
+ROOT = data.resource_root()
 
 from blackboard.store import load_settings, update_settings
 from crawl import progress, start_login, start_refresh
@@ -38,7 +32,7 @@ from app.google_calendar import (
 )
 
 STATIC = ROOT / "static"
-ASSETS = PARENT / "assets"
+ASSETS = ROOT / "assets"
 
 _google = {"status": "", "busy": False}
 _google_lock = threading.Lock()
@@ -402,8 +396,10 @@ def _open_page(body: dict) -> dict:
 
 def _launch_target(body: dict) -> tuple[str, str]:
     from blackboard.api import (
+        _ids_from_launch_url,
         _is_deep_work_url,
         _match_content_by_title,
+        browser_open_url,
         content_id_for_work,
         work_launch_url,
     )
@@ -471,6 +467,24 @@ def _launch_target(body: dict) -> tuple[str, str]:
                 handler=found_handler,
                 title=title,
             )
+            content_id = found or content_id
+            handler = found_handler or handler
+    if not handler:
+        url_content, url_course = _ids_from_launch_url(explicit or target)
+        node_id = url_content or content_id
+        if node_id:
+            node = next((item for item in snapshot.content_nodes if item.id == node_id), None)
+            if node is not None:
+                handler = node.handler or handler
+                course_id = course_id or node.course_id
+                content_id = content_id or node.id
+    target = browser_open_url(
+        base,
+        target,
+        course_id=course_id,
+        content_id=content_id,
+        handler=handler,
+    )
     return target, title or "Blackboard"
 
 
@@ -717,7 +731,7 @@ def handle(path: str, body: dict | None = None) -> dict:
 
 
 def serve(_port: int = 0) -> None:
-    """The slim app does not listen on a port. Open the window instead."""
+    """WhiteBoard does not listen on a port. Open the window instead."""
     from run import main
 
     main()

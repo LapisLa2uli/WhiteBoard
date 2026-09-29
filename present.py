@@ -1,4 +1,4 @@
-"""Turn a saved Blackboard snapshot into the data the slim UI renders."""
+"""Turn a saved Blackboard snapshot into the data the window renders."""
 
 from __future__ import annotations
 
@@ -6,12 +6,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-SLIM = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-if str(SLIM) not in sys.path:
-    sys.path.insert(0, str(SLIM))
 
 import data
 

@@ -4,7 +4,7 @@ Summarized major changes for each WhiteBoard release, compared with the version 
 Write for someone using the app, not for developers. Every version needs the three
 headings below. Packaging and GitHub Releases copy this text.
 
-## [0.4.0] - 2026-10-01
+## [0.4.0] - 2026-10-02
 
 ### Added features
 - The Assignments tab shows a red badge with how many items are still to do. The number can grow to four digits without pushing the other tabs aside.
@@ -12,13 +12,18 @@ headings below. Packaging and GitHub Releases copy this text.
 - Assignments has **Mark late as submitted**. It asks you to confirm, then marks every overdue assignment that is still to do.
 - Contents can search for a folder name, a file name, or a file extension.
 - The calendar list and the assignment list put the soonest due date first.
-- **Open** on an assignment, discussion, or file opens that Blackboard page in a WhiteBoard window with tabs.
+- **Open** sits on each assignment card, next to **Mark submitted** and **Ignore**. It opens that Blackboard page in a WhiteBoard window with tabs.
+- Settings has a **Font** choice: Segoe UI, Calibri, Candara, Constantia, Cambria, Georgia, Verdana, Trebuchet MS, or Arial.
+- Recent grades on Home use the same course color as the assignment cards.
+- Assignment names, dates, and course names are larger. The countdown and buttons sit under that text.
 - The Windows setup asks whether to add a Desktop shortcut and a Windows Search shortcut. You can turn either one off.
 - Settings lets you choose how many rows appear on one page, change deadline and course colors, and send deadlines to a Google calendar named WhiteBoard.
 - While signing in or refreshing, the loading screen shows how many courses, folders, and files it has read, and the latest item.
 
 ### Bugfixes
 - Opening an assignment stays on that assignment. It no longer drops you on the Blackboard home page.
+- Homework stays an assignment when the title also contains a word such as holiday, as long as it has a due date and a submission page.
+- Submitted work no longer shows an overdue countdown. It shows that it was submitted, the time WhiteBoard recorded when you marked it, and how long it has been since the deadline.
 - Marking an assignment submitted stays marked after you filter that course out and turn the filter back on.
 - Course filters and the main list buttons respond again.
 - Home and the course filters use less of the computer while you are looking at them.
@@ -29,6 +34,8 @@ headings below. Packaging and GitHub Releases copy this text.
 - Your courses are stored in `%USERPROFILE%\.whiteboard_slim`. The previous app’s files are left where they were.
 - Microsoft Edge is required. You do not need a separate Chrome install.
 - The Windows download is named `WhiteBoard-<version>-Setup.exe`.
+- Opening an assignment from the calendar, then going back, returns to the same list, week, or month.
+- Google Calendar sign-in no longer asks you to paste a client ID.
 
 ## [0.3.0] - 2026-09-11
 

@@ -1,7 +1,7 @@
 """One-way sync of Blackboard deadlines into a Google calendar named WhiteBoard.
 
-Sign-in uses a desktop OAuth client the user creates in Google Cloud. The
-refresh token stays in the local data folder and is not written into settings.
+Sign-in uses the desktop OAuth client built into WhiteBoard. The refresh
+token stays in the local data folder and is not written into settings.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Callable
 
@@ -27,6 +28,25 @@ from blackboard.store import DATA_DIR
 
 ACCOUNT_PATH = DATA_DIR / "google_calendar.json"
 CALENDAR_NAME = "WhiteBoard"
+
+
+def builtin_google_client() -> tuple[str, str]:
+    """Client ID and secret from authid.txt. That file is not committed."""
+    from data import resource_root
+
+    candidates = [
+        resource_root() / "authid.txt",
+        Path(__file__).resolve().parents[1] / "authid.txt",
+    ]
+    for path in candidates:
+        if not path.is_file():
+            continue
+        lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if len(lines) >= 2:
+            return lines[0], lines[1]
+    return "", ""
+
+
 SCOPE = "openid email https://www.googleapis.com/auth/calendar.app.created"
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -116,7 +136,7 @@ def sign_in(client_id: str, client_secret: str, *, timeout: float = 180) -> dict
     client_id = client_id.strip()
     client_secret = client_secret.strip()
     if not client_id or not client_secret:
-        raise GoogleCalendarError("Paste the Google OAuth client ID and secret first.")
+        raise GoogleCalendarError("Google sign-in is not set up on this copy of WhiteBoard.")
     verifier = secrets.token_urlsafe(64)
     challenge = _code_challenge(verifier)
     state = secrets.token_urlsafe(24)
@@ -284,7 +304,7 @@ def _ensure_access(account: dict[str, Any], transport: Transport | None) -> dict
     if not account.get("refresh_token"):
         raise GoogleCalendarError("Sign in to Google in Settings.")
     if not account.get("client_id") or not account.get("client_secret"):
-        raise GoogleCalendarError("Paste the Google OAuth client ID and secret first.")
+        raise GoogleCalendarError("Google sign-in is not set up on this copy of WhiteBoard.")
     expires = float(account.get("expires_at") or 0)
     if account.get("access_token") and expires > time.time() + 60:
         return account

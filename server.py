@@ -120,6 +120,33 @@ def _sync_load_course_ids(settings: dict) -> None:
     )
 
 
+_UI_FONTS = {
+    "segoe",
+    "calibri",
+    "candara",
+    "constantia",
+    "cambria",
+    "georgia",
+    "verdana",
+    "trebuchet",
+    "arial",
+}
+
+
+def _ui_font(source: dict) -> str:
+    value = str(source.get("ui_font") or "segoe")
+    return value if value in _UI_FONTS else "segoe"
+
+
+def _google_client(body: dict) -> tuple[str, str]:
+    from app.google_calendar import builtin_google_client
+
+    client_id = str(body.get("client_id") or "").strip()
+    client_secret = str(body.get("client_secret") or "").strip()
+    builtin_id, builtin_secret = builtin_google_client()
+    return client_id or builtin_id, client_secret or builtin_secret
+
+
 def _settings_patch(settings: dict) -> dict:
     from present import _custom_filters, _history_mode, _inactivity_key
 
@@ -139,6 +166,7 @@ def _settings_patch(settings: dict) -> dict:
         "hide_calendar_events": bool(settings.get("hide_calendar_events")),
         "contents_view_mode": settings.get("contents_view_mode") or "tree",
         "google_sync_enabled": bool(settings.get("google_sync_enabled")),
+        "ui_font": _ui_font(settings),
     }
 
 
@@ -231,9 +259,10 @@ class Handler(BaseHTTPRequestHandler):
             )
         if "google_sync_enabled" in body:
             settings["google_sync_enabled"] = bool(body.get("google_sync_enabled"))
-        client_id = str(body.get("client_id") or "")
-        client_secret = str(body.get("client_secret") or "")
-        if client_id or client_secret:
+        if "ui_font" in body:
+            settings["ui_font"] = _ui_font(body)
+        client_id, client_secret = _google_client(body)
+        if body.get("client_id") or body.get("client_secret"):
             remember_client(client_id, client_secret)
         allowed = {name for name, _label, _color in DEADLINE_ROWS}
         if body.get("reset_deadline_colors"):
@@ -270,8 +299,7 @@ class Handler(BaseHTTPRequestHandler):
                 return _state()
             _google["busy"] = True
             _google["status"] = "Waiting for Google sign-in in your browser…"
-        client_id = str(body.get("client_id") or "")
-        client_secret = str(body.get("client_secret") or "")
+        client_id, client_secret = _google_client(body)
 
         def work() -> None:
             try:
@@ -299,8 +327,7 @@ class Handler(BaseHTTPRequestHandler):
                 return _state()
             _google["busy"] = True
             _google["status"] = "Updating Google Calendar…"
-        client_id = str(body.get("client_id") or "")
-        client_secret = str(body.get("client_secret") or "")
+        client_id, client_secret = _google_client(body)
 
         def work() -> None:
             try:
@@ -498,7 +525,10 @@ def _remember(settings: dict, name: str, items: list, *, add: bool) -> None:
         for item in items:
             if item.id in known:
                 continue
-            raw.append({"id": item.id, "course_id": item.course_id, "title": item.title})
+            row = {"id": item.id, "course_id": item.course_id, "title": item.title}
+            if name == "marked_submitted_assignments":
+                row["submitted_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+            raw.append(row)
             known.add(item.id)
     else:
         drop_ids = {item.id for item in items}

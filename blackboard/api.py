@@ -3281,6 +3281,7 @@ def _walk_contents(data: Any, parent_id: str = "") -> list[dict[str, Any]]:
 
 
 def _apply_launch_urls(snapshot: Snapshot, base_url: str) -> None:
+    link_deadlines_to_coursework(snapshot)
     for assignment in snapshot.assignments:
         assignment.blackboard_url = work_launch_url(
             base_url,
@@ -3332,34 +3333,104 @@ def _enrich_last_activity(snapshot: Snapshot) -> None:
             course.last_activity = max(times)
 
 
+def _coursework_title(title: str) -> bool:
+    """True when the name is schoolwork, even if it also says holiday or vacation."""
+    text = (title or "").lower()
+    if re.search(r"\bhw\b", text):
+        return True
+    return any(
+        word in text
+        for word in ("homework", "assignment", "quiz", "exam", "essay", "submission")
+    )
+
+
+def link_deadlines_to_coursework(snapshot: Snapshot) -> None:
+    """Turn a calendar row into an assignment when the course file is one."""
+    by_title: dict[tuple[str, str], ContentNode] = {}
+    for node in snapshot.content_nodes:
+        if getattr(node, "kind", "") == "folder":
+            continue
+        if _handler_kind(getattr(node, "handler", "")) not in {
+            "assignment",
+            "assessment",
+            "discussion",
+        }:
+            continue
+        by_title.setdefault((node.course_id, _norm_title(node.title)), node)
+    for deadline in snapshot.deadlines:
+        node = by_title.get((deadline.course_id, _norm_title(deadline.title)))
+        if node is not None:
+            handler_kind = _handler_kind(node.handler)
+            deadline.kind = "test" if handler_kind == "assessment" else "assignment"
+            deadline.content_id = deadline.content_id or node.id
+            deadline.content_handler = deadline.content_handler or node.handler
+            if node.open_url:
+                deadline.blackboard_url = node.open_url
+        elif deadline.kind == "other" and _coursework_title(deadline.title):
+            deadline.kind = "assignment"
+        if deadline.kind not in {"assignment", "test"}:
+            continue
+        deadline.assignment_id = deadline.assignment_id or deadline.id
+        existing = snapshot.assignment_by_id(deadline.assignment_id)
+        if existing is None:
+            snapshot.assignments.append(
+                Assignment(
+                    id=deadline.id,
+                    course_id=deadline.course_id,
+                    title=deadline.title,
+                    due_at=deadline.when,
+                    blackboard_url=deadline.blackboard_url,
+                    content_id=deadline.content_id,
+                    content_handler=deadline.content_handler,
+                )
+            )
+            continue
+        if deadline.content_id and not existing.content_id:
+            existing.content_id = deadline.content_id
+        if deadline.content_handler and not existing.content_handler:
+            existing.content_handler = deadline.content_handler
+        if deadline.blackboard_url and (
+            not existing.blackboard_url or "/ultra/courses/" in existing.blackboard_url
+        ):
+            existing.blackboard_url = deadline.blackboard_url
+
+
 def _deadline_kind(raw: dict[str, Any]) -> DeadlineKind:
     item_type = str(_pick(raw, "itemType", "type", "eventType") or "")
     handler = str(_pick(raw, "contentHandler") or "")
     title = str(_pick(raw, "title", "name", "subject") or "")
     type_key = item_type.lower().replace("_", "").replace(" ", "")
     text = f"{item_type} {handler} {title}".lower()
-    if type_key in {
-        "officehours",
-        "officehour",
-        "institution",
-        "institutional",
-        "personal",
-        "course",
-        "courseevent",
-        "event",
-        "calendarevent",
-        "schedule",
-        "courseschedule",
-        "classmeeting",
-        "announcement",
-        "ultraannouncement",
-    } or "event" in type_key or "schedule" in type_key:
-        return "other"
-    if any(word in text for word in ("office hour", "meeting", "holiday", "vacation")):
+    coursework = _coursework_title(title) or _handler_kind(handler) in {
+        "assignment",
+        "assessment",
+        "discussion",
+    }
+    if not coursework and (
+        type_key in {
+            "officehours",
+            "officehour",
+            "institution",
+            "institutional",
+            "personal",
+            "course",
+            "courseevent",
+            "event",
+            "calendarevent",
+            "schedule",
+            "courseschedule",
+            "classmeeting",
+            "announcement",
+            "ultraannouncement",
+        }
+        or "event" in type_key
+        or "schedule" in type_key
+        or any(word in text for word in ("office hour", "meeting", "holiday", "vacation"))
+    ):
         return "other"
     if any(word in text for word in ("test", "quiz", "exam", "assessment")):
         return "test"
-    if any(word in text for word in ("assign", "homework", "work", "due", "gradebook")):
+    if coursework or any(word in text for word in ("assign", "homework", "work", "due", "gradebook")):
         return "assignment"
     # Ultra due-date items are often unlabeled GradebookColumn / CalendarItem entries.
     return "assignment"

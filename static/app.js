@@ -34,6 +34,29 @@ let filterDialog = null;
 let contentIndex = null;
 let courseFilterCache = null;
 let manualMarks = new Set();
+let detailReturn = "";
+const UI_FONTS = {
+  segoe: '"Segoe UI", sans-serif',
+  calibri: "Calibri, sans-serif",
+  candara: "Candara, sans-serif",
+  constantia: "Constantia, serif",
+  cambria: "Cambria, serif",
+  georgia: "Georgia, serif",
+  verdana: "Verdana, sans-serif",
+  trebuchet: '"Trebuchet MS", sans-serif',
+  arial: "Arial, sans-serif",
+};
+const UI_FONT_LABELS = [
+  ["segoe", "Segoe UI"],
+  ["calibri", "Calibri"],
+  ["candara", "Candara"],
+  ["constantia", "Constantia"],
+  ["cambria", "Cambria"],
+  ["georgia", "Georgia"],
+  ["verdana", "Verdana"],
+  ["trebuchet", "Trebuchet MS"],
+  ["arial", "Arial"],
+];
 
 function api(path, body) {
   if (!window.chrome || !window.chrome.webview) {
@@ -106,7 +129,16 @@ async function boot() {
 }
 
 function go(path) {
+  if (topOf(route) === "/calendar" && String(path).startsWith("/assignments/")) {
+    detailReturn = "/calendar";
+  } else if (!String(path).startsWith("/assignments/")) {
+    detailReturn = "";
+  }
   location.hash = path;
+}
+
+function applyUiFont(id) {
+  document.body.style.fontFamily = UI_FONTS[id] || UI_FONTS.segoe;
 }
 
 const RIPPLE_HOST = ".assign, .card, .nav-btn, .outline-btn, .fill-btn, .text-btn, .course-link, .chip-btn, .event-chip, .folder > button";
@@ -591,6 +623,12 @@ function onChange(event) {
     paintPage();
     return;
   }
+  if (event.target.id === "ui-font") {
+    if (state) state.ui_font = event.target.value;
+    applyUiFont(event.target.value);
+    persistSettings({ ui_font: event.target.value });
+    return;
+  }
   if (event.target.id === "google-sync-enabled") {
     persistSettings({
       google_sync_enabled: event.target.checked,
@@ -743,6 +781,7 @@ async function refreshNow() {
 }
 
 function render() {
+  applyUiFont(state && state.ui_font);
   const app = document.getElementById("app");
   if (loading) {
     app.innerHTML = loadingView();
@@ -1109,7 +1148,7 @@ function homeView() {
   );
   const gradeItems = (state.home_grades || []).filter((grade) => inActiveFilter(grade.course_id));
   const due = dueItems.map(assignCard).join("") || `<p class="empty">No deadlines this week.</p>`;
-  const grades = gradeItems.map((grade) => `<div class="card row" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong>${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="empty">No new grades.</p>`;
+  const grades = gradeItems.map((grade) => `<div class="card row grade-card" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}" style="background:${grade.fill};border-color:${grade.ink}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong style="color:${grade.ink}">${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="empty">No new grades.</p>`;
   const banners = errorBanners();
   return `<h2>Home</h2><p class="muted">This week at a glance.</p>${banners}
     <h3>Upcoming this week</h3>${legend()}${due}
@@ -1373,11 +1412,12 @@ function assignmentFolders(mode) {
 function assignmentView(id) {
   const item = state.assignments.find((row) => row.id === id);
   if (!item) return `<h2>Assignment</h2><p class="muted">Not in the saved dashboard.</p>`;
-  return `<button class="text-btn" data-go="/assignments">Back</button>
+  const back = detailReturn || "/assignments";
+  const backLabel = back === "/calendar" ? "Back to calendar" : "Back";
+  return `<button class="text-btn" data-go="${back}">${backLabel}</button>
     <h2>${escapeHtml(item.title)}</h2>
-    ${assignCard(item)}
-    ${item.description ? `<div class="card"><p class="muted">Description</p><p>${escapeHtml(item.description)}</p></div>` : ""}
-    <button class="outline-btn" data-open="${escapeAttr(item.url)}" data-title="${escapeAttr(item.title)}" data-id="${escapeAttr(item.id)}">Open</button>`;
+    ${assignCard(item, true)}
+    ${item.description ? `<div class="card"><p class="muted">Description</p><p>${escapeHtml(item.description)}</p></div>` : ""}`;
 }
 
 function gradesView() {
@@ -2014,6 +2054,13 @@ function settingsView() {
       <p class="muted">${escapeHtml(state.fetched_at)}</p>
     </div>
     <p class="muted">This app is for your own account only. Course materials stay on Blackboard; do not republish them.</p>
+    <h2 style="font-size:20px">Font</h2>
+    <div class="card">
+      <p class="muted">The typeface used for the window. These are the readable faces already installed with Windows.</p>
+      <select id="ui-font">
+        ${UI_FONT_LABELS.map(([id, label]) => `<option value="${id}" ${id === (state.ui_font || "segoe") ? "selected" : ""}>${label}</option>`).join("")}
+      </select>
+    </div>
     <h2 style="font-size:20px">Lists</h2>
     <div class="card">
       <p class="muted">How many items to show at once on assignments, grades, the calendar, course pages, and Contents.</p>
@@ -2031,11 +2078,7 @@ function settingsView() {
     ${colorDialog ? colorModal() : ""}
     <h2 style="font-size:20px">Google Calendar</h2>
     <div class="card">
-      <p class="muted">Create a Desktop OAuth client in Google Cloud, enable the Google Calendar API, and paste the client ID and secret. Sign in once. After each refresh, WhiteBoard updates a calendar named WhiteBoard. Finished work is removed. Google has to be reachable from this computer.</p>
-      <label>OAuth client ID</label>
-      <input class="settings-input" id="google-client-id" type="text" value="${escapeAttr(googleDraft.client_id)}" />
-      <label>OAuth client secret</label>
-      <input class="settings-input" id="google-client-secret" type="password" value="${escapeAttr(googleDraft.client_secret)}" />
+      <p class="muted">Sign in once with the Google account that should hold the calendar. After each refresh, WhiteBoard updates a calendar named WhiteBoard. Finished work is removed. Google has to be reachable from this computer.</p>
       <label class="row"><input id="google-sync-enabled" type="checkbox" ${google.sync_enabled ? "checked" : ""}/> Update the WhiteBoard calendar after each refresh</label>
       <div class="row">
         <button class="fill-btn" id="google-signin" ${state.google_busy ? "disabled" : ""}>Sign in to Google</button>
@@ -2049,27 +2092,33 @@ function settingsView() {
 
 function assignCard(item, withActions) {
   const dest = item.assignment_id || item.id;
-  const submitted = item.status === "submitted";
+  const submitted = item.status === "submitted" || !!item.finished;
   const extra = [item.kind === "other" ? "event" : "", submitted || item.finished ? "dimmed" : ""].filter(Boolean).join(" ");
   const kind = item.kind || item.status || "";
   const background = submitted ? "#e2e8f0" : (item.kind === "other" ? "" : item.fill);
   const check = withActions && selectMode
     ? `<input class="assign-check" type="checkbox" data-assign-select="${escapeAttr(item.id)}" ${selectedAssignments.has(item.id) ? "checked" : ""} />`
     : "";
+  const open = item.url
+    ? actionButton(`data-open="${escapeAttr(item.url)}" data-title="${escapeAttr(item.title || "")}" data-id="${escapeAttr(item.id || "")}"`, "Open", "open")
+    : "";
   let actions = "";
   if (withActions && route === "/ignored") {
-    actions = actionButton(`data-assign-restore="${escapeAttr(item.id)}"`, "Restore", "restore");
+    actions = `${open}${actionButton(`data-assign-restore="${escapeAttr(item.id)}"`, "Restore", "restore")}`;
   } else if (withActions) {
     const mark = submitted
       ? (item.manual ? actionButton(`data-assign-undo="${escapeAttr(item.id)}"`, "Undo", "undo") : "")
       : actionButton(`data-assign-mark="${escapeAttr(item.id)}"`, "Mark submitted", "submitted", "mark-btn");
-    actions = `${mark}${actionButton(`data-assign-ignore="${escapeAttr(item.id)}"`, "Ignore", "ignore")}`;
+    actions = `${mark}${open}${actionButton(`data-assign-ignore="${escapeAttr(item.id)}"`, "Ignore", "ignore")}`;
   }
+  const timing = submitted
+    ? `<div class="countdown submitted" data-due="${item.ts || 0}" data-submitted="1" data-submitted-at="${item.submitted_ts || 0}">${escapeHtml(submittedTiming(item.ts || 0, item.submitted_ts || 0))}</div>`
+    : `<div class="countdown" data-due="${item.ts || 0}" style="color:${item.border}">${escapeHtml(item.countdown || formatCountdown(item.ts || 0))}</div>`;
   return `<article class="assign ${extra}" style="border-color:${submitted ? "#94a3b8" : item.border};background:${background}" data-go="/assignments/${encodeURIComponent(dest)}">
     ${check}
-    <div class="assign-main"><strong>${escapeHtml(item.title)}</strong><div class="muted">${escapeHtml(item.when || "")} · ${escapeHtml(item.course || "")}</div></div>
+    <div class="assign-main"><strong>${escapeHtml(item.title)}</strong><div class="assign-when">${escapeHtml(item.when || "")} · ${escapeHtml(item.course || "")}</div></div>
     <div class="assign-meta">
-      <div class="countdown" data-due="${item.ts || 0}" style="color:${submitted ? "#64748b" : item.border}">${escapeHtml(item.countdown || formatCountdown(item.ts || 0))}</div>
+      ${timing}
       <span class="chip ${kind}">${escapeHtml(kind)}</span>
       <div class="row">${actions}</div>
     </div>
@@ -2238,6 +2287,7 @@ function actionButton(attrs, label, icon, extraClass) {
 
 function actionIcon(name) {
   const icons = {
+    open: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 5H5v14h14v-3"/><path d="M11 13 19 5"/><path d="M13 5h6v6"/></svg>`,
     submitted: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8"/><path d="M8.5 12.2 11 14.7 15.8 9.5"/></svg>`,
     ignore: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5l18 14M10.5 10.7A3 3 0 0 0 13.3 13.5M9.9 6.1A10 10 0 0 1 12 5.8c5 0 8.5 4.2 9.4 5.4a1.3 1.3 0 0 1 0 1.6 12 12 0 0 1-3.2 3.1M6.2 8.3A12 12 0 0 0 2.6 12.8a1.3 1.3 0 0 0 0 1.6C3.5 15.6 7 19.8 12 19.8c1.2 0 2.3-.2 3.4-.6"/></svg>`,
     undo: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 7H4v4"/><path d="M5 10a7 7 0 1 1-1 4"/></svg>`,
@@ -2299,6 +2349,25 @@ function colorModal() {
   </div></div>`;
 }
 
+function submittedTiming(dueTs, submittedTs) {
+  const since = dueTs ? `${formatSpan(Math.abs(dueTs - Date.now() / 1000))} ${Date.now() / 1000 >= dueTs ? "since the deadline" : "until the deadline"}` : "";
+  let submitted = "Submitted";
+  if (submittedTs) {
+    submitted = `Submitted ${new Date(submittedTs * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
+  }
+  return since ? `${submitted}\n${since}` : submitted;
+}
+
+function formatSpan(seconds) {
+  seconds = Math.max(0, Math.trunc(seconds));
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  const clock = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  return days ? `${days}d ${clock}` : clock;
+}
+
 function formatCountdown(ts) {
   if (!ts) return "";
   let seconds = Math.trunc(ts - Date.now() / 1000);
@@ -2330,6 +2399,11 @@ function tickCountdowns() {
   nodes.forEach((node) => {
     const ts = Number(node.dataset.due || 0);
     if (!ts) return;
+    if (node.dataset.submitted === "1") {
+      const text = submittedTiming(ts, Number(node.dataset.submittedAt || 0));
+      if (node.textContent !== text) node.textContent = text;
+      return;
+    }
     const text = formatCountdown(ts);
     if (node.textContent !== text) node.textContent = text;
     const band = colorForDue(ts);

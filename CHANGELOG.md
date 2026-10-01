@@ -4,6 +4,32 @@ Summarized major changes for each WhiteBoard release, compared with the version 
 Write for someone using the app, not for developers. Every version needs the three
 headings below. Packaging and GitHub Releases copy this text.
 
+## [0.4.0] - 2026-10-01
+
+### Added features
+- The Assignments tab shows a red badge with how many items are still to do. The number can grow to four digits without pushing the other tabs aside.
+- You can leave old assignments off the lists: skip work due more than a week, a month, three months, six months, or a year ago, or before a date you choose. The next refresh does not load those old items.
+- Assignments has **Mark late as submitted**. It asks you to confirm, then marks every overdue assignment that is still to do.
+- Contents can search for a folder name, a file name, or a file extension.
+- The calendar list and the assignment list put the soonest due date first.
+- **Open** on an assignment, discussion, or file opens that Blackboard page in a WhiteBoard window with tabs.
+- The Windows setup asks whether to add a Desktop shortcut and a Windows Search shortcut. You can turn either one off.
+- Settings lets you choose how many rows appear on one page, change deadline and course colors, and send deadlines to a Google calendar named WhiteBoard.
+- While signing in or refreshing, the loading screen shows how many courses, folders, and files it has read, and the latest item.
+
+### Bugfixes
+- Opening an assignment stays on that assignment. It no longer drops you on the Blackboard home page.
+- Marking an assignment submitted stays marked after you filter that course out and turn the filter back on.
+- Course filters and the main list buttons respond again.
+- Home and the course filters use less of the computer while you are looking at them.
+
+### Other changes
+- There is no separate Submitted tab. Submitted work is a foldable group on Assignments.
+- The app opens on the sign-in page. It does not reopen a dashboard saved by the previous WhiteBoard.
+- Your courses are stored in `%USERPROFILE%\.whiteboard_slim`. The previous app’s files are left where they were.
+- Microsoft Edge is required. You do not need a separate Chrome install.
+- The Windows download is named `WhiteBoard-<version>-Setup.exe`.
+
 ## [0.3.0] - 2026-09-11
 
 ### Added features

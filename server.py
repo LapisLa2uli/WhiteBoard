@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import sys
 import threading
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import data
 
@@ -155,8 +156,7 @@ class Handler(BaseHTTPRequestHandler):
             logo = STATIC / "logo.png"
             self._file(logo if logo.is_file() else ASSETS / "logo.png")
             return
-        rel = parsed.path.lstrip("/") or "index.html"
-        self._file(STATIC / rel)
+        self._file(STATIC / _leaf_name(unquote(parsed.path), "index.html"))
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -332,15 +332,12 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _file(self, path: Path) -> None:
-        resolved = path.resolve()
-        allowed_roots = (STATIC.resolve(), ASSETS.resolve())
-        if not path.is_file() or not any(
-            resolved == root or root in resolved.parents for root in allowed_roots
-        ):
+        resolved = _inside(path, STATIC, ASSETS)
+        if resolved is None or not resolved.is_file():
             self.send_error(404)
             return
-        data = path.read_bytes()
-        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        data = resolved.read_bytes()
+        mime = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
         self.send_response(200)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(data)))
@@ -641,9 +638,12 @@ def _download_files(body: dict) -> dict:
     total = len(files)
     try:
         for index, node in enumerate(files):
-            name = _safe_name(node.display_name())
+            name = _leaf_name(_safe_name(node.display_name()), "download")
             _download_progress(name, index / total)
-            dest = _unique_path(folder / name)
+            dest = _inside(_unique_path(folder / name), folder)
+            if dest is None:
+                errors.append(f"{name}: invalid file name")
+                continue
             try:
                 dest.write_bytes(session.get_bytes(node.download_path or node.open_url))
                 saved += 1
@@ -676,6 +676,29 @@ def _download_progress(name: str, percent: float, *, done: bool = False) -> None
             }
         )
     )
+
+
+def _leaf_name(raw: str, default: str) -> str:
+    """File name only. Directory parts from a request cannot choose another folder."""
+    name = os.path.basename((raw or "").replace("\\", "/")).strip()
+    if not name or name in {".", ".."} or "\x00" in name:
+        return default
+    return name
+
+
+def _inside(path: Path, *roots: Path) -> Path | None:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    for root in roots:
+        try:
+            base = root.resolve()
+        except OSError:
+            continue
+        if resolved == base or base in resolved.parents:
+            return resolved
+    return None
 
 
 def _safe_name(name: str) -> str:

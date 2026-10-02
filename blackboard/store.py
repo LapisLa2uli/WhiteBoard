@@ -101,7 +101,6 @@ def load_settings() -> dict:
         "deadline_colors": {},
         "course_colors": {},
         "google_sync_enabled": False,
-        "ui_font": "segoe",
     }
     if not SETTINGS_PATH.exists():
         return dict(defaults)
@@ -140,11 +139,6 @@ def load_settings() -> dict:
         )
         merged["course_colors"] = _clean_color_map(merged.get("course_colors"))
         merged["google_sync_enabled"] = bool(merged.get("google_sync_enabled"))
-        font = str(merged.get("ui_font") or "segoe")
-        merged["ui_font"] = font if font in {
-            "segoe", "calibri", "candara", "constantia", "cambria",
-            "georgia", "verdana", "trebuchet", "arial",
-        } else "segoe"
         mode = str(merged.get("contents_view_mode") or "tree")
         merged["contents_view_mode"] = mode if mode in {"tree", "folder", "columns"} else "tree"
         merged["username"] = str(merged.get("username") or "")
@@ -206,7 +200,6 @@ def save_settings(settings: dict) -> None:
         ),
         "course_colors": _clean_color_map(settings.get("course_colors")),
         "google_sync_enabled": bool(settings.get("google_sync_enabled")),
-        "ui_font": str(settings.get("ui_font") or "segoe"),
     }
     SETTINGS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 

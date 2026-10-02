@@ -155,10 +155,8 @@ h3 { margin: 18px 0 8px; font-size: 16px; }
 }
 .assign {
   border-width: 4px; cursor: pointer;
-  display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
 }
-.assign-main strong { display: block; font-size: 18px; line-height: 1.25; }
-.assign-when { margin-top: 2px; font-size: 15px; line-height: 1.3; color: var(--muted); }
 .assign.dimmed { border-color: #94a3b8; background: #e2e8f0; color: #64748b; }
 .assign.dimmed strong, .assign.dimmed .countdown { color: #64748b; }
 .assign-check { margin-top: 4px; flex: 0 0 auto; }
@@ -170,11 +168,9 @@ h3 { margin: 18px 0 8px; font-size: 16px; }
 .assign.event { background: var(--event-bg); border-color: var(--event); border-width: 3px; }
 .assign-main { min-width: 0; flex: 1; }
 .assign-meta {
-  display: flex; flex-direction: row; align-items: center; justify-content: flex-end;
-  gap: 8px; width: 100%; text-align: right; flex-wrap: wrap;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+  text-align: right; flex: 0 0 auto;
 }
-.countdown.submitted { white-space: pre-line; color: #64748b; line-height: 1.35; }
-.grade-card { border-width: 4px; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .chip {
   font-size: 11px; font-weight: 600; border-radius: 999px; padding: 4px 8px;

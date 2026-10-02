@@ -134,34 +134,10 @@ def _item_flagged(item, keys: set[str]) -> bool:
     return bool(item.id and item.id in keys) or token in keys
 
 
-def _submitted_ts(settings: dict, item) -> int:
-    token = f"{item.course_id}::{(item.title or '').strip().lower()}"
-    for row in settings.get("marked_submitted_assignments") or []:
-        if not isinstance(row, dict):
-            continue
-        row_token = f"{row.get('course_id') or ''}::{str(row.get('title') or '').strip().lower()}"
-        if str(row.get("id") or "") != item.id and row_token != token:
-            continue
-        raw = str(row.get("submitted_at") or "")
-        if not raw:
-            return 0
-        try:
-            parsed = datetime.fromisoformat(raw)
-        except ValueError:
-            return 0
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
-        return int(parsed.timestamp())
-    return 0
-
-
 def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") -> dict:
     settings = load_settings()
     apply_palette(settings)
     snapshot = snapshot or load_snapshot()
-    from blackboard.api import link_deadlines_to_coursework
-
-    link_deadlines_to_coursework(snapshot)
     courses = [
         {
             "id": course.id,
@@ -236,7 +212,6 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
                 "ts": int(due_local.timestamp()) if due_local else 0,
                 "url": item.blackboard_url,
                 "handler": item.content_handler,
-                "submitted_ts": _submitted_ts(settings, item),
             }
         )
 
@@ -345,7 +320,6 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
         "fetched_at": format_dt(snapshot.fetched_at) if snapshot.fetched_at else "Not yet refreshed",
         "has_snapshot": bool(snapshot.courses or snapshot.assignments),
         "page_size": int(settings.get("list_page_size") or 10),
-        "ui_font": str(settings.get("ui_font") or "segoe"),
         "hide_calendar_events": bool(settings.get("hide_calendar_events")),
         "contents_view_mode": settings.get("contents_view_mode") or "tree",
         "inactivity": _inactivity_key(settings),
@@ -376,6 +350,8 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
         "content_count": len(content_nodes),
         "files_indexed": bool(snapshot.files_indexed),
         "google": {
+            "client_id": str(account.get("client_id") or ""),
+            "client_secret": str(account.get("client_secret") or ""),
             "signed_in": bool(account.get("refresh_token")),
             "email": str(account.get("email") or ""),
             "sync_enabled": bool(settings.get("google_sync_enabled")),

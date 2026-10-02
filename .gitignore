@@ -1,7 +1,6 @@
 # Secrets and local credentials
 credentials.txt
 credentials*.txt
-authid.txt
 .env
 .env.*
 !.env.example

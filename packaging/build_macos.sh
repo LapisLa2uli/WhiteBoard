@@ -49,9 +49,14 @@ echo "  python:    $PYTHON ($("$PYTHON" -V 2>&1))"
 # renamed to .icns does not. AppKit sniffs the PNG header, so the Dock icon
 # works at runtime, but Finder and LaunchServices go through IconServices, which
 # requires the real format and otherwise shows a blank page.
-ICON_SOURCE="$ROOT/assets/logo-macOS.png"
+#
+# The source PNG is a build input and lives in dist/, which is git-ignored, so
+# the repository carries the design files rather than every render of them.
+ICON_SOURCE="$DIST/logo-macOS.png"
 if [[ ! -f "$ICON_SOURCE" ]]; then
-  echo "assets/logo-macOS.png is missing; there is no icon to build." >&2
+  echo "The icon source is missing." >&2
+  echo "Put a 1024x1024 PNG at:" >&2
+  echo "  $ICON_SOURCE" >&2
   exit 1
 fi
 WORK="$(mktemp -d)"
@@ -66,7 +71,7 @@ for spec in "16:icon_16x16" "32:icon_16x16@2x" "32:icon_32x32" "64:icon_32x32@2x
   sips -s format png -z "$px" "$px" "$ICON_SOURCE" --out "$ICONSET/$name.png" >/dev/null 2>&1
 done
 if [[ ! -f "$ICONSET/icon_512x512@2x.png" ]]; then
-  echo "Could not resize assets/logo-macOS.png into an iconset." >&2
+  echo "Could not resize $ICON_SOURCE into an iconset." >&2
   exit 1
 fi
 ICNS="$WORK/AppIcon.icns"

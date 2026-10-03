@@ -6,12 +6,10 @@
 # an enclosing bundle, and NSBundle does not walk up out of a subdirectory. That
 # is the whole reason the host lives inside a bundle rather than beside one.
 #
-# Needs a Python with PyInstaller and pyobjc:
-#   python3.12 -m pip install pyinstaller \
+# Needs PyInstaller and pyobjc:
+#   .venv/bin/python -m pip install pyinstaller \
 #       pyobjc-core pyobjc-framework-Cocoa pyobjc-framework-WebKit
 # Point at a different interpreter with PYTHON=/path/to/python
-#
-# Usage: packaging/build_macos.sh [output-dir]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
@@ -22,16 +20,12 @@ VERSION="${WHITEBOARD_VERSION:-0.4.0}"
 DIST="${1:-$ROOT/dist}"
 APP="$DIST/$APP_NAME.app"
 
-PYTHON="${PYTHON:-}"
-if [[ -z "$PYTHON" ]]; then
-  if [[ -x "$ROOT/.venv-build/bin/python" ]]; then
-    PYTHON="$ROOT/.venv-build/bin/python"
-  else
-    PYTHON="$(command -v python3.12 || command -v python3 || true)"
-  fi
+PYTHON="${PYTHON:-$ROOT/.venv/bin/python}"
+if [[ ! -x "$PYTHON" ]]; then
+  PYTHON="$(command -v python3.12 || command -v python3 || true)"
 fi
-if [[ -z "$PYTHON" ]]; then
-  echo "No Python found. Set PYTHON=/path/to/python" >&2
+if [[ -z "$PYTHON" || ! -x "$PYTHON" ]]; then
+  echo "No Python found. Create .venv, or set PYTHON=/path/to/python" >&2
   exit 1
 fi
 if ! "$PYTHON" -c "import PyInstaller" 2>/dev/null; then

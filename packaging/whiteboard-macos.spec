@@ -20,9 +20,14 @@ ROOT = Path(SPECPATH).resolve().parent
 # invoking this spec, and points the path here.
 ICNS = os.environ.get("WHITEBOARD_ICNS", "")
 
+# Only what the app reads at runtime goes in the bundle. assets/ also holds the
+# DMG canvas template, its background, the 1024px PNG the icon is built from,
+# and the Icon Composer source: roughly 7.9 MB of build input that would
+# otherwise ship to every user.
 datas = [
     (str(ROOT / "static"), "static"),
-    (str(ROOT / "assets"), "assets"),
+    # Fallback for the static file server's /logo route.
+    (str(ROOT / "assets" / "logo.png"), "assets/logo.png"),
 ]
 if ICNS:
     datas.append((ICNS, "assets"))

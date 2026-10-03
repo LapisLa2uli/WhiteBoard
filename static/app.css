@@ -155,8 +155,12 @@ h3 { margin: 18px 0 8px; font-size: 16px; }
 }
 .assign {
   border-width: 4px; cursor: pointer;
-  display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+  padding: 12px 16px;
 }
+.assign-copy { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.assign-main strong { display: block; font-size: 18px; line-height: 1.2; }
+.assign-when { margin-top: 2px; font-size: 15px; line-height: 1.25; color: var(--muted); }
 .assign.dimmed { border-color: #94a3b8; background: #e2e8f0; color: #64748b; }
 .assign.dimmed strong, .assign.dimmed .countdown { color: #64748b; }
 .assign-check { margin-top: 4px; flex: 0 0 auto; }
@@ -168,9 +172,10 @@ h3 { margin: 18px 0 8px; font-size: 16px; }
 .assign.event { background: var(--event-bg); border-color: var(--event); border-width: 3px; }
 .assign-main { min-width: 0; flex: 1; }
 .assign-meta {
-  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
-  text-align: right; flex: 0 0 auto;
+  display: flex; flex-direction: row; align-items: center; justify-content: flex-end;
+  gap: 8px; width: 100%; text-align: right; flex-wrap: wrap;
 }
+.grade-card { border-width: 4px; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .chip {
   font-size: 11px; font-weight: 600; border-radius: 999px; padding: 4px 8px;
@@ -179,6 +184,7 @@ h3 { margin: 18px 0 8px; font-size: 16px; }
 .chip.other { background: var(--event-bg); color: var(--event); }
 .chip.late, .chip.test { background: #ffedd5; color: var(--warn); }
 .countdown { font-family: Consolas, monospace; font-weight: 700; font-size: 13px; white-space: nowrap; }
+.countdown.submitted { white-space: pre-line; color: #64748b; line-height: 1.35; font-family: inherit; font-weight: 600; }
 .legend { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--muted); }
 .swatch { width: 14px; height: 14px; border-radius: 4px; border: 4px solid; background: white; }
 .search {
@@ -291,6 +297,23 @@ input[type="password"], input[type="text"], textarea {
   font-weight: 600; color: var(--muted); padding: 8px;
   margin-bottom: 0;
 }
+.file-header button {
+  border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600;
+  text-align: left; cursor: pointer; padding: 0;
+}
+.file-icon.type-ppt { color: #dc2626; }
+.file-icon.type-pdf { color: #ea580c; }
+.file-icon.type-word { color: #2563eb; }
+.file-icon.type-excel { color: #16a34a; }
+.file-icon.type-audio { color: #d8b4fe; }
+.file-icon.type-video { color: #6d28d9; }
+.file-icon.type-other { color: #64748b; }
+#contents-marquee {
+  position: fixed; z-index: 40; pointer-events: none;
+  border: 1px solid #2563eb; background: rgba(37, 99, 235, 0.15);
+}
+.download-row { margin-top: 8px; }
+.download-row .zip-label { font-size: 13px; margin-bottom: 4px; }
 .file-row { cursor: default; }
 .file-row.alt { background: #f8fafc; }
 .file-row.selected { background: #eff6ff; }

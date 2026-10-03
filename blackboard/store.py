@@ -79,6 +79,32 @@ class Store:
         self.signed_in = False
 
 
+_UI_FONTS = {
+    "segoe",
+    "calibri",
+    "candara",
+    "constantia",
+    "cambria",
+    "georgia",
+    "verdana",
+    "trebuchet",
+    "arial",
+}
+
+
+def _ui_font(value: object) -> str:
+    font = str(value or "segoe")
+    return font if font in _UI_FONTS else "segoe"
+
+
+_PAGE_OPENERS = {"builtin", "edge", "chrome"}
+
+
+def _page_opener(value: object) -> str:
+    choice = str(value or "builtin")
+    return choice if choice in _PAGE_OPENERS else "builtin"
+
+
 def load_settings() -> dict:
     defaults = {
         "base_url": "https://shs.blackboardchina.cn",
@@ -101,6 +127,8 @@ def load_settings() -> dict:
         "deadline_colors": {},
         "course_colors": {},
         "google_sync_enabled": False,
+        "ui_font": "segoe",
+        "page_opener": "builtin",
     }
     if not SETTINGS_PATH.exists():
         return dict(defaults)
@@ -139,6 +167,8 @@ def load_settings() -> dict:
         )
         merged["course_colors"] = _clean_color_map(merged.get("course_colors"))
         merged["google_sync_enabled"] = bool(merged.get("google_sync_enabled"))
+        merged["ui_font"] = _ui_font(merged.get("ui_font"))
+        merged["page_opener"] = _page_opener(merged.get("page_opener"))
         mode = str(merged.get("contents_view_mode") or "tree")
         merged["contents_view_mode"] = mode if mode in {"tree", "folder", "columns"} else "tree"
         merged["username"] = str(merged.get("username") or "")
@@ -200,6 +230,8 @@ def save_settings(settings: dict) -> None:
         ),
         "course_colors": _clean_color_map(settings.get("course_colors")),
         "google_sync_enabled": bool(settings.get("google_sync_enabled")),
+        "ui_font": _ui_font(settings.get("ui_font")),
+        "page_opener": _page_opener(settings.get("page_opener")),
     }
     SETTINGS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -134,10 +135,34 @@ def _item_flagged(item, keys: set[str]) -> bool:
     return bool(item.id and item.id in keys) or token in keys
 
 
+def _submitted_ts(settings: dict, item) -> int:
+    token = f"{item.course_id}::{(item.title or '').strip().lower()}"
+    for row in settings.get("marked_submitted_assignments") or []:
+        if not isinstance(row, dict):
+            continue
+        row_token = f"{row.get('course_id') or ''}::{str(row.get('title') or '').strip().lower()}"
+        if str(row.get("id") or "") != item.id and row_token != token:
+            continue
+        raw = str(row.get("submitted_at") or "")
+        if not raw:
+            return 0
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return 0
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
+        return int(parsed.timestamp())
+    return 0
+
+
 def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") -> dict:
     settings = load_settings()
     apply_palette(settings)
     snapshot = snapshot or load_snapshot()
+    from blackboard.api import hide_event_only_calendar_items
+
+    hide_event_only_calendar_items(snapshot)
     courses = [
         {
             "id": course.id,
@@ -212,6 +237,7 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
                 "ts": int(due_local.timestamp()) if due_local else 0,
                 "url": item.blackboard_url,
                 "handler": item.content_handler,
+                "submitted_ts": _submitted_ts(settings, item) if status == "submitted" else 0,
             }
         )
 
@@ -304,12 +330,13 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
                 "id": node.id,
                 "course_id": node.course_id,
                 "parent_id": node.parent_id or "",
-                "name": node.display_name(),
+                "name": html.unescape(node.display_name()),
                 "kind": node.kind,
                 "extension": node.extension,
                 "size": node.size_bytes,
                 "size_label": "—" if node.kind == "folder" else format_size(node.size_bytes),
                 "date": format_dt(stamp, with_time=False) if stamp else "—",
+                "date_ts": int(_as_utc(stamp).timestamp()) if stamp else 0,
                 "url": node.open_url,
             }
         )
@@ -320,6 +347,8 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
         "fetched_at": format_dt(snapshot.fetched_at) if snapshot.fetched_at else "Not yet refreshed",
         "has_snapshot": bool(snapshot.courses or snapshot.assignments),
         "page_size": int(settings.get("list_page_size") or 10),
+        "ui_font": str(settings.get("ui_font") or "segoe"),
+        "page_opener": str(settings.get("page_opener") or "builtin"),
         "hide_calendar_events": bool(settings.get("hide_calendar_events")),
         "contents_view_mode": settings.get("contents_view_mode") or "tree",
         "inactivity": _inactivity_key(settings),

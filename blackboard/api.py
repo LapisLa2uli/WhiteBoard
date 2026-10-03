@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from html import unescape
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable, Literal
 
-from urllib.parse import parse_qs, quote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 from blackboard.auth import (
     ApiRequestError,
@@ -1324,6 +1325,8 @@ def _handler_kind(handler: str) -> str:
         return "folder"
     if "x-bb-file" in text or text.endswith("/file") or text.endswith(".file"):
         return "file"
+    if any(word in text for word in ("x-bb-audio", "x-bb-video", "x-bb-image")):
+        return "file"
     if "x-bb-document" in text or "document" in text:
         return "document"
     if any(word in text for word in ("externallink", "blti", "lti", "weblink")):
@@ -1463,17 +1466,18 @@ def _calendar_content_id(raw: dict[str, Any]) -> str:
 
 
 def _calendar_handler(raw: dict[str, Any], title: str) -> str:
-    text = " ".join(
-        [
-            str(_pick(raw, "itemType", "type", "eventType", "contentHandler") or ""),
-            title,
-        ]
-    )
-    kind = _handler_kind(text) or _guess_work_kind(title, str(_pick(raw, "contentHandler") or ""))
+    """Use Blackboard's own tool type. A title like "Final Exam Review" is not one."""
+    del title
+    handler = raw.get("contentHandler")
+    if isinstance(handler, dict):
+        handler = _pick(handler, "id", "name")
+    kind = _handler_kind(str(handler or ""))
     if kind == "discussion":
         return "resource/x-bb-forumlink"
     if kind == "assessment":
         return "resource/x-bb-asmt-test-link"
+    if kind == "assignment":
+        return "resource/x-bb-assignment"
     return ""
 
 
@@ -2337,18 +2341,9 @@ def _enrich_attachments_parallel(
 ) -> None:
     candidates: list[tuple[str, ContentNode]] = []
     for course_id, nodes in groups:
-        chosen = [
-            node
-            for node in nodes
-            if node.id
-            and node.kind != "folder"
-            and (
-                node.kind == "file"
-                or "file" in (node.handler or "").lower()
-                or "document" in (node.handler or "").lower()
-            )
-        ][:80]
-        candidates.extend((course_id, node) for node in chosen)
+        candidates.extend(
+            (course_id, node) for node in _attachment_candidates(nodes)
+        )
     fetched: dict[tuple[str, str], list[dict[str, Any]]] = {}
     pending = list(candidates)
     for template in COURSE_ATTACHMENT_PATHS:
@@ -2386,6 +2381,7 @@ def _enrich_attachments_parallel(
         by_course.setdefault(course_id, {})[node_id] = attachments
     for course_id, nodes in groups:
         _apply_fetched_attachments(nodes, by_course.get(course_id) or {}, course_id, base_url)
+    _load_embedded_media(session, groups, base_url)
 
 
 def _merge_parallel_html(
@@ -2712,6 +2708,7 @@ def content_nodes_from_items(
         node = _node_from_content_item(item, course_id, base_url)
         if node.id or node.title:
             nodes.append(node)
+            nodes.extend(_nodes_from_embedded(node, item.get("body"), course_id, base_url))
     return nodes
 
 
@@ -2804,6 +2801,9 @@ def _extension_of(name: str, mime: str = "") -> str:
         "jpg": "jpg",
         "gif": "gif",
         "mp4": "mp4",
+        "mpeg": "mp3",
+        "mp3": "mp3",
+        "audio": "mp3",
         "plain": "txt",
     }
     for needle, ext in mapping.items():
@@ -2812,26 +2812,341 @@ def _extension_of(name: str, mime: str = "") -> str:
     return ""
 
 
+_EMBED_EXTENSIONS = frozenset(
+    {
+        "mp3",
+        "m4a",
+        "wav",
+        "aac",
+        "ogg",
+        "wma",
+        "flac",
+        "mp4",
+        "m4v",
+        "mov",
+        "webm",
+        "avi",
+        "pdf",
+        "doc",
+        "docx",
+        "ppt",
+        "pptx",
+        "xls",
+        "xlsx",
+        "csv",
+        "txt",
+        "png",
+        "jpg",
+        "jpeg",
+        "gif",
+        "webp",
+        "bmp",
+        "zip",
+    }
+)
+_ATTR_RE = re.compile(
+    r"""([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))"""
+)
+_ANCHOR_RE = re.compile(r"<a\b([^>]*)>(.*?)</a>", re.IGNORECASE | re.DOTALL)
+_MEDIA_TAG_RE = re.compile(
+    r"<(embed|audio|video|source|object|img)\b([^>]*)/?>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _tag_attrs(blob: str) -> dict[str, str]:
+    attrs: dict[str, str] = {}
+    for match in _ATTR_RE.finditer(blob or ""):
+        key = match.group(1).lower()
+        value = next((group for group in match.groups()[1:] if group is not None), "")
+        attrs[key] = unescape(value).strip()
+    return attrs
+
+
+def _body_html(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get("rawText") or value.get("displayText") or value.get("text") or ""
+    return unescape(str(value or ""))
+
+
+def _extension_from_mime(mime: str) -> str:
+    text = (mime or "").lower()
+    if "mp3" in text or "mpeg" in text:
+        return "mp3"
+    if "wav" in text:
+        return "wav"
+    if "mp4" in text or "m4v" in text:
+        return "mp4"
+    if "pdf" in text:
+        return "pdf"
+    if "png" in text:
+        return "png"
+    if "jpeg" in text or "jpg" in text:
+        return "jpg"
+    if "gif" in text:
+        return "gif"
+    if text.startswith("audio/"):
+        return "mp3"
+    if text.startswith("video/"):
+        return "mp4"
+    if text.startswith("image/"):
+        return "png"
+    return ""
+
+
+def _name_extension(name: str) -> str:
+    leaf = unquote((name or "").split("?", 1)[0].split("#", 1)[0].rsplit("/", 1)[-1]).strip()
+    if "." not in leaf:
+        return ""
+    ext = leaf.rsplit(".", 1)[-1].lower()
+    return ext if ext in _EMBED_EXTENSIONS else ""
+
+
+def _stable_file_url(url: str) -> str:
+    """Blackboard file path without the expiring download token."""
+    raw = unescape((url or "").strip())
+    if not raw or raw.startswith(("javascript:", "mailto:", "data:", "#")):
+        return ""
+    marker = "@x@embeddedfile.requesturlstub@x@"
+    lowered = raw.lower()
+    index = lowered.find(marker)
+    if index >= 0:
+        raw = "/" + raw[index + len(marker) :].lstrip("/")
+    path = urlparse(raw).path or ""
+    if "bbcswebdav" in path.lower() or "bbcswebdav" in raw.lower():
+        return path or raw.split("?", 1)[0]
+    if "/attachments/" in path.lower() and path.rstrip("/").lower().endswith("/download"):
+        return path
+    return ""
+
+
+def embedded_files_in_html(html: str) -> list[tuple[str, str, str, str]]:
+    """Files embedded in an item body: url, name, extension, mime.
+
+    Classic audio items point at ``/bbcswebdav/.../xid-...`` with no file
+    extension. The download name lives in the link text, and ``TYPE`` on the
+    ``<EMBED>`` tag.
+    """
+    page = _body_html(html)
+    found: dict[str, tuple[str, str, str, str]] = {}
+
+    def consider(url: str, name: str, mime: str, *, prefer_name: bool, default_ext: str = "") -> None:
+        clean = _stable_file_url(url)
+        if not clean:
+            return
+        label = " ".join((name or "").split())
+        ext = _name_extension(label) or _name_extension(clean) or _extension_from_mime(mime) or default_ext
+        if not _name_extension(label):
+            label = ""
+        current = found.get(clean)
+        if current and not prefer_name:
+            url0, name0, ext0, mime0 = current
+            found[clean] = (url0, name0, ext0 or ext, mime0 or mime)
+            return
+        if current and prefer_name and not label:
+            return
+        if not label:
+            label = f"file.{ext}" if ext else "file"
+        found[clean] = (clean, label, ext, mime or "")
+
+    for match in _MEDIA_TAG_RE.finditer(page):
+        attrs = _tag_attrs(match.group(2))
+        src = attrs.get("src") or attrs.get("data") or ""
+        if not src:
+            continue
+        default = "png" if match.group(1).lower() == "img" else ""
+        consider(src, attrs.get("alt") or "", attrs.get("type") or "", prefer_name=False, default_ext=default)
+    for match in _ANCHOR_RE.finditer(page):
+        attrs = _tag_attrs(match.group(1))
+        href = attrs.get("href") or ""
+        text = " ".join(unescape(re.sub(r"<[^>]+>", " ", match.group(2))).split())
+        consider(href, text, "", prefer_name=True)
+    return list(found.values())
+
+
+def _body_is_only_the_file(html: str, filename: str) -> bool:
+    text = " ".join(unescape(re.sub(r"<[^>]+>", " ", _body_html(html))).split()).lower()
+    for piece in (filename, "download audio file", "download video file", "download file", "download"):
+        if piece:
+            text = text.replace(piece.lower(), " ")
+    return len(" ".join(text.split())) <= 40
+
+
+def _is_work_handler(handler: str) -> bool:
+    text = (handler or "").lower()
+    return any(
+        token in text
+        for token in (
+            "assignment",
+            "assessment",
+            "discussion",
+            "forum",
+            "blti",
+            "externallink",
+            "courselink",
+            "asmt",
+        )
+    )
+
+
+def _apply_embedded_file(
+    node: ContentNode, file_info: tuple[str, str, str, str], base_url: str
+) -> None:
+    url, _name, ext, mime = file_info
+    node.kind = "file"
+    node.extension = ext or node.extension
+    node.mime = mime or node.mime
+    node.download_path = url
+    node.open_url = resolve_url(base_url, url)
+    if node.handler:
+        return
+    if (mime or "").startswith("video/") or ext in {"mp4", "m4v", "mov", "webm", "avi"}:
+        node.handler = "resource/x-bb-video"
+    elif (mime or "").startswith("audio/") or ext in {"mp3", "m4a", "wav", "aac", "ogg", "wma", "flac"}:
+        node.handler = "resource/x-bb-audio"
+
+
+def _embedded_sibling(
+    node: ContentNode,
+    file_info: tuple[str, str, str, str],
+    course_id: str,
+    base_url: str,
+    index: int,
+    parent_id: str,
+) -> ContentNode:
+    url, name, ext, mime = file_info
+    title = name or node.title or "File"
+    return ContentNode(
+        id=f"{node.id}:file:{index}",
+        course_id=course_id or node.course_id,
+        parent_id=parent_id,
+        title=title,
+        filename=title,
+        kind="file",
+        handler="",
+        mime=mime,
+        extension=ext,
+        size_bytes=0,
+        modified_at=node.modified_at,
+        created_at=node.created_at,
+        open_url=resolve_url(base_url, url),
+        download_path=url,
+    )
+
+
+def _nodes_from_embedded(
+    node: ContentNode, body: Any, course_id: str, base_url: str
+) -> list[ContentNode]:
+    files = embedded_files_in_html(_body_html(body))
+    if not files:
+        return []
+    media_only = (
+        node.kind != "folder"
+        and len(files) == 1
+        and not _is_work_handler(node.handler)
+        and _body_is_only_the_file(_body_html(body), files[0][1])
+    )
+    if media_only:
+        _apply_embedded_file(node, files[0], base_url)
+        return []
+    parent_id = node.id if node.kind == "folder" else (node.parent_id or "")
+    return [
+        _embedded_sibling(node, info, course_id, base_url, index, parent_id)
+        for index, info in enumerate(files)
+    ]
+
+
+def embedded_download_nodes(
+    session: BlackboardSession, nodes: list[ContentNode], base_url: str
+) -> list[ContentNode]:
+    """Turn embedded-audio items and body file links into downloadable files."""
+    pending = [
+        node
+        for node in nodes
+        if node.id and node.course_id and not node.download_path and node.kind != "folder"
+    ]
+    if not pending:
+        return []
+    paths = [
+        f"/learn/api/public/v1/courses/{quote(node.course_id, safe='')}/contents/{quote(node.id, safe='')}"
+        for node in pending
+    ]
+    rows = _json_rows_for(session, paths)
+    found: list[ContentNode] = []
+    seen: set[str] = set()
+    for node, row in zip(pending, rows):
+        data = row.get("data") if _json_ok(row) and isinstance(row.get("data"), dict) else None
+        if not isinstance(data, dict):
+            continue
+        if not node.handler:
+            node.handler = _content_handler_id(data)
+        extras = _nodes_from_embedded(node, data.get("body"), node.course_id, base_url)
+        chosen = ([node] if node.download_path else []) + extras
+        for item in chosen:
+            key = item.download_path or item.id
+            if not item.download_path or key in seen:
+                continue
+            seen.add(key)
+            found.append(item)
+    return found
+
+
+def _attachment_candidates(nodes: list[ContentNode]) -> list[ContentNode]:
+    """Items that may still hide a file behind the attachments API."""
+    primary = []
+    embedded = []
+    for node in nodes:
+        if not node.id or node.kind == "folder" or node.download_path:
+            continue
+        handler = (node.handler or "").lower()
+        if node.kind == "file" or "file" in handler or "document" in handler:
+            primary.append(node)
+        elif node.kind == "link" and not node.filename and not node.extension:
+            embedded.append(node)
+    return primary + embedded
+
+
+def _load_embedded_media(
+    session: BlackboardSession,
+    groups: list[tuple[str, list[ContentNode]]],
+    base_url: str,
+) -> None:
+    pending = [
+        (course_id, node, nodes)
+        for course_id, nodes in groups
+        for node in nodes
+        if node.id
+        and not node.download_path
+        and node.kind == "link"
+        and not any(item.id.startswith(f"{node.id}:file:") for item in nodes)
+    ]
+    if not pending:
+        return
+    paths = [
+        f"/learn/api/public/v1/courses/{quote(course_id, safe='')}/contents/{quote(node.id, safe='')}"
+        for course_id, node, _nodes in pending
+    ]
+    rows = _json_rows_for(session, paths)
+    for (course_id, node, nodes), row in zip(pending, rows):
+        data = row.get("data") if _json_ok(row) and isinstance(row.get("data"), dict) else None
+        if not isinstance(data, dict):
+            continue
+        if not node.handler:
+            node.handler = _content_handler_id(data)
+        nodes.extend(_nodes_from_embedded(node, data.get("body"), course_id, base_url))
+
+
 def _enrich_file_attachments(
     session: BlackboardSession, course_id: str, nodes: list[ContentNode], base_url: str
 ) -> None:
-    candidates = [
-        node
-        for node in nodes
-        if node.id
-        and node.kind != "folder"
-        and (
-            node.kind == "file"
-            or "file" in (node.handler or "").lower()
-            or "document" in (node.handler or "").lower()
-        )
-    ][:80]
+    candidates = _attachment_candidates(nodes)
     fetched: dict[str, list[dict[str, Any]]] = {}
     for node in candidates:
         attachments = _fetch_attachments(session, course_id, node.id)
         if attachments:
             fetched[node.id] = attachments
     _apply_fetched_attachments(nodes, fetched, course_id, base_url)
+    _load_embedded_media(session, [(course_id, nodes)], base_url)
 
 
 def _apply_fetched_attachments(
@@ -3309,6 +3624,7 @@ def _apply_launch_urls(snapshot: Snapshot, base_url: str) -> None:
             handler=deadline.content_handler,
             title=deadline.title,
         )
+    hide_event_only_calendar_items(snapshot)
 
 
 def _enrich_last_activity(snapshot: Snapshot) -> None:
@@ -3332,12 +3648,57 @@ def _enrich_last_activity(snapshot: Snapshot) -> None:
             course.last_activity = max(times)
 
 
+def _named_school_event(title: str) -> bool:
+    """Calendar names for sittings and reviews, not a Blackboard submission."""
+    text = (title or "").lower()
+    if re.search(r"\bhw\b", text) or any(
+        word in text for word in ("homework", "assignment", "essay", "submission")
+    ):
+        return False
+    return any(
+        word in text
+        for word in ("exam", "test", "quiz", "psat", "sat", "act", "assessment", "midterm")
+    )
+
+
+def hide_event_only_calendar_items(snapshot: Snapshot) -> None:
+    """Drop calendar rows that never got a submission page."""
+
+    def event_only(item) -> bool:
+        if _bb_pk(getattr(item, "content_id", "")):
+            return False
+        url = getattr(item, "blackboard_url", "") or ""
+        if _is_deep_work_url(url, ""):
+            return False
+        return True
+
+    for deadline in snapshot.deadlines:
+        if event_only(deadline):
+            deadline.kind = "other"
+            deadline.assignment_id = ""
+    snapshot.assignments = [item for item in snapshot.assignments if not event_only(item)]
+
+
 def _deadline_kind(raw: dict[str, Any]) -> DeadlineKind:
     item_type = str(_pick(raw, "itemType", "type", "eventType") or "")
-    handler = str(_pick(raw, "contentHandler") or "")
+    handler_value = raw.get("contentHandler")
+    if isinstance(handler_value, dict):
+        handler_value = _pick(handler_value, "id", "name")
+    handler = str(handler_value or "")
     title = str(_pick(raw, "title", "name", "subject") or "")
     type_key = item_type.lower().replace("_", "").replace(" ", "")
-    text = f"{item_type} {handler} {title}".lower()
+    text = f"{item_type} {title}".lower()
+    handler_kind = _handler_kind(handler)
+    if handler_kind == "assessment":
+        return "test"
+    if handler_kind in {"assignment", "discussion"}:
+        return "assignment"
+    if re.search(r"\bhw\b", title.lower()) or any(
+        word in title.lower() for word in ("homework", "assignment", "essay", "submission")
+    ):
+        return "assignment"
+    if _named_school_event(title):
+        return "other"
     if type_key in {
         "officehours",
         "officehour",
@@ -3357,11 +3718,7 @@ def _deadline_kind(raw: dict[str, Any]) -> DeadlineKind:
         return "other"
     if any(word in text for word in ("office hour", "meeting", "holiday", "vacation")):
         return "other"
-    if any(word in text for word in ("test", "quiz", "exam", "assessment")):
-        return "test"
-    if any(word in text for word in ("assign", "homework", "work", "due", "gradebook")):
-        return "assignment"
-    # Ultra due-date items are often unlabeled GradebookColumn / CalendarItem entries.
+    # Unlabeled gradebook rows stay assignments so a later content match can attach a page.
     return "assignment"
 
 
@@ -3485,6 +3842,7 @@ def _as_list(data: Any) -> list[Any]:
             "grades",
             "memberships",
             "announcements",
+            "attachments",
         ):
             value = data.get(key)
             if isinstance(value, list):

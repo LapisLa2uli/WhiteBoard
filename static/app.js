@@ -15,6 +15,12 @@ let contentsMode = "tree";
 let contentsPath = [];
 let contentsExpanded = new Set();
 let contentsSelected = new Set();
+let contentsFolders = new Set();
+let contentsAnchor = "";
+let contentsSort = { key: "name", dir: 1 };
+let contentsOnlySelected = false;
+let contentsSearchHere = false;
+let contentsDrag = null;
 let googleDraft = { client_id: "", client_secret: "" };
 let loading = null;
 let colorDialog = null;
@@ -34,6 +40,34 @@ let filterDialog = null;
 let contentIndex = null;
 let courseFilterCache = null;
 let manualMarks = new Set();
+let detailReturn = "";
+const UI_FONTS = {
+  segoe: '"Segoe UI", sans-serif',
+  calibri: "Calibri, sans-serif",
+  candara: "Candara, sans-serif",
+  constantia: "Constantia, serif",
+  cambria: "Cambria, serif",
+  georgia: "Georgia, serif",
+  verdana: "Verdana, sans-serif",
+  trebuchet: '"Trebuchet MS", sans-serif',
+  arial: "Arial, sans-serif",
+};
+const UI_FONT_LABELS = [
+  ["segoe", "Segoe UI"],
+  ["calibri", "Calibri"],
+  ["candara", "Candara"],
+  ["constantia", "Constantia"],
+  ["cambria", "Cambria"],
+  ["georgia", "Georgia"],
+  ["verdana", "Verdana"],
+  ["trebuchet", "Trebuchet MS"],
+  ["arial", "Arial"],
+];
+const PAGE_OPENERS = [
+  ["builtin", "Built-in display"],
+  ["edge", "Microsoft Edge"],
+  ["chrome", "Google Chrome"],
+];
 
 function api(path, body) {
   if (!window.chrome || !window.chrome.webview) {
@@ -106,7 +140,16 @@ async function boot() {
 }
 
 function go(path) {
+  if (topOf(route) === "/calendar" && String(path).startsWith("/assignments/")) {
+    detailReturn = "/calendar";
+  } else if (!String(path).startsWith("/assignments/")) {
+    detailReturn = "";
+  }
   location.hash = path;
+}
+
+function applyUiFont(id) {
+  document.body.style.fontFamily = UI_FONTS[id] || UI_FONTS.segoe;
 }
 
 const RIPPLE_HOST = ".assign, .card, .nav-btn, .outline-btn, .fill-btn, .text-btn, .course-link, .chip-btn, .event-chip, .folder > button";
@@ -121,6 +164,9 @@ function bindOnce() {
   document.addEventListener("pointerenter", onRipple, true);
   document.addEventListener("scroll", onScrollRipple, true);
   document.addEventListener("click", onClick);
+  document.addEventListener("pointerdown", onContentsPointerDown);
+  document.addEventListener("pointermove", onContentsPointerMove);
+  document.addEventListener("pointerup", onContentsPointerUp);
   document.addEventListener("input", onInput);
   document.addEventListener("change", onChange);
   document.addEventListener("submit", onSubmit);
@@ -422,23 +468,35 @@ function onClick(event) {
     paintPage();
     return;
   }
+  const sortBtn = source.closest("[data-sort]");
+  if (sortBtn) {
+    const key = sortBtn.dataset.sort;
+    if (contentsSort.key === key) contentsSort.dir = -contentsSort.dir;
+    else contentsSort = { key, dir: 1 };
+    paintContentsRoot();
+    return;
+  }
+  if (source.closest("#contents-view-selected")) {
+    contentsOnlySelected = !contentsOnlySelected;
+    paintPage();
+    return;
+  }
+  if (source.closest("#contents-search-here")) {
+    contentsSearchHere = !contentsSearchHere;
+    pages["contents-search"] = 0;
+    paintContentsRoot();
+    return;
+  }
   const selectBtn = source.closest("[data-select]");
   if (selectBtn) {
     const box = selectBtn.querySelector("input[type=checkbox]");
     if (!box) return;
     const apply = () => {
-      toggleContentSelected(selectBtn.dataset.select, box.checked);
-      paintContentsRoot();
-      const note = document.getElementById("contents-note");
-      if (note) {
-        note.textContent = contentsNote || (contentsSelected.size
-          ? `${contentsSelected.size} selected`
-          : "Select files to download or open.");
-      }
-      ["contents-download", "contents-open-selected"].forEach((id) => {
-        const button = document.getElementById(id);
-        if (button) button.disabled = contentsSelected.size === 0;
-      });
+      const id = selectBtn.dataset.select;
+      if (source.shiftKey && contentsAnchor) return;
+      toggleContentSelected(id, box.checked);
+      contentsAnchor = id;
+      refreshContentsSelection();
     };
     if (source.matches("input[type=checkbox]")) apply();
     else setTimeout(apply, 0);
@@ -572,6 +630,17 @@ function onChange(event) {
   }
   if (event.target.id === "hide-filtered") {
     saveFilters({ hide_filtered_assignments: event.target.checked });
+    return;
+  }
+  if (event.target.id === "ui-font") {
+    if (state) state.ui_font = event.target.value;
+    applyUiFont(event.target.value);
+    persistSettings({ ui_font: event.target.value });
+    return;
+  }
+  if (event.target.id === "page-opener") {
+    if (state) state.page_opener = event.target.value;
+    persistSettings({ page_opener: event.target.value });
     return;
   }
   if (event.target.id === "load-filter") {
@@ -743,6 +812,7 @@ async function refreshNow() {
 }
 
 function render() {
+  applyUiFont(state && state.ui_font);
   const app = document.getElementById("app");
   if (loading) {
     app.innerHTML = loadingView();
@@ -1109,7 +1179,7 @@ function homeView() {
   );
   const gradeItems = (state.home_grades || []).filter((grade) => inActiveFilter(grade.course_id));
   const due = dueItems.map(assignCard).join("") || `<p class="empty">No deadlines this week.</p>`;
-  const grades = gradeItems.map((grade) => `<div class="card row" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong>${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="empty">No new grades.</p>`;
+  const grades = gradeItems.map((grade) => `<div class="card row grade-card" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}" style="background:${grade.fill};border-color:${grade.ink}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong style="color:${grade.ink}">${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="empty">No new grades.</p>`;
   const banners = errorBanners();
   return `<h2>Home</h2><p class="muted">This week at a glance.</p>${banners}
     <h3>Upcoming this week</h3>${legend()}${due}
@@ -1295,6 +1365,7 @@ function applyAssignmentUpdates(updates) {
     item.status = next.status;
     item.manual = !!next.manual;
     item.ignored = !!next.ignored;
+    if ("submitted_ts" in next) item.submitted_ts = next.submitted_ts;
     if (item.manual) manualMarks.add(item.id);
     else manualMarks.delete(item.id);
   });
@@ -1373,11 +1444,12 @@ function assignmentFolders(mode) {
 function assignmentView(id) {
   const item = state.assignments.find((row) => row.id === id);
   if (!item) return `<h2>Assignment</h2><p class="muted">Not in the saved dashboard.</p>`;
-  return `<button class="text-btn" data-go="/assignments">Back</button>
+  const back = detailReturn || "/assignments";
+  const backLabel = back === "/calendar" ? "Back to calendar" : "Back";
+  return `<button class="text-btn" data-go="${back}">${backLabel}</button>
     <h2>${escapeHtml(item.title)}</h2>
-    ${assignCard(item)}
-    ${item.description ? `<div class="card"><p class="muted">Description</p><p>${escapeHtml(item.description)}</p></div>` : ""}
-    <button class="outline-btn" data-open="${escapeAttr(item.url)}" data-title="${escapeAttr(item.title)}" data-id="${escapeAttr(item.id)}">Open</button>`;
+    ${assignCard(item, true)}
+    ${item.description ? `<div class="card"><p class="muted">Description</p><p>${escapeHtml(item.description)}</p></div>` : ""}`;
 }
 
 function gradesView() {
@@ -1592,11 +1664,15 @@ function contentsView() {
       }).join("")}
     </div>
     <div class="row" style="margin-top:8px">
-      <button class="fill-btn" id="contents-download" type="button" ${contentsSelected.size ? "" : "disabled"}>Download</button>
+      <button class="fill-btn" id="contents-download" type="button" ${contentsSelected.size || contentsFolders.size ? "" : "disabled"}>Download</button>
       <button class="outline-btn" id="contents-open-selected" type="button" ${contentsSelected.size ? "" : "disabled"}>Open</button>
-      <span class="muted" id="contents-note">${escapeHtml(contentsNote || (contentsSelected.size ? `${contentsSelected.size} selected` : "Select files to download or open."))}</span>
+      <button class="outline-btn ${contentsOnlySelected ? "fill-btn" : ""}" id="contents-view-selected" type="button">View currently selected</button>
+      <span class="muted" id="contents-note">${escapeHtml(contentsNote || (contentsSelected.size ? `${contentsSelected.size} selected` : "Select files to download or open. Shift-click or drag to select a section."))}</span>
     </div>
-    <input class="search" id="contents-search" placeholder="Search folder, file name, or extension" value="${escapeAttr(query.contents || "")}" />
+    <div class="row">
+      <input class="search" id="contents-search" placeholder="Search folder, file name, or extension" value="${escapeAttr(query.contents || "")}" />
+      <button class="outline-btn ${contentsSearchHere ? "fill-btn" : ""}" id="contents-search-here" type="button">Only this folder</button>
+    </div>
     <div id="contents-root">${contentsBody()}</div>`;
 }
 
@@ -1636,6 +1712,7 @@ function nodesForCourses(courses) {
 function contentsBody() {
   const courses = shownCourses();
   const nodes = nodesForCourses(courses);
+  if (contentsOnlySelected) return selectedContentsView(courses, nodes);
   const needle = (query.contents || "").trim();
   if (needle) return contentsSearchView(courses, nodes, needle);
   if (!courses.length) return `<p class="empty">No courses in this filter.</p>`;
@@ -1660,6 +1737,27 @@ function nodeMatches(node, needle) {
   return !!ext && ext === bare;
 }
 
+function currentFolderNodes(nodes) {
+  if (!contentsSearchHere) return nodes;
+  const key = contentsPath[contentsPath.length - 1];
+  if (!key) return nodes;
+  if (key.startsWith("course:")) {
+    const courseId = key.slice(7);
+    return nodes.filter((node) => node.course_id === courseId);
+  }
+  const folder = nodes.find((node) => node.id === key);
+  if (!folder) return nodes;
+  const allowed = new Set([folder.id]);
+  const walk = (parentId) => {
+    contentChildren(nodes, folder.course_id, parentId).forEach((node) => {
+      allowed.add(node.id);
+      if (node.kind === "folder") walk(node.id);
+    });
+  };
+  walk(folder.id);
+  return nodes.filter((node) => allowed.has(node.id));
+}
+
 function folderTrail(nodes, node) {
   const names = [];
   let parent = node.parent_id || "";
@@ -1675,7 +1773,8 @@ function folderTrail(nodes, node) {
 }
 
 function contentsSearchView(courses, nodes, needle) {
-  const courseHits = courses
+  const scoped = currentFolderNodes(nodes);
+  const courseHits = contentsSearchHere ? [] : courses
     .filter((course) => course.name.toLowerCase().includes(needle.toLowerCase()))
     .map((course) => ({
       key: `course:${course.id}`,
@@ -1684,7 +1783,7 @@ function contentsSearchView(courses, nodes, needle) {
       path: "Courses",
       node: null,
     }));
-  const fileHits = nodes.filter((node) => nodeMatches(node, needle)).map((node) => {
+  const fileHits = scoped.filter((node) => nodeMatches(node, needle)).map((node) => {
     const course = courses.find((item) => item.id === node.course_id);
     const trail = folderTrail(nodes, node);
     const where = [course ? course.name : "", trail].filter(Boolean).join(" / ");
@@ -1696,10 +1795,7 @@ function contentsSearchView(courses, nodes, needle) {
       node,
     };
   });
-  const items = courseHits.concat(fileHits).sort((a, b) => {
-    const folderDelta = (a.kind === "folder" ? 0 : 1) - (b.kind === "folder" ? 0 : 1);
-    return folderDelta || a.name.localeCompare(b.name);
-  });
+  const items = sortSearchHits(courseHits.concat(fileHits));
   if (!items.length) return `<p class="empty">No folders or files match that search.</p>`;
   const key = "contents-search";
   const size = pageSize;
@@ -1708,8 +1804,8 @@ function contentsSearchView(courses, nodes, needle) {
   const shown = items.slice(page * size, page * size + size);
   const rows = shown.map((item) => {
     const reveal = item.kind === "folder" ? `data-reveal="${escapeAttr(item.key)}"` : "";
-    const selected = item.node && item.node.kind !== "folder" && contentsSelected.has(item.node.id);
-    const check = item.node && item.node.kind !== "folder"
+    const selected = item.node && (item.node.kind === "folder" ? folderSelected(item.node) : contentsSelected.has(item.node.id));
+    const check = item.node
       ? `<label data-select="${escapeAttr(item.node.id)}"><input type="checkbox" ${selected ? "checked" : ""} /></label>`
       : `<span></span>`;
     const icon = item.kind === "folder" ? folderSvg(false) : fileSvg(item.node);
@@ -1721,7 +1817,7 @@ function contentsSearchView(courses, nodes, needle) {
       : "";
     const showExt = extRaw && !item.name.toLowerCase().endsWith(`.${extRaw.toLowerCase()}`);
     const ext = showExt ? `<span class="muted">.${escapeHtml(extRaw)}</span>` : "";
-    return `<div class="file-row ${selected ? "selected" : ""}">
+    return `<div class="file-row ${selected ? "selected" : ""}" ${item.node ? `data-row-id="${escapeAttr(item.node.id)}"` : ""}>
       <span></span>${check}<span ${reveal}>${icon}</span>
       <span class="name stack ${item.kind === "folder" ? "folder" : ""}" ${reveal}>
         ${escapeHtml(item.name)} ${ext}
@@ -1870,7 +1966,7 @@ function explorerRow(item, parentKey, showMeta, highlighted) {
   const openBtn = item.node && !item.isFolder
     ? `<button class="text-btn" data-open="${escapeAttr(item.node.url)}">${openSvg()}</button>`
     : `<span></span>`;
-  return `<div class="file-row ${cls}">
+  return `<div class="file-row ${cls}" ${item.node ? `data-row-id="${escapeAttr(item.node.id)}"` : ""}>
     <span></span>${check}<span ${open}>${icon}</span>
     <span class="name ${item.isFolder ? "folder" : ""}" ${open}>${escapeHtml(item.name)}</span>
     ${meta}${openBtn}
@@ -1883,7 +1979,7 @@ function folderRow(key, name, depth, expanded, sizeLabel, dateLabel, isCourse, n
   const check = isCourse
     ? `<span></span>`
     : `<label data-select="${escapeAttr(node.id)}"><input type="checkbox" ${selected ? "checked" : ""} /></label>`;
-  return `<div class="file-row ${depth % 2 ? "alt" : ""}" style="padding-left:${pad}px">
+  return `<div class="file-row ${selected ? "selected" : depth % 2 ? "alt" : ""}" style="padding-left:${pad}px" ${node ? `data-row-id="${escapeAttr(node.id)}"` : ""}>
     <button class="chevron" data-expand="${escapeAttr(key)}">${expanded ? "▾" : "▸"}</button>
     ${check}
     ${folderSvg(expanded)}
@@ -1897,7 +1993,7 @@ function folderRow(key, name, depth, expanded, sizeLabel, dateLabel, isCourse, n
 function fileRow(node, depth) {
   const selected = contentsSelected.has(node.id);
   const pad = 8 + depth * 16;
-  return `<div class="file-row ${selected ? "selected" : depth % 2 ? "alt" : ""}" style="padding-left:${pad}px">
+  return `<div class="file-row ${selected ? "selected" : depth % 2 ? "alt" : ""}" style="padding-left:${pad}px" data-row-id="${escapeAttr(node.id)}">
     <span></span>
     <label data-select="${escapeAttr(node.id)}"><input type="checkbox" ${selected ? "checked" : ""} /></label>
     ${fileSvg(node)}
@@ -1909,7 +2005,12 @@ function fileRow(node, depth) {
 }
 
 function fileHeader() {
-  return `<div class="file-header"><span></span><span></span><span></span><span>Name</span><span>Size</span><span>Date modified</span><span></span></div>`;
+  const mark = (key, label) => {
+    const active = contentsSort.key === key;
+    const arrow = active ? (contentsSort.dir > 0 ? " ↑" : " ↓") : "";
+    return `<button type="button" data-sort="${key}">${label}${arrow}</button>`;
+  };
+  return `<div class="file-header"><span></span><span></span>${mark("type", "Type")}${mark("name", "Name")}<span>Size</span>${mark("date", "Date uploaded")}<span></span></div>`;
 }
 
 function breadcrumb(courses, nodes) {
@@ -1956,7 +2057,53 @@ function millerColumns(path) {
 
 function contentChildren(_nodes, courseId, parentId) {
   const index = ensureContentIndex();
-  return index.byParent.get(`${courseId}\n${parentId || ""}`) || [];
+  return sortContentList(index.byParent.get(`${courseId}\n${parentId || ""}`) || []);
+}
+
+function fileTypeKey(node) {
+  if (!node || node.kind === "folder") return "folder";
+  return String(node.extension || node.kind || "file").replace(/^\./, "").toLowerCase();
+}
+
+function sortContentList(list) {
+  const dir = contentsSort.dir || 1;
+  return list.slice().sort((a, b) => {
+    const folder = (a.kind === "folder" ? 0 : 1) - (b.kind === "folder" ? 0 : 1);
+    if (folder) return folder;
+    let cmp = 0;
+    if (contentsSort.key === "type") cmp = fileTypeKey(a).localeCompare(fileTypeKey(b));
+    else if (contentsSort.key === "date") cmp = (a.date_ts || 0) - (b.date_ts || 0);
+    else cmp = (a.name || "").localeCompare(b.name || "");
+    if (!cmp) cmp = (a.name || "").localeCompare(b.name || "");
+    return cmp * dir;
+  });
+}
+
+function sortSearchHits(list) {
+  const dir = contentsSort.dir || 1;
+  return list.slice().sort((a, b) => {
+    const folder = (a.kind === "folder" ? 0 : 1) - (b.kind === "folder" ? 0 : 1);
+    if (folder) return folder;
+    let cmp = 0;
+    if (contentsSort.key === "type") {
+      cmp = String(a.kind || "").localeCompare(String(b.kind || ""));
+    } else if (contentsSort.key === "date") {
+      cmp = ((a.node && a.node.date_ts) || 0) - ((b.node && b.node.date_ts) || 0);
+    } else cmp = (a.name || "").localeCompare(b.name || "");
+    if (!cmp) cmp = (a.name || "").localeCompare(b.name || "");
+    return cmp * dir;
+  });
+}
+
+function selectedContentsView(courses, nodes) {
+  const picked = nodes.filter((node) => contentsSelected.has(node.id) || contentsFolders.has(node.id) || (node.kind === "folder" && folderSelected(node)));
+  if (!picked.length) return `<p class="empty">Nothing is selected.</p>`;
+  const rows = sortContentList(picked).map((node) => (
+    node.kind === "folder"
+      ? folderRow(node.id, node.name, 0, false, "—", node.date, false, node)
+      : fileRow(node, 0)
+  )).join("");
+  return `${fileHeader()}${rows}`;
 }
 
 function descendantFiles(folder) {
@@ -1980,11 +2127,117 @@ function folderSelected(folder) {
 function toggleContentSelected(id, checked) {
   const node = ensureContentIndex().byId.get(id);
   if (!node) return;
+  if (node.kind === "folder") {
+    if (checked) contentsFolders.add(node.id);
+    else contentsFolders.delete(node.id);
+  }
   const targets = node.kind === "folder" ? descendantFiles(node) : [node];
   targets.forEach((item) => {
     if (checked) contentsSelected.add(item.id);
     else contentsSelected.delete(item.id);
   });
+  if (!checked && node.kind !== "folder") {
+    contentsFolders.forEach((folderId) => {
+      const folder = ensureContentIndex().byId.get(folderId);
+      if (folder && !folderSelected(folder)) contentsFolders.delete(folderId);
+    });
+  }
+}
+
+function selectContentsRange(fromId, toId) {
+  const rows = [...document.querySelectorAll("#contents-root .file-row[data-row-id]")];
+  const ids = rows.map((row) => row.dataset.rowId);
+  let start = ids.indexOf(fromId);
+  let end = ids.indexOf(toId);
+  if (end < 0) return;
+  if (start < 0) start = end;
+  const [left, right] = start < end ? [start, end] : [end, start];
+  contentsSelected.clear();
+  contentsFolders.clear();
+  for (let index = left; index <= right; index += 1) toggleContentSelected(ids[index], true);
+  contentsAnchor = toId;
+  refreshContentsSelection();
+}
+
+function refreshContentsSelection() {
+  paintContentsRoot();
+  const note = document.getElementById("contents-note");
+  if (note) {
+    note.textContent = contentsNote || (contentsSelected.size
+      ? `${contentsSelected.size} selected`
+      : "Select files to download or open. Shift-click or drag to select a section.");
+  }
+  ["contents-download", "contents-open-selected"].forEach((id) => {
+    const button = document.getElementById(id);
+    if (button) button.disabled = id === "contents-download"
+      ? contentsSelected.size === 0 && contentsFolders.size === 0
+      : contentsSelected.size === 0;
+  });
+}
+
+function onContentsPointerDown(event) {
+  if (route !== "/contents" || event.button !== 0) return;
+  const row = event.target.closest && event.target.closest("#contents-root .file-row[data-row-id]");
+  if (!row) return;
+  if (event.shiftKey) {
+    event.preventDefault();
+    selectContentsRange(contentsAnchor || row.dataset.rowId, row.dataset.rowId);
+    contentsDrag = null;
+    return;
+  }
+  if (event.target.closest("button, input, a")) return;
+  contentsDrag = {
+    x: event.clientX,
+    y: event.clientY,
+    moved: false,
+    additive: false,
+  };
+}
+
+function onContentsPointerMove(event) {
+  if (!contentsDrag) return;
+  const dx = event.clientX - contentsDrag.x;
+  const dy = event.clientY - contentsDrag.y;
+  if (!contentsDrag.moved && dx * dx + dy * dy < 25) return;
+  contentsDrag.moved = true;
+  paintContentsMarquee(contentsDrag.x, contentsDrag.y, event.clientX, event.clientY);
+}
+
+function onContentsPointerUp(event) {
+  if (!contentsDrag) return;
+  const drag = contentsDrag;
+  contentsDrag = null;
+  const box = document.getElementById("contents-marquee");
+  if (box) box.remove();
+  if (!drag.moved) return;
+  const left = Math.min(drag.x, event.clientX);
+  const right = Math.max(drag.x, event.clientX);
+  const top = Math.min(drag.y, event.clientY);
+  const bottom = Math.max(drag.y, event.clientY);
+  const hits = [...document.querySelectorAll("#contents-root .file-row[data-row-id]")].filter((row) => {
+    const rect = row.getBoundingClientRect();
+    return rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom;
+  }).map((row) => row.dataset.rowId);
+  if (!drag.additive) {
+    contentsSelected.clear();
+    contentsFolders.clear();
+  }
+  hits.forEach((id) => toggleContentSelected(id, true));
+  if (hits.length) contentsAnchor = hits[hits.length - 1];
+  refreshContentsSelection();
+}
+
+function paintContentsMarquee(x1, y1, x2, y2) {
+  let box = document.getElementById("contents-marquee");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "contents-marquee";
+    document.body.appendChild(box);
+  }
+  box.style.left = `${Math.min(x1, x2)}px`;
+  box.style.top = `${Math.min(y1, y2)}px`;
+  box.style.width = `${Math.abs(x2 - x1)}px`;
+  box.style.height = `${Math.abs(y2 - y1)}px`;
 }
 
 function settingsView() {
@@ -2014,6 +2267,20 @@ function settingsView() {
       <p class="muted">${escapeHtml(state.fetched_at)}</p>
     </div>
     <p class="muted">This app is for your own account only. Course materials stay on Blackboard; do not republish them.</p>
+    <h2 style="font-size:20px">Font</h2>
+    <div class="card">
+      <p class="muted">The typeface used for the window. These are the readable faces already installed with Windows.</p>
+      <select id="ui-font">
+        ${UI_FONT_LABELS.map(([id, label]) => `<option value="${id}" ${id === (state.ui_font || "segoe") ? "selected" : ""}>${label}</option>`).join("")}
+      </select>
+    </div>
+    <h2 style="font-size:20px">Opening pages</h2>
+    <div class="card">
+      <p class="muted">Choose where Open sends a Blackboard page. If Chrome or Edge cannot start, WhiteBoard opens the page in its own window.</p>
+      <select id="page-opener">
+        ${PAGE_OPENERS.map(([id, label]) => `<option value="${id}" ${id === (state.page_opener || "builtin") ? "selected" : ""}>${label}</option>`).join("")}
+      </select>
+    </div>
     <h2 style="font-size:20px">Lists</h2>
     <div class="card">
       <p class="muted">How many items to show at once on assignments, grades, the calendar, course pages, and Contents.</p>
@@ -2049,27 +2316,35 @@ function settingsView() {
 
 function assignCard(item, withActions) {
   const dest = item.assignment_id || item.id;
-  const submitted = item.status === "submitted";
+  const submitted = item.status === "submitted" || !!item.finished;
   const extra = [item.kind === "other" ? "event" : "", submitted || item.finished ? "dimmed" : ""].filter(Boolean).join(" ");
   const kind = item.kind || item.status || "";
   const background = submitted ? "#e2e8f0" : (item.kind === "other" ? "" : item.fill);
   const check = withActions && selectMode
     ? `<input class="assign-check" type="checkbox" data-assign-select="${escapeAttr(item.id)}" ${selectedAssignments.has(item.id) ? "checked" : ""} />`
     : "";
+  const open = item.url
+    ? actionButton(`data-open="${escapeAttr(item.url)}" data-title="${escapeAttr(item.title || "")}" data-id="${escapeAttr(item.id || "")}"`, "Open", "open")
+    : "";
   let actions = "";
   if (withActions && route === "/ignored") {
-    actions = actionButton(`data-assign-restore="${escapeAttr(item.id)}"`, "Restore", "restore");
+    actions = `${open}${actionButton(`data-assign-restore="${escapeAttr(item.id)}"`, "Restore", "restore")}`;
   } else if (withActions) {
     const mark = submitted
       ? (item.manual ? actionButton(`data-assign-undo="${escapeAttr(item.id)}"`, "Undo", "undo") : "")
       : actionButton(`data-assign-mark="${escapeAttr(item.id)}"`, "Mark submitted", "submitted", "mark-btn");
-    actions = `${mark}${actionButton(`data-assign-ignore="${escapeAttr(item.id)}"`, "Ignore", "ignore")}`;
+    actions = `${mark}${open}${actionButton(`data-assign-ignore="${escapeAttr(item.id)}"`, "Ignore", "ignore")}`;
   }
+  const timing = submitted
+    ? `<div class="countdown submitted" data-due="${item.ts || 0}" data-submitted="1" data-submitted-at="${item.submitted_ts || 0}">${escapeHtml(submittedTiming(item.ts || 0, item.submitted_ts || 0))}</div>`
+    : `<div class="countdown" data-due="${item.ts || 0}" style="color:${item.border}">${escapeHtml(item.countdown || formatCountdown(item.ts || 0))}</div>`;
   return `<article class="assign ${extra}" style="border-color:${submitted ? "#94a3b8" : item.border};background:${background}" data-go="/assignments/${encodeURIComponent(dest)}">
-    ${check}
-    <div class="assign-main"><strong>${escapeHtml(item.title)}</strong><div class="muted">${escapeHtml(item.when || "")} · ${escapeHtml(item.course || "")}</div></div>
+    <div class="assign-copy">
+      ${check}
+      <div class="assign-main"><strong>${escapeHtml(item.title)}</strong><div class="assign-when">${escapeHtml(item.when || "")} · ${escapeHtml(item.course || "")}</div></div>
+    </div>
     <div class="assign-meta">
-      <div class="countdown" data-due="${item.ts || 0}" style="color:${submitted ? "#64748b" : item.border}">${escapeHtml(item.countdown || formatCountdown(item.ts || 0))}</div>
+      ${timing}
       <span class="chip ${kind}">${escapeHtml(kind)}</span>
       <div class="row">${actions}</div>
     </div>
@@ -2184,7 +2459,12 @@ function viewerView() {
 async function openUrl(url, title, id) {
   if (!url && !id) return;
   try {
-    await api("/api/open", { url: url || "", title: title || "", id: id || "" });
+    const result = await api("/api/open", { url: url || "", title: title || "", id: id || "" });
+    if (result && result.fallback && result.message) {
+      contentsNote = result.message;
+      const note = document.getElementById("contents-note");
+      if (note) note.textContent = contentsNote;
+    }
   } catch (error) {
     contentsNote = (error && error.message) || "Could not open that page.";
     const note = document.getElementById("contents-note");
@@ -2194,21 +2474,35 @@ async function openUrl(url, title, id) {
 
 function showDownloadProgress(message) {
   const banner = document.getElementById("download-banner");
-  const label = document.getElementById("download-label");
-  const fill = document.getElementById("download-fill");
-  if (!banner || !label || !fill) return;
+  if (!banner) return;
   banner.hidden = false;
+  const id = message.id || "main";
+  let row = banner.querySelector(`[data-progress="${CSS.escape(id)}"]`);
+  if (!row) {
+    row = document.createElement("div");
+    row.dataset.progress = id;
+    row.className = "download-row";
+    row.innerHTML = `<div class="zip-label"></div><div class="load-track"><span></span></div>`;
+    banner.appendChild(row);
+  }
+  const label = row.querySelector(".zip-label");
+  const fill = row.querySelector("span");
   const percent = Math.max(0, Math.min(100, Math.round((message.percent || 0) * 100)));
-  label.textContent = message.done ? "Download finished." : `Downloading ${message.name}...`;
-  fill.style.width = `${Math.max(percent, 4)}%`;
+  const phase = message.phase || "Downloading";
+  if (label) label.textContent = message.done ? `${message.name || "Download"} finished.` : `${phase} ${message.name || "files"}…`;
+  if (fill) fill.style.width = `${Math.max(percent, 4)}%`;
   if (message.done) {
-    setTimeout(() => { banner.hidden = true; }, 1600);
+    setTimeout(() => {
+      row.remove();
+      if (!banner.querySelector("[data-progress]")) banner.hidden = true;
+    }, 1600);
   }
 }
 
 async function downloadSelected() {
   const ids = [...contentsSelected];
-  if (!ids.length) return;
+  const folders = [...contentsFolders];
+  if (!ids.length && !folders.length) return;
   contentsNote = "Downloading…";
   const note = document.getElementById("contents-note");
   if (note) note.textContent = contentsNote;
@@ -2216,7 +2510,7 @@ async function downloadSelected() {
   const button = document.getElementById("contents-download");
   if (button) button.disabled = true;
   try {
-    const result = await api("/api/download", { ids });
+    const result = await api("/api/download", { ids, folders });
     contentsNote = (result && result.message) || "Download finished.";
   } catch (error) {
     contentsNote = (error && error.message) || "Download failed.";
@@ -2238,6 +2532,7 @@ function actionButton(attrs, label, icon, extraClass) {
 
 function actionIcon(name) {
   const icons = {
+    open: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 5H5v14h14v-3"/><path d="M11 13 19 5"/><path d="M13 5h6v6"/></svg>`,
     submitted: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8"/><path d="M8.5 12.2 11 14.7 15.8 9.5"/></svg>`,
     ignore: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5l18 14M10.5 10.7A3 3 0 0 0 13.3 13.5M9.9 6.1A10 10 0 0 1 12 5.8c5 0 8.5 4.2 9.4 5.4a1.3 1.3 0 0 1 0 1.6 12 12 0 0 1-3.2 3.1M6.2 8.3A12 12 0 0 0 2.6 12.8a1.3 1.3 0 0 0 0 1.6C3.5 15.6 7 19.8 12 19.8c1.2 0 2.3-.2 3.4-.6"/></svg>`,
     undo: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 7H4v4"/><path d="M5 10a7 7 0 1 1-1 4"/></svg>`,
@@ -2266,10 +2561,41 @@ function folderSvg(open) {
     : `<svg class="file-icon folder" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h7l2 2h9v11H3z"/></svg>`;
 }
 
+function fileTypeClass(node) {
+  const ext = String((node && node.extension) || "").replace(/^\./, "").toLowerCase();
+  const name = String((node && node.name) || "").toLowerCase();
+  const kind = ext || (name.includes(".") ? name.split(".").pop() : "");
+  if (kind === "ppt" || kind === "pptx") return "type-ppt";
+  if (kind === "pdf") return "type-pdf";
+  if (kind === "doc" || kind === "docx") return "type-word";
+  if (kind === "xls" || kind === "xlsx" || kind === "csv") return "type-excel";
+  if (kind === "mp3") return "type-audio";
+  if (kind === "mp4" || kind === "m4v") return "type-video";
+  return "type-other";
+}
+
 function fileSvg(node) {
-  const kind = node && node.kind;
-  const cls = kind === "link" ? "file-icon link" : "file-icon";
-  return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M7 3.5h7l5 5V20a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.5A1 1 0 0 1 7 3.5z"/><path d="M14 3.5V9h5"/></svg>`;
+  const type = fileTypeClass(node);
+  const common = `class="file-icon ${type}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"`;
+  if (type === "type-ppt") {
+    return `<svg ${common}><rect x="4" y="5" width="16" height="12" rx="1.5"/><path d="M8 17v2h8v-2M10 9h4M10 12h3"/></svg>`;
+  }
+  if (type === "type-pdf") {
+    return `<svg ${common}><path d="M7 3.5h7l5 5V20a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.5A1 1 0 0 1 7 3.5z"/><path d="M14 3.5V9h5M8 14h2.2a1.4 1.4 0 0 0 0-2.8H8V16"/></svg>`;
+  }
+  if (type === "type-word") {
+    return `<svg ${common}><path d="M7 3.5h7l5 5V20a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.5A1 1 0 0 1 7 3.5z"/><path d="M14 3.5V9h5M8 13h8M8 16h6"/></svg>`;
+  }
+  if (type === "type-excel") {
+    return `<svg ${common}><rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M4 10h16M4 15h16M10 4v16M15 4v16"/></svg>`;
+  }
+  if (type === "type-audio") {
+    return `<svg ${common}><path d="M9 17a2.5 2.5 0 1 1-2-2.45V6.5l10-2v8.2"/><circle cx="17" cy="13.5" r="2.5"/></svg>`;
+  }
+  if (type === "type-video") {
+    return `<svg ${common}><rect x="3" y="6" width="13" height="12" rx="1.5"/><path d="M16 10.5 21 8v8l-5-2.5z"/></svg>`;
+  }
+  return `<svg ${common}><path d="M7 3.5h7l5 5V20a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.5A1 1 0 0 1 7 3.5z"/><path d="M14 3.5V9h5"/></svg>`;
 }
 
 function openSvg() {
@@ -2297,6 +2623,25 @@ function colorModal() {
       <button class="fill-btn" id="color-apply">Use this color</button>
     </div>
   </div></div>`;
+}
+
+function submittedTiming(dueTs, submittedTs) {
+  const since = dueTs ? `${formatSpan(Math.abs(dueTs - Date.now() / 1000))} ${Date.now() / 1000 >= dueTs ? "since the deadline" : "until the deadline"}` : "";
+  let submitted = "Submitted";
+  if (submittedTs) {
+    submitted = `Submitted ${new Date(submittedTs * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
+  }
+  return since ? `${submitted}\n${since}` : submitted;
+}
+
+function formatSpan(seconds) {
+  seconds = Math.max(0, Math.trunc(seconds));
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  const clock = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  return days ? `${days}d ${clock}` : clock;
 }
 
 function formatCountdown(ts) {
@@ -2330,6 +2675,11 @@ function tickCountdowns() {
   nodes.forEach((node) => {
     const ts = Number(node.dataset.due || 0);
     if (!ts) return;
+    if (node.dataset.submitted === "1") {
+      const text = submittedTiming(ts, Number(node.dataset.submittedAt || 0));
+      if (node.textContent !== text) node.textContent = text;
+      return;
+    }
     const text = formatCountdown(ts);
     if (node.textContent !== text) node.textContent = text;
     const band = colorForDue(ts);
@@ -2369,8 +2719,25 @@ function isoDate(value) {
   return `${value.getFullYear()}-${month}-${day}`;
 }
 
+function decodeText(value) {
+  let text = String(value ?? "");
+  for (let pass = 0; pass < 3; pass += 1) {
+    const next = text
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&#34;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&#39;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">");
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+
 function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  return decodeText(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 }
 function escapeAttr(value) { return escapeHtml(value); }
 

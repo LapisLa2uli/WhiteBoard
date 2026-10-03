@@ -8,6 +8,7 @@ import os
 import sys
 import threading
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -18,7 +19,7 @@ import data
 data.install()
 ROOT = data.resource_root()
 
-from blackboard.store import load_settings, update_settings
+from blackboard.store import _page_opener, _ui_font, load_settings, update_settings
 from crawl import progress, start_login, start_refresh
 from present import build_state, load_snapshot
 
@@ -140,6 +141,8 @@ def _settings_patch(settings: dict) -> dict:
         "hide_calendar_events": bool(settings.get("hide_calendar_events")),
         "contents_view_mode": settings.get("contents_view_mode") or "tree",
         "google_sync_enabled": bool(settings.get("google_sync_enabled")),
+        "ui_font": _ui_font(settings.get("ui_font")),
+        "page_opener": _page_opener(settings.get("page_opener")),
     }
 
 
@@ -231,6 +234,10 @@ class Handler(BaseHTTPRequestHandler):
             )
         if "google_sync_enabled" in body:
             settings["google_sync_enabled"] = bool(body.get("google_sync_enabled"))
+        if "ui_font" in body:
+            settings["ui_font"] = _ui_font(body.get("ui_font"))
+        if "page_opener" in body:
+            settings["page_opener"] = _page_opener(body.get("page_opener"))
         client_id = str(body.get("client_id") or "")
         client_secret = str(body.get("client_secret") or "")
         if client_id or client_secret:
@@ -387,8 +394,90 @@ def _open_page(body: dict) -> dict:
     target, title = _launch_target(body)
     if not target:
         return {"ok": False, "message": "This assignment has no Blackboard page."}
-    host.open_document(target, title)
-    return {"ok": True, "url": target}
+    choice = _page_opener(load_settings().get("page_opener"))
+    return _dispatch_open(choice, target, title, start=_start_browser, builtin=host.open_document)
+
+
+def _dispatch_open(choice: str, target: str, title: str, *, start, builtin) -> dict:
+    """Open in Chrome or Edge, and use the built-in window when that cannot start."""
+    external = choice in {"edge", "chrome"} and target.lower().startswith(("http://", "https://"))
+    if external and start(choice, target):
+        return {"ok": True, "url": target, "opened_with": choice}
+    builtin(target, title)
+    if not external:
+        return {"ok": True, "url": target, "opened_with": "builtin"}
+    name = "Google Chrome" if choice == "chrome" else "Microsoft Edge"
+    return {
+        "ok": True,
+        "url": target,
+        "opened_with": "builtin",
+        "fallback": True,
+        "message": f"{name} could not open the page, so it opened in WhiteBoard.",
+    }
+
+
+def _browser_executable(kind: str):
+    import os
+    import shutil
+    import winreg
+
+    name = {"edge": "msedge.exe", "chrome": "chrome.exe"}.get(kind)
+    if not name:
+        return None
+    for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(root, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}") as key:
+                raw, _typ = winreg.QueryValueEx(key, "")
+        except OSError:
+            continue
+        path = Path(str(raw).strip().strip('"'))
+        if path.is_file():
+            return path
+    local = os.environ.get("LOCALAPPDATA", "")
+    program = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+    program_x86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
+    if kind == "edge":
+        candidates = [
+            Path(program_x86) / "Microsoft" / "Edge" / "Application" / name,
+            Path(program) / "Microsoft" / "Edge" / "Application" / name,
+            Path(local) / "Microsoft" / "Edge" / "Application" / name,
+        ]
+    else:
+        candidates = [
+            Path(program) / "Google" / "Chrome" / "Application" / name,
+            Path(program_x86) / "Google" / "Chrome" / "Application" / name,
+            Path(local) / "Google" / "Chrome" / "Application" / name,
+        ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    found = shutil.which(name)
+    if found and Path(found).is_file():
+        return Path(found)
+    return None
+
+
+def _start_browser(kind: str, url: str) -> bool:
+    import subprocess
+    import time
+
+    exe = _browser_executable(kind)
+    if exe is None:
+        return False
+    flags = 0x08000000 | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    try:
+        proc = subprocess.Popen(
+            [str(exe), url],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=flags,
+        )
+    except OSError:
+        return False
+    time.sleep(0.35)
+    return proc.poll() in (None, 0)
 
 
 def _launch_target(body: dict) -> tuple[str, str]:
@@ -495,7 +584,10 @@ def _remember(settings: dict, name: str, items: list, *, add: bool) -> None:
         for item in items:
             if item.id in known:
                 continue
-            raw.append({"id": item.id, "course_id": item.course_id, "title": item.title})
+            row = {"id": item.id, "course_id": item.course_id, "title": item.title}
+            if name == "marked_submitted_assignments":
+                row["submitted_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+            raw.append(row)
             known.add(item.id)
     else:
         drop_ids = {item.id for item in items}
@@ -537,7 +629,7 @@ def _not_due(when) -> bool:
 
 
 def _apply_assignment_action(settings: dict, snapshot, action: str, wanted: set[str]) -> list[dict]:
-    from present import _item_flagged, _setting_keys
+    from present import _item_flagged, _setting_keys, _submitted_ts
 
     chosen = [item for item in snapshot.assignments if item.id in wanted]
     if action == "submitted":
@@ -576,9 +668,13 @@ def _apply_assignment_action(settings: dict, snapshot, action: str, wanted: set[
         seen_ids.add(item.id)
         assignment = by_id.get(item.id)
         if assignment is not None:
-            updates.append(_assignment_update(assignment, marked, ignored_keys))
+            update = _assignment_update(assignment, marked, ignored_keys)
+            update["submitted_ts"] = (
+                _submitted_ts(settings, assignment) if update.get("status") == "submitted" else 0
+            )
+            updates.append(update)
         else:
-            updates.append({"id": item.id, "status": "todo", "manual": False, "ignored": False})
+            updates.append({"id": item.id, "status": "todo", "manual": False, "ignored": False, "submitted_ts": 0})
     return updates
 
 
@@ -596,6 +692,119 @@ def _assignment_action(body: dict) -> dict:
     return {"updates": updates}
 
 
+_ZIP_FILE_LIMIT = 10
+_ZIP_BYTE_LIMIT = 10 * 1024 * 1024
+
+
+def _real_download(node) -> bool:
+    path = str(getattr(node, "download_path", "") or "").strip()
+    if not path:
+        return False
+    lowered = path.lower()
+    if "cmd=view" in lowered or "listcontent.jsp" in lowered or "/ultra/" in lowered:
+        return False
+    return True
+
+
+def _descendant_nodes(folder, nodes: list) -> list:
+    children = [
+        node
+        for node in nodes
+        if node.course_id == folder.course_id and (node.parent_id or "") == folder.id
+    ]
+    found = []
+    for child in children:
+        if child.kind == "folder":
+            found.extend(_descendant_nodes(child, nodes))
+        else:
+            found.append(child)
+    return found
+
+
+def _zip_is_large(files: list) -> bool:
+    total = sum(int(getattr(node, "size_bytes", 0) or 0) for node in files)
+    return len(files) > _ZIP_FILE_LIMIT or total > _ZIP_BYTE_LIMIT
+
+
+def _download_filename(node) -> str:
+    raw = node.filename or node.display_name() or "download"
+    name = _leaf_name(_safe_name(raw), "download")
+    ext = str(getattr(node, "extension", "") or "").lstrip(".").lower()
+    if ext and not name.lower().endswith(f".{ext}"):
+        name = f"{name}.{ext}"
+    return _leaf_name(name, "download")
+
+
+def _zip_entry_name(folder, node, by_id: dict) -> str:
+    parts = [_download_filename(node)]
+    parent = node.parent_id or ""
+    seen: set[str] = set()
+    while parent and parent != folder.id and parent not in seen:
+        seen.add(parent)
+        parent_node = by_id.get(parent)
+        if parent_node is None:
+            break
+        parts.append(parent_node.display_name())
+        parent = parent_node.parent_id or ""
+    safe = [_leaf_name(_safe_name(part), "file") for part in reversed(parts)]
+    return "/".join(part for part in safe if part not in {".", ".."})
+
+
+def _zip_progress(name: str, percent: float, *, large: bool, zip_name: str, done: bool = False, phase: str) -> None:
+    _download_progress(name, percent, track="main", phase=phase)
+    if large:
+        _download_progress(name, percent, done=done, track=zip_name, phase=phase)
+
+
+def _write_folder_zip(session, downloads: Path, folder, files: list, by_id: dict, problems: list) -> str:
+    zip_name = _leaf_name(_safe_name(folder.display_name()), "folder") + ".zip"
+    if not files:
+        raise OSError(f"{folder.display_name()} has no downloadable files.")
+    dest = _inside(_unique_path(downloads / zip_name), downloads)
+    if dest is None:
+        raise OSError("Could not create the zip in Downloads.")
+    large = _zip_is_large(files)
+    total = max(len(files), 1)
+    packed: list[tuple[str, bytes]] = []
+    failures: list[str] = []
+    used: set[str] = set()
+    _zip_progress(zip_name, 0.02, large=large, zip_name=zip_name, phase="Packaging")
+    for index, node in enumerate(files):
+        label = node.display_name() or zip_name
+        _zip_progress(
+            f"{zip_name} · {label}",
+            (index + 0.35) / (total + 1),
+            large=large,
+            zip_name=zip_name,
+            phase="Packaging",
+        )
+        entry = _zip_entry_name(folder, node, by_id)
+        if entry in used:
+            entry = f"{index}-{entry}"
+        used.add(entry)
+        try:
+            packed.append((entry, session.get_bytes(node.download_path)))
+        except Exception as exc:
+            failures.append(f"{label}: {exc}")
+            continue
+        _zip_progress(
+            f"{zip_name} · {label}",
+            (index + 1) / (total + 1),
+            large=large,
+            zip_name=zip_name,
+            phase="Packaging",
+        )
+    if not packed:
+        raise OSError(failures[0] if failures else f"{folder.display_name()} has no downloadable files.")
+    _zip_progress(zip_name, total / (total + 1), large=large, zip_name=zip_name, phase="Saving")
+    with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for entry, data in packed:
+            archive.writestr(entry, data)
+    _zip_progress(zip_name, 1, large=large, zip_name=zip_name, done=large, phase="Downloading")
+    problems.extend(failures)
+    return zip_name
+
+
 def _download_files(body: dict) -> dict:
     from crawl import progress as job
     from present import load_snapshot
@@ -604,66 +813,124 @@ def _download_files(body: dict) -> dict:
     if job.get("busy"):
         return {"ok": False, "message": "Wait until refresh finishes, then download."}
     wanted = {str(item) for item in (body.get("ids") or []) if str(item)}
+    folder_ids = [str(item) for item in (body.get("folders") or []) if str(item)]
     snapshot = load_snapshot()
     files = []
     seen: set[str] = set()
     nodes = list(snapshot.content_nodes)
     by_id = {node.id: node for node in nodes}
+    zip_jobs = []
+    covered: set[str] = set()
+    for folder_id in folder_ids:
+        folder = by_id.get(folder_id)
+        if folder is None or folder.kind != "folder":
+            continue
+        packed = _descendant_nodes(folder, nodes)
+        if not packed:
+            continue
+        zip_jobs.append((folder, packed))
+        covered.update(node.id for node in packed)
     for node_id in wanted:
         node = by_id.get(node_id)
-        if node is None or node.id in seen:
+        if node is None or node.id in seen or node.id in covered:
             continue
         if node.kind == "folder":
+            packed = _descendant_nodes(node, nodes)
+            if packed:
+                zip_jobs.append((node, packed))
+                covered.update(item.id for item in packed)
             continue
         target = node.download_path or node.open_url
         if not target:
             continue
         files.append(node)
         seen.add(node.id)
-    if not files:
+    loose = [node for node in files if _real_download(node)]
+    hidden = [node for node in files if not _real_download(node)]
+    if not loose and not hidden and not zip_jobs:
         return {"ok": False, "message": "Selected items have no downloadable file."}
+    from blackboard.api import embedded_download_nodes
     from blackboard.store import load_settings
 
     settings = load_settings()
     base = str(settings.get("base_url") or "https://shs.blackboardchina.cn")
+    _download_progress("files", 0.02, track="main", phase="Preparing")
     session = WebSession(base)
     try:
         session.prepare()
     except Exception as exc:
+        _download_progress("files", 1, done=True, track="main", phase="Downloading")
         return {"ok": False, "message": str(exc) or "Sign in, then try the download again."}
-    folder = Path.home() / "Downloads"
-    folder.mkdir(parents=True, exist_ok=True)
+    folder_dir = Path.home() / "Downloads"
+    folder_dir.mkdir(parents=True, exist_ok=True)
     saved = 0
     errors: list[str] = []
-    total = len(files)
+    zip_names: list[str] = []
     try:
-        for index, node in enumerate(files):
-            name = _leaf_name(_safe_name(node.display_name()), "download")
-            _download_progress(name, index / total)
-            dest = _inside(_unique_path(folder / name), folder)
+        if hidden:
+            _download_progress("files", 0.08, track="main", phase="Finding files")
+            loose.extend(embedded_download_nodes(session, hidden, base))
+        resolved_jobs = []
+        for folder, packed in zip_jobs:
+            _download_progress(folder.display_name(), 0.08, track="main", phase="Finding files")
+            members = [node for node in packed if _real_download(node)]
+            members.extend(
+                embedded_download_nodes(
+                    session,
+                    [node for node in packed if not _real_download(node)],
+                    base,
+                )
+            )
+            resolved_jobs.append((folder, members))
+        for folder, packed in resolved_jobs:
+            try:
+                zip_names.append(
+                    _write_folder_zip(session, folder_dir, folder, packed, by_id, errors)
+                )
+                saved += 1
+            except Exception as exc:
+                errors.append(f"{folder.display_name()}: {exc}")
+        total = max(len(loose), 1)
+        for index, node in enumerate(loose):
+            name = _download_filename(node)
+            _download_progress(name, index / total, track="main")
+            dest = _inside(_unique_path(folder_dir / name), folder_dir)
             if dest is None:
                 errors.append(f"{name}: invalid file name")
                 continue
             try:
-                dest.write_bytes(session.get_bytes(node.download_path or node.open_url))
+                dest.write_bytes(session.get_bytes(node.download_path))
                 saved += 1
             except Exception as exc:
                 errors.append(f"{name}: {exc}")
-            _download_progress(name, (index + 1) / total, done=index + 1 == total and not errors)
+            _download_progress(
+                name,
+                (index + 1) / total,
+                done=False,
+                track="main",
+            )
     finally:
         import host
 
         host.set_title("WhiteBoard")
-    if errors and not saved:
-        return {"ok": False, "message": errors[0]}
+        _download_progress("files", 1, done=True, track="main", phase="Downloading")
+    if not saved:
+        return {
+            "ok": False,
+            "message": errors[0] if errors else "Selected items have no downloadable file.",
+        }
     if errors:
         return {"ok": True, "message": f"Saved {saved} file(s). Some failed: {errors[0]}"}
-    if saved == 1:
+    if zip_names and not files and saved == 1:
+        return {"ok": True, "message": f"Saved {zip_names[0]} to Downloads."}
+    if saved == 1 and files and not zip_names:
         return {"ok": True, "message": f"Saved {files[0].display_name()} to Downloads."}
-    return {"ok": True, "message": f"Saved {saved} files to Downloads."}
+    return {"ok": True, "message": f"Saved {saved} item(s) to Downloads."}
 
 
-def _download_progress(name: str, percent: float, *, done: bool = False) -> None:
+def _download_progress(
+    name: str, percent: float, *, done: bool = False, track: str = "", phase: str = ""
+) -> None:
     import host
 
     host.post_page(
@@ -673,6 +940,8 @@ def _download_progress(name: str, percent: float, *, done: bool = False) -> None
                 "name": name,
                 "percent": max(0.0, min(1.0, percent)),
                 "done": done,
+                "id": track,
+                "phase": phase,
             }
         )
     )

@@ -110,6 +110,20 @@ info_plist = {
     "NSHighResolutionCapable": True,
     "LSApplicationCategoryType": "public.app-category.education",
     "NSHumanReadableCopyright": "WhiteBoard",
+    # WKWebView's loads sit on URLSession and are therefore subject to App
+    # Transport Security, which by default only offers ciphers with forward
+    # secrecy. Plenty of Blackboard servers still offer only
+    # TLS_RSA_WITH_AES_256_CBC_SHA, and WebKit rejects that with
+    # NSURLErrorSecureConnectionFailed (-1200): the load fails instantly and
+    # location.href never leaves about:blank.
+    #
+    # This relaxes the restriction for web content only, leaving anything the
+    # app loads through URLSession protected. The school URL is typed in at
+    # runtime, so the exception cannot be scoped to one domain. To narrow it,
+    # replace this key with:
+    #   "NSExceptionDomains": {"<school>": {"NSIncludesSubdomains": True,
+    #                                        "NSExceptionRequiresForwardSecrecy": False}}
+    "NSAppTransportSecurity": {"NSAllowsArbitraryLoadsInWebContent": True},
 }
 if ICNS:
     info_plist["CFBundleIconFile"] = os.path.splitext(os.path.basename(ICNS))[0]

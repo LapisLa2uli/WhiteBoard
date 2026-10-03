@@ -19,6 +19,9 @@ headings below. Packaging and GitHub Releases copy this text.
 - The Windows setup asks whether to add a Desktop shortcut and a Windows Search shortcut. You can turn either one off.
 - Settings lets you choose how many rows appear on one page, change deadline and course colors, and send deadlines to a Google calendar named WhiteBoard.
 - While signing in or refreshing, the loading screen shows how many courses, folders, and files it has read, and the latest item.
+- Added distribution and full support for macOS, with corresponding Icon Composer, Acorn, and DMG Canvas design files. 
+  - The Mac app uses `pyobjc` to initiate the system’s built-in `WKWebView`.
+  - Data directory is in `~/.config/whiteboard` (for macOS only). The app starts fresh once cleared.
 
 ### Bugfixes
 - Opening an assignment stays on that assignment. It no longer drops you on the Blackboard home page.

@@ -1240,3 +1240,10 @@ def open_window(url: str) -> None:
     finally:
         _close_controller()
         ole32.CoUninitialize()
+
+
+def save_cookies() -> None:
+    """Windows keeps its own session; WebView2 owns that folder already."""
+
+def clear_cookies() -> None:
+    """Windows keeps its own session; WebView2 owns that folder already."""

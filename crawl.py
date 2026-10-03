@@ -74,6 +74,22 @@ def _title(text: str) -> None:
         return
 
 
+def _save_session() -> None:
+    """Keep the signed-in Blackboard session for the next launch.
+
+    Only macOS needs this: its web host saves cookies itself, so the backend
+    has to put them somewhere. Failures are ignored, costing one sign-in.
+    """
+    try:
+        import host
+
+        saver = getattr(host, "save_cookies", None)
+        if callable(saver):
+            saver()
+    except Exception:
+        return
+
+
 def start_login(username: str, password: str, base_url: str) -> dict:
     if progress["busy"]:
         return dict(progress)
@@ -134,6 +150,7 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
             store.snapshot = snapshot
             store.signed_in = True
             store.save_cache()
+            _save_session()
             _set("Ready.", 1.0)
             _sync_google()
         except AuthExpiredError as exc:

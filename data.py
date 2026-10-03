@@ -20,7 +20,20 @@ ROOT = resource_root()
 if not getattr(sys, "frozen", False) and str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DATA_DIR = Path.home() / ".whiteboard_slim"
+def data_dir() -> Path:
+    """Where the app keeps its snapshot, settings, and saved session.
+
+    Windows stays on the folder it has always used, so an upgrade does not
+    quietly empty a returning user's dashboard. macOS gets its own hidden
+    folder, and nothing WebKit needs lives outside it: host/_macos.py keeps its
+    own cookie jar rather than letting WebKit scatter one into ~/Library.
+    """
+    if sys.platform == "darwin":
+        return Path.home() / ".config" / "whiteboard"
+    return Path.home() / ".whiteboard_slim"
+
+
+DATA_DIR = data_dir()
 SNAPSHOT_PATH = DATA_DIR / "snapshot.json"
 SETTINGS_PATH = DATA_DIR / "settings.json"
 GOOGLE_PATH = DATA_DIR / "google_calendar.json"

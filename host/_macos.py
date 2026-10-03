@@ -753,8 +753,12 @@ def _make_tab_view(tab_id: str, url: str) -> None:
         store=_state.get("store"),
     )
     view.setAutoresizingMask_(_MASK_W | _MASK_H | _MASK_TOP)
-    container.addSubview_(view, AppKit.NSWindowAbove)
+    # Keep the Python reference before touching AppKit. The view is created
+    # autoreleased, and _make_view hands back a borrowed reference; if it is
+    # dropped before addSubview_ retains it, the view is freed underneath us and
+    # the call never returns.
     (_docs["views"])[tab_id] = view
+    container.addSubview_(view)
     _load(url, view)
 
 

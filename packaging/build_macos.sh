@@ -145,28 +145,22 @@ fi
 # ---------------------------------------------------------------------------
 # Smoke test
 # ---------------------------------------------------------------------------
-# A build can look entirely correct and still not start: WKWebView traps without
-# a bundle identity, and a missing framework shows up only at runtime. Run the
-# real thing, from a different directory, before calling this a build.
-PROBE="$(mktemp -d)"
-if (cd "$PROBE" && "$APP/Contents/MacOS/$APP_NAME" -c "
-import Foundation, AppKit, WebKit, objc
-import host._macos as m
-if not Foundation.NSBundle.mainBundle().bundleIdentifier():
-    raise SystemExit('no bundle identity, WKWebView will trap')
-if not m._app_icon():
-    raise SystemExit('the app icon did not load')
-WebKit.WKWebView.alloc().initWithFrame_configuration_(
-    AppKit.NSMakeRect(0, 0, 64, 64), WebKit.WKWebViewConfiguration.alloc().init())
-" >/dev/null 2>&1); then
-  echo "  smoke test: starts, has a bundle identity, WebKit and the icon load"
+# A build can look entirely correct and still not work: WKWebView traps without
+# a bundle identity, a pyobjc framework can be missing, and evaluateJavaScript
+# can hand back Objective-C objects that fail every isinstance check
+# downstream. Run the real thing before calling this a build.
+#
+# This asks for --selftest rather than passing -c to the app, because
+# PyInstaller's bootloader does not run -c: it launches the app regardless, so
+# such a test silently proves only that the app started.
+if "$APP/Contents/MacOS/$APP_NAME" --selftest; then
+  echo "  smoke test: bundle identity, WebKit, script results and icon all good"
 else
-  echo "  SMOKE TEST FAILED - the bundle does not start." >&2
+  echo "  SMOKE TEST FAILED - the bundle does not work." >&2
   echo "  Run it by hand to see why:" >&2
-  echo "    (cd /tmp && $APP/Contents/MacOS/$APP_NAME -c pass)" >&2
+  echo "    $APP/Contents/MacOS/$APP_NAME --selftest" >&2
   exit 1
 fi
-rm -rf "$PROBE"
 
 SIZE="$(du -sh "$APP" | cut -f1)"
 echo

@@ -203,8 +203,13 @@ class _Job(NSObject):
     def runOnMain_(self, _ignored):
         try:
             self.call()
-        except Exception as exc:  # a failed UI call must not kill the run loop
+        except Exception as exc:
             _state["error"] = str(exc) or exc.__class__.__name__
+            # The run loop cannot let this escape, but swallowing it silently
+            # turns a UI-side crash into "Blackboard took too long to answer"
+            # twenty seconds later, which is close to impossible to trace.
+            sys.stderr.write("WhiteBoard: window call failed: %r\n" % (exc,))
+            sys.stderr.flush()
 
 
 class _PageDelegate(NSObject):

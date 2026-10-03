@@ -499,6 +499,36 @@ def eval_js(expression: str, timeout: float = 20):
     return _eval_js(expression, timeout, target="bb")
 
 
+def _plain(value):
+    """Convert a value from evaluateJavaScript into native Python.
+
+    WKWebView's completion handler is declared with an untyped `id` argument, so
+    pyobjc applies none of its default converters and hands back the raw
+    Objective-C objects: a JS object arrives as __NSDictionaryM, a JS array as
+    __NSArrayM, and null as NSNull rather than None.
+
+    The Windows backend returns json.loads() output instead, and the rest of the
+    app is written against that shape -- session.py tests isinstance(value, list)
+    and isinstance(row, dict). Without this conversion every result fails those
+    checks, so sign-in reports a missing form and every fetch is rejected.
+    """
+    if value is None:
+        return None
+    if isinstance(value, Foundation.NSNull):
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return str(value)
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, Foundation.NSDictionary):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (Foundation.NSArray, Foundation.NSSet)):
+        return [_plain(item) for item in value]
+    return value
+
+
 def _eval_js(expression: str, timeout: float, *, target: str):
     """Run one script and wait for its result.
 
@@ -530,7 +560,7 @@ def _eval_js(expression: str, timeout: float, *, target: str):
             raise TimeoutError("Blackboard took too long to answer.")
         if box.get("error"):
             raise RuntimeError(str(box["error"]))
-        return box.get("value")
+        return _plain(box.get("value"))
     finally:
         _script_lock.release()
 

@@ -24,6 +24,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 import AppKit
 import Foundation
@@ -840,17 +841,51 @@ def _cookie_store():
     return _state["store"].httpCookieStore()
 
 
+def _cookie_noop(*_args) -> None:
+    """A real completion handler.
+
+    WKHTTPCookieStore's setters take a block, and pyobjc cannot build one from
+    None: WebKit calls it and dereferences a null block, which takes the whole
+    process down with SIGSEGV at the next launch that has cookies to restore.
+    """
+
+
+def _cookie_problem(reason: str) -> None:
+    """Report a cookie failure instead of failing silently.
+
+    A save that quietly does nothing looks exactly like being signed out, and
+    there is nothing in the UI to tell the two apart.
+    """
+    sys.stderr.write("WhiteBoard: session cookies not saved (%s)\n" % reason)
+    sys.stderr.flush()
+
+
+def _cookie_attr(cookie, attr, default=""):
+    """Read one cookie property, tolerating a missing one.
+
+    One unreadable attribute must not cost the whole session, so this returns a
+    default instead of raising. NSHTTPCookie names its expiry `expiresDate`;
+    asking for `expirationDate` raises AttributeError, which aborted the entire
+    save and quietly signed the user out on every launch.
+    """
+    try:
+        value = getattr(cookie, attr)()
+    except Exception:
+        return default
+    return default if value is None else value
+
+
 def _cookie_record(cookie) -> dict:
     return {
-        "name": str(cookie.name()),
-        "value": str(cookie.value()),
-        "domain": str(cookie.domain()),
-        "path": str(cookie.path()),
-        "secure": bool(cookie.isSecure()),
-        "httpOnly": bool(cookie.isHTTPOnly()),
+        "name": str(_cookie_attr(cookie, "name")),
+        "value": str(_cookie_attr(cookie, "value")),
+        "domain": str(_cookie_attr(cookie, "domain")),
+        "path": str(_cookie_attr(cookie, "path") or "/"),
+        "secure": bool(_cookie_attr(cookie, "isSecure", False)),
+        "httpOnly": bool(_cookie_attr(cookie, "isHTTPOnly", False)),
         # Epoch seconds, or 0 for a session cookie. Kept numeric so it maps
         # straight back onto an NSDate without a date format.
-        "expires": _epoch(cookie.expirationDate()),
+        "expires": _epoch(_cookie_attr(cookie, "expiresDate")),
     }
 
 
@@ -861,6 +896,38 @@ def _epoch(date) -> float:
         return float(date.timeIntervalSince1970())
     except Exception:
         return 0.0
+
+
+def _cookie_from_record(record: dict):
+    """Rebuild an NSHTTPCookie from one saved record.
+
+    NSHTTPCookie has no usable properties-dictionary constructor through pyobjc:
+    -[NSHTTPCookie initWithProperties:] returns nil for every key combination,
+    so +cookieBySettingProperties: is not the answer either. The route that does
+    work is to hand a Set-Cookie header to CFNetwork and take what it parses.
+    """
+    raw = str(record.get("value") or "")
+    # Cookie values are opaque, not URL-encoded. Blackboard sets
+    # BbClientCalenderTimeZone=Asia/Shanghai, and encoding every value corrupts
+    # it. Encode only what would otherwise terminate the header itself.
+    value = quote(raw, safe="") if any(ch in raw for ch in ";\r\n,") else raw
+    parts = ["%s=%s" % (record["name"], value)]
+    expires = float(record.get("expires") or 0.0)
+    if expires:
+        parts.append("Expires=" + time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(expires)))
+    domain = str(record.get("domain") or "").lstrip(".")
+    if domain:
+        parts.append("Domain=%s" % domain)
+    parts.append("Path=%s" % (record.get("path") or "/"))
+    if record.get("secure"):
+        parts.append("Secure")
+    if record.get("httpOnly"):
+        parts.append("HttpOnly")
+    url = Foundation.NSURL.URLWithString_("https://%s/" % (domain or "localhost"))
+    parsed = Foundation.NSHTTPCookie.cookiesWithResponseHeaderFields_forURL_(
+        {"Set-Cookie": "; ".join(parts)}, url
+    )
+    return parsed[0] if parsed else None
 
 
 def _restore_cookies() -> None:
@@ -875,27 +942,23 @@ def _restore_cookies() -> None:
         return
     if not isinstance(records, list) or not records:
         return
-    cookies = []
+    cookies, skipped = [], []
     for record in records:
         if not isinstance(record, dict) or not record.get("name"):
             continue
-        properties = {
-            "NSHTTPCookieName": record["name"],
-            "NSHTTPCookieValue": record.get("value") or "",
-            "NSHTTPCookieDomain": record.get("domain") or "",
-            "NSHTTPCookiePath": record.get("path") or "/",
-        }
-        expires = float(record.get("expires") or 0.0)
-        if expires:
-            properties["NSHTTPCookieExpires"] = Foundation.NSDate.dateWithTimeIntervalSince1970_(
-                expires
-            )
         try:
-            cookies.append(WebKit.NSHTTPCookie.cookieBySettingProperties_(properties))
-        except Exception:
+            cookie = _cookie_from_record(record)
+        except Exception as exc:
+            skipped.append("%s: %s" % (record.get("name"), exc))
             continue
+        if cookie is None:
+            skipped.append("%s: could not be rebuilt" % record.get("name"))
+        else:
+            cookies.append(cookie)
+    if skipped:
+        _cookie_problem("could not restore %d cookie(s): %s" % (len(skipped), skipped[0]))
     if cookies:
-        _cookie_store().setCookies(cookies, None)
+        _cookie_store().setCookies_completionHandler_(cookies, _cookie_noop)
 
 
 def save_cookies() -> None:
@@ -911,10 +974,15 @@ def save_cookies() -> None:
     done = threading.Event()
 
     def finished(cookies):
-        try:
-            holder["records"] = [_cookie_record(item) for item in (cookies or [])]
-        except Exception as exc:
-            holder["error"] = str(exc)
+        records, failures = [], []
+        for item in cookies or []:
+            try:
+                records.append(_cookie_record(item))
+            except Exception as exc:
+                failures.append("%s" % exc)
+        holder["records"] = records
+        if failures:
+            holder.setdefault("error", "skipped %d cookie(s): %s" % (len(failures), failures[0]))
         done.set()
 
     def go():
@@ -926,15 +994,20 @@ def save_cookies() -> None:
 
     _on_main(go)
     if not done.wait(10):
+        _cookie_problem("the cookie store did not answer within 10s")
+        return
+    if holder.get("error"):
+        _cookie_problem(holder["error"])
         return
     records = holder.get("records")
     if not isinstance(records, list):
+        _cookie_problem("no cookies came back")
         return
     try:
         data.DATA_DIR.mkdir(parents=True, exist_ok=True)
         (data.DATA_DIR / "cookies.json").write_text(json.dumps(records), "utf-8")
-    except Exception:
-        pass
+    except Exception as exc:
+        _cookie_problem("could not write cookies.json: %s" % exc)
 
 
 def clear_cookies() -> None:
@@ -960,6 +1033,6 @@ def clear_cookies() -> None:
         return
     for cookie in holder:
         try:
-            store.deleteCookie(cookie, None)
+            store.deleteCookie_completionHandler_(cookie, _cookie_noop)
         except Exception:
             continue

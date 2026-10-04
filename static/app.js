@@ -1178,7 +1178,7 @@ function homeView() {
     keptByHistory(item) && (!item.course_id || inActiveFilter(item.course_id))
   );
   const gradeItems = (state.home_grades || []).filter((grade) => inActiveFilter(grade.course_id));
-  const due = dueItems.map(assignCard).join("") || `<p class="empty">No deadlines this week.</p>`;
+  const due = dueItems.map((item) => assignCard(item, true)).join("") || `<p class="empty">No deadlines this week.</p>`;
   const grades = gradeItems.map((grade) => `<div class="card row grade-card" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}" style="background:${grade.fill};border-color:${grade.ink}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong style="color:${grade.ink}">${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="empty">No new grades.</p>`;
   const banners = errorBanners();
   return `<h2>Home</h2><p class="muted">This week at a glance.</p>${banners}
@@ -1477,7 +1477,7 @@ function courseView(id) {
   const page = (state.course_pages || {})[id];
   if (!course || !page) return `<h2>Course</h2><p class="muted">No course data.</p>`;
   const ring = page.percent == null ? "" : `<div>${ringSvg(page.percent)}<div class="muted" style="text-align:center">${escapeHtml(page.fraction)}</div></div>`;
-  const upcoming = (page.upcoming || []).filter(keptByHistory).map(assignCard).join("") || `<p class="empty">No upcoming work for this course.</p>`;
+  const upcoming = (page.upcoming || []).filter(keptByHistory).map((item) => assignCard(item, true)).join("") || `<p class="empty">No upcoming work for this course.</p>`;
   const grades = page.grades.map((row) => `<div class="card row"><div><strong>${escapeHtml(row.title)}</strong><div class="muted">${escapeHtml(row.due)}</div></div><span class="spacer"></span><strong>${escapeHtml(row.label)}</strong></div>`).join("") || `<p class="empty">No grades for this course yet.</p>`;
   return `<div class="score-row"><h2>${escapeHtml(course.name)}</h2>${ring}</div>
     <h3>Upcoming work</h3>${upcoming}<h3>Grades</h3>${grades}`;

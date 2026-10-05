@@ -942,7 +942,8 @@ def _restore_cookies() -> None:
     if not path.is_file():
         return
     try:
-        records = json.loads(path.read_text("utf-8"))
+        from secure_storage import load_secret
+        records = load_secret(path, [])
     except Exception:
         return
     if not isinstance(records, list) or not records:
@@ -1010,7 +1011,8 @@ def save_cookies() -> None:
         return
     try:
         data.DATA_DIR.mkdir(parents=True, exist_ok=True)
-        (data.DATA_DIR / "cookies.json").write_text(json.dumps(records), "utf-8")
+        from secure_storage import save_secret
+        save_secret(data.DATA_DIR / "cookies.json", records)
     except Exception as exc:
         _cookie_problem("could not write cookies.json: %s" % exc)
 
@@ -1020,7 +1022,8 @@ def clear_cookies() -> None:
     import data
 
     try:
-        (data.DATA_DIR / "cookies.json").unlink()
+        from secure_storage import delete_secret
+        delete_secret(data.DATA_DIR / "cookies.json")
     except FileNotFoundError:
         pass
     except Exception:

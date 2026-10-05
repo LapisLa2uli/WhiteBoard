@@ -102,23 +102,14 @@ def events_for_sync(
 
 
 def load_account() -> dict[str, Any]:
-    if not ACCOUNT_PATH.exists():
-        return {}
-    try:
-        data = json.loads(ACCOUNT_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return _clean_account(data)
+    from secure_storage import load_secret
+    account = load_secret(ACCOUNT_PATH, {})
+    return _clean_account(account) if isinstance(account, dict) else {}
 
 
 def save_account(account: dict[str, Any]) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    ACCOUNT_PATH.write_text(
-        json.dumps(_clean_account(account), indent=2),
-        encoding="utf-8",
-    )
+    from secure_storage import save_secret
+    save_secret(ACCOUNT_PATH, _clean_account(account))
 
 
 def remember_client(client_id: str, client_secret: str) -> dict[str, Any]:

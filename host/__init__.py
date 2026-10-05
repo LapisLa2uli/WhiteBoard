@@ -56,6 +56,8 @@ if sys.platform == "win32":
         set_bridge,
         set_title,
         wait_browser,
+        show_login,
+        hide_login,
     )
 elif sys.platform == "darwin":
     from ._macos import (  # noqa: F401
@@ -73,6 +75,8 @@ elif sys.platform == "darwin":
         set_bridge,
         set_title,
         wait_browser,
+        show_login,
+        hide_login,
     )
 else:
     raise RuntimeError(

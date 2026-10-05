@@ -120,6 +120,10 @@ class _Handler(NSObject):
         return self
 
     def userContentController_didReceiveScriptMessage_(self, _controller, message):
+        from host.trust import trusted_page
+        frame = message.frameInfo()
+        if not frame.isMainFrame() or not trusted_page(str(frame.request().URL().absoluteString())):
+            return
         raw = message.body()
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8", "replace")
@@ -227,10 +231,18 @@ class _PageDelegate(NSObject):
             event = _state.get("page_ready")
             if isinstance(event, threading.Event):
                 event.set()
+
         else:
             event = _state.get("bb_ready")
             if isinstance(event, threading.Event):
                 event.set()
+
+    def webView_decidePolicyForNavigationAction_decisionHandler_(self, view, action, decide):
+        from host.trust import trusted_page
+        if self.tag in {"page", "strip"}:
+            decide(1 if trusted_page(str(action.request().URL().absoluteString())) else 0)
+        else:
+            decide(1)
 
     def webView_didFailNavigation_withError_(self, _web_view, _navigation, error):
         if self.tag == "page":
@@ -1045,3 +1057,17 @@ def clear_cookies() -> None:
             store.deleteCookie_completionHandler_(cookie, _cookie_noop)
         except Exception:
             continue
+
+
+def show_login():
+    def show():
+        window = _state["bb_window"]
+        window.setStyleMask_(AppKit.NSWindowStyleMaskTitled)
+        window.setFrame_display_(AppKit.NSMakeRect(100, 100, 1100, 800), True)
+        window.center()
+        window.makeKeyAndOrderFront_(None)
+    _on_main(show)
+
+
+def hide_login():
+    _on_main(lambda: _state["bb_window"].orderOut_(None))

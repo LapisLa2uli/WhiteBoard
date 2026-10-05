@@ -1020,6 +1020,7 @@ def handle(path: str, body: dict | None = None) -> dict:
             str(payload.get("username") or ""),
             str(payload.get("password") or ""),
             str(payload.get("base_url") or ""),
+            interactive=bool(payload.get("interactive")),
         )
     if route == "/api/refresh":
         return start_refresh()

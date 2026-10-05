@@ -18,10 +18,10 @@ class BridgeABI(unittest.TestCase):
             calls.append(token)
             return 0
 
-        with patch.object(host, '_vtable_slot', side_effect=lambda _, slot: ctypes.cast(add if slot == 34 else remove, ctypes.c_void_p).value):
+        with patch.object(host, '_vtable_slot', side_effect=lambda _, slot: ctypes.cast(add if slot in (34, 7) else remove, ctypes.c_void_p).value):
             host._hook_messages(100)
             host._unhook_messages(100)
-        self.assertEqual(calls, [1234567890123])
+        self.assertEqual(calls, [1234567890123, 1234567890123])
 
     def test_handler_supports_sdk_iid(self):
         handler = host._make_message_handler()

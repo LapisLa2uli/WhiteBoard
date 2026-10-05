@@ -226,6 +226,13 @@ function controlOf(event) {
 
 function onClick(event) {
   const source = controlOf(event);
+  if (source.closest("#school-signin")) { startLogin(true); return; }
+  if (source.closest("#show-password")) {
+    const input = document.getElementById("pass");
+    input.type = input.type === "password" ? "text" : "password";
+    source.textContent = input.type === "password" ? "Show password" : "Hide password";
+    return;
+  }
   if (!source) return;
   const assignCheck = source.closest("[data-assign-select]");
   if (assignCheck) {
@@ -677,12 +684,14 @@ function beginLoading(kind, message) {
   render();
 }
 
-function startLogin() {
+function startLogin(interactive = false) {
   const username = (document.getElementById("user") || {}).value || "";
   const password = (document.getElementById("pass") || {}).value || "";
   const baseUrl = (document.getElementById("base-url") || {}).value || "";
+  try { const url = new URL(baseUrl); if (url.protocol !== "https:" || url.username || url.password || !username.trim() || (!interactive && !password)) throw new Error(); }
+  catch (_) { jobError = "Enter an HTTPS school address, username, and password (or choose school sign-in)."; render(); return; }
   beginLoading("login", "Signing in…");
-  api("/api/login", { username: username.trim(), password, base_url: baseUrl.trim() })
+  api("/api/login", { username: username.trim(), password, base_url: baseUrl.trim(), interactive })
     .then(() => pollJob()).catch(error => { loading = null; busy = false; showError(error); });
 }
 
@@ -877,12 +886,13 @@ function loginView() {
     : "";
   return `<div class="login"><form class="card" id="login-form">
     <div class="row"><img src="logo.png" width="48" height="48" alt="" /><h2>WhiteBoard</h2></div>
-    <p class="muted">Sign in to Blackboard in this window. WhiteBoard comes back here when your courses are loaded. This copy does not use the other WhiteBoard app.</p>
-    <label>School URL</label><input type="text" id="base-url" value="${escapeAttr((state && state.base_url) || "https://shs.blackboardchina.cn")}" />
-    <label>Username</label><input type="text" id="user" value="${escapeAttr((state && state.username) || "")}" />
-    <label>Password</label><input type="password" id="pass" />
+    <p class="muted">See your deadlines, grades, and course files together. Your password is sent only to your school and is never saved. For SSO or MFA, choose school sign-in.</p>
+    <label for="base-url">School URL</label><input type="url" autocomplete="url" required id="base-url" value="${escapeAttr((state && state.base_url) || "https://shs.blackboardchina.cn")}" />
+    <label for="user">Username</label><input type="text" autocomplete="username" required id="user" value="${escapeAttr((state && state.username) || "")}" />
+    <label for="pass">Password</label><input type="password" autocomplete="current-password" id="pass" /><button class="text-btn" id="show-password" type="button">Show password</button>
     <div class="row" style="margin-top:14px">
       <button class="fill-btn" id="sign-in" type="button">Sign in</button>
+      <button class="outline-btn" id="school-signin" type="button">School sign-in (SSO / MFA)</button>
       ${saved}
     </div>
     <p class="muted" id="login-note">${escapeHtml(jobError || "")}</p>

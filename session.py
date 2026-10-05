@@ -167,12 +167,14 @@ class WebSession:
         host.clear_cookies()
         self.prepare()
         self._tell("Waiting for the Blackboard sign-in form…", 0.06)
-        self._dismiss_consent()
+        # Consent and identity-provider pages remain under the user's control.
         deadline = time.time() + 25
         filled = None
         while time.time() < deadline:
             self._check_cancelled()
             filled = self._submit_login(username, password)
+            if isinstance(filled, dict) and filled.get("external"):
+                return self.interactive_login(username, prepared=True)
             if isinstance(filled, dict) and filled.get("found"):
                 break
             if self._me_ok():
@@ -209,6 +211,26 @@ class WebSession:
             + (f" The browser stopped at {href}." if href else "")
         )
 
+    def interactive_login(self, username, prepared=False):
+        if not prepared:
+            host.wait_browser()
+            host.clear_cookies()
+            self.prepare()
+        host.show_login()
+        self._tell("Complete school sign-in in the browser window…", .08)
+        try:
+            deadline = time.time() + 180
+            while time.time() < deadline:
+                self._check_cancelled()
+                if self._me_ok():
+                    self._verify_user(username)
+                    self.logged_in = True
+                    return
+                time.sleep(1)
+            raise SessionError("School sign-in timed out. Try again.")
+        finally:
+            host.hide_login()
+
     def _dismiss_consent(self) -> None:
         host.eval_js(
             """(() => {
@@ -225,6 +247,8 @@ class WebSession:
     def _submit_login(self, username: str, password: str):
         script = (
             "(() => {"
+            f"const expectedOrigin = {json.dumps(self.base_url)};"
+            "if (location.origin !== expectedOrigin) return {found:false, external:true};"
             f"const userName = {json.dumps(username)};"
             f"const secret = {json.dumps(password)};"
             """

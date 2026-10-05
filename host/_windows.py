@@ -71,6 +71,7 @@ IID_ENV_DONE = "{4E8A3389-C9D8-4BD2-B6B5-124FEE6CC14D}"
 IID_CTRL_DONE = "{6C4819F3-C9B7-4260-8127-C9F5BDE7F68C}"
 IID_SCRIPT_DONE = "{49511172-CC67-4BCA-9923-137112F4C4CC}"
 IID_WEB_MESSAGE = "{57213F19-00E6-49FA-8E07-898EA01ECBD2}"
+IID_NAV_START = "{9ADBE429-F36D-432B-9DDC-F8881FBD76E3}"
 
 def _resource_root() -> Path:
     import data
@@ -222,6 +223,8 @@ def _query_interface(this: int, riid, ppv) -> int:
         accepted.add(IID_SCRIPT_DONE)
     elif handler.kind == 4:
         accepted.add(IID_WEB_MESSAGE)
+    elif handler.kind == 7:
+        accepted.add(IID_NAV_START)
     else:
         accepted.add(IID_CTRL_DONE)
     if wanted in accepted:
@@ -400,19 +403,27 @@ def _hook_messages(webview: int) -> None:
         _state["error"] = f"Could not connect the window (0x{hr & 0xFFFFFFFF:08X})"
     else:
         _state.setdefault("message_handlers", {})[webview] = (handler, token)
+    nav = _make_message_handler(_on_navigation, 7)
+    nav_token = ctypes.c_int64()
+    hr = ADD_WEB_MESSAGE(_vtable_slot(webview, 7))(webview, ctypes.addressof(nav), byref(nav_token))
+    if hr >= 0:
+        _state.setdefault("navigation_handlers", {})[webview] = (nav, nav_token)
 
 
 def _unhook_messages(webview: int) -> None:
     registration = _state.get("message_handlers", {}).pop(webview, None)
     if registration:
         REMOVE_WEB_MESSAGE(_vtable_slot(webview, 35))(webview, registration[1])
+    registration = _state.get("navigation_handlers", {}).pop(webview, None)
+    if registration:
+        REMOVE_WEB_MESSAGE(_vtable_slot(webview, 8))(webview, registration[1])
 
 
-def _make_message_handler() -> Handler:
+def _make_message_handler(callback=None, kind=4) -> Handler:
     qi = QI_FN(_query_interface)
     add = REF_FN(_add_ref)
     release = REF_FN(_release)
-    invoke = MSG_INVOKE(_on_web_message)
+    invoke = MSG_INVOKE(callback or _on_web_message)
     vtbl = HandlerVtbl(
         ctypes.cast(qi, c_void_p),
         ctypes.cast(add, c_void_p),
@@ -420,9 +431,22 @@ def _make_message_handler() -> Handler:
         ctypes.cast(invoke, c_void_p),
     )
     _keep.extend((qi, add, release, invoke, vtbl))
-    handler = Handler(ctypes.pointer(vtbl), 4)
+    handler = Handler(ctypes.pointer(vtbl), kind)
     _keep.append(handler)
     return handler
+
+
+def _on_navigation(_this, _sender, args):
+    from host.trust import trusted_page
+    pointer = c_void_p()
+    if GET_SOURCE(_vtable_slot(args, 3))(args, byref(pointer)) >= 0:
+        try:
+            if not pointer.value or not trusted_page(ctypes.wstring_at(pointer.value)):
+                PUT_VISIBLE(_vtable_slot(args, 8))(args, 1)
+        finally:
+            if pointer.value:
+                ole32.CoTaskMemFree(pointer)
+    return S_OK
 
 
 def _web_message_text(args: int) -> str:
@@ -437,6 +461,16 @@ def _web_message_text(args: int) -> str:
 
 
 def _on_web_message(_this: int, _sender: int, args: int) -> int:
+    from host.trust import trusted_page
+    source = c_void_p()
+    if not args or GET_SOURCE(_vtable_slot(args, 3))(args, byref(source)) < 0:
+        return S_OK
+    try:
+        if not source.value or not trusted_page(ctypes.wstring_at(source.value)):
+            return S_OK
+    finally:
+        if source.value:
+            ole32.CoTaskMemFree(source)
     raw = _web_message_text(args) if args else ""
     try:
         message = json.loads(raw) if raw else {}
@@ -1257,3 +1291,22 @@ def clear_cookies() -> None:
     if errors:
         raise errors[0]
 
+
+
+def show_login():
+    def show():
+        hwnd = int(_state["bb_hwnd"])
+        user32.SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
+        user32.SetWindowPos(hwnd, None, 100, 100, 1100, 800, 0)
+        user32.ShowWindow(hwnd, SW_SHOW)
+        _fill_controller(hwnd, int(_state["bb_controller"]))
+        user32.SetForegroundWindow(hwnd)
+    _queue_call(show)
+
+
+def hide_login():
+    def hide():
+        hwnd = int(_state["bb_hwnd"])
+        user32.SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA)
+        user32.SetWindowPos(hwnd, None, -32000, -32000, 16, 16, 0)
+    _queue_call(hide)

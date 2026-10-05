@@ -95,7 +95,7 @@ def _save_session() -> None:
         return
 
 
-def start_login(username: str, password: str, base_url: str) -> dict:
+def start_login(username: str, password: str, base_url: str, interactive=False) -> dict:
     with _lock:
         if progress["busy"]:
             return dict(progress)
@@ -104,7 +104,7 @@ def start_login(username: str, password: str, base_url: str) -> dict:
         from accounts import school_origin
         settings["base_url"] = school_origin(base_url or settings.get("base_url") or "")
         settings["username"] = username.strip()
-        _launch("login", username.strip(), password, settings["base_url"])
+        _launch("interactive" if interactive else "login", username.strip(), password, settings["base_url"])
         return dict(progress)
 
 
@@ -148,8 +148,11 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
             session.note_loaded = _on_detail
             session.cancel_event = _cancel
             _session = session
-            if kind == "login":
-                session.login(username, secret)
+            if kind in {"login", "interactive"}:
+                if kind == "interactive":
+                    session.interactive_login(username)
+                else:
+                    session.login(username, secret)
                 from accounts import activate
                 activate(base_url, session.user, username)
             else:

@@ -110,7 +110,9 @@ class WebSession:
     """Enough of BlackboardSession for fetch_snapshot and course-file indexing."""
 
     def __init__(self, base_url: str, on_progress=None) -> None:
-        self.base_url = base_url.rstrip("/")
+        from accounts import school_origin
+        self.base_url = school_origin(base_url)
+        self.user = {}
         self.on_progress = on_progress
         self.logged_in = False
         self.cancel_event = None
@@ -161,12 +163,10 @@ class WebSession:
         raise SessionError(f"Could not open Blackboard ({detail}).")
 
     def login(self, username: str, password: str) -> None:
+        host.wait_browser()
+        host.clear_cookies()
         self.prepare()
         self._tell("Waiting for the Blackboard sign-in form…", 0.06)
-        if self._me_ok():
-            self.logged_in = True
-            self._tell("Signed in.", 0.12)
-            return
         self._dismiss_consent()
         deadline = time.time() + 25
         filled = None
@@ -176,6 +176,7 @@ class WebSession:
             if isinstance(filled, dict) and filled.get("found"):
                 break
             if self._me_ok():
+                self._verify_user(username)
                 self.logged_in = True
                 self._tell("Signed in.", 0.12)
                 return
@@ -190,7 +191,8 @@ class WebSession:
         deadline = time.time() + 40
         while time.time() < deadline:
             self._check_cancelled()
-            if self._page_logged_in() or self._me_ok():
+            if self._me_ok():
+                self._verify_user(username)
                 self.logged_in = True
                 self._tell("Signed in.", 0.12)
                 return
@@ -280,7 +282,16 @@ class WebSession:
             me = self.get_json("/learn/api/v1/users/me")
         except Exception:
             return False
-        return isinstance(me, dict) and bool(me.get("id") or me.get("userName") or me.get("uuid"))
+        if isinstance(me, dict) and (me.get("id") or me.get("uuid")):
+            self.user = me
+            return True
+        return False
+
+    def _verify_user(self, username):
+        actual = str(self.user.get("userName") or self.user.get("username") or "")
+        if not actual or actual.casefold() != username.strip().casefold():
+            host.clear_cookies()
+            raise SessionError("The signed-in account does not match the requested username. Sign in again.")
 
     def get_bytes(self, path: str) -> bytes:
         import base64

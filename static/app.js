@@ -379,7 +379,7 @@ function onClick(event) {
     return;
   }
   if (source.closest("#logout")) {
-    go("/login");
+    signOut();
     return;
   }
   if (source.closest("#saved")) {
@@ -2747,3 +2747,13 @@ function escapeAttr(value) { return escapeHtml(value); }
 boot();
 
 function showError(error) { jobError = error.message || String(error); render(); }
+
+async function signOut() {
+  const keep = window.confirm("Keep an offline copy of this account on this computer? Cancel signs out and removes the saved dashboard.");
+  try {
+    await api("/api/logout", { keep_offline: keep });
+    manualMarks.clear(); contentsSelected.clear(); selectedAssignments.clear();
+    query = {assignments:"", grades:"", courses:"", contents:""}; pages = {};
+    await loadState(); go("/login"); render();
+  } catch (error) { showError(error); }
+}

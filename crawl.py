@@ -101,9 +101,9 @@ def start_login(username: str, password: str, base_url: str) -> dict:
             return dict(progress)
         _title("WhiteBoard — Signing in…")
         settings = load_settings()
-        settings["base_url"] = (base_url or settings.get("base_url") or "").rstrip("/")
+        from accounts import school_origin
+        settings["base_url"] = school_origin(base_url or settings.get("base_url") or "")
         settings["username"] = username.strip()
-        save_settings(settings)
         _launch("login", username.strip(), password, settings["base_url"])
         return dict(progress)
 
@@ -150,10 +150,13 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
             _session = session
             if kind == "login":
                 session.login(username, secret)
+                from accounts import activate
+                activate(base_url, session.user, username)
             else:
                 session.prepare()
                 if not session._me_ok():
                     raise AuthExpiredError("Your Blackboard session expired. Sign in again to refresh.")
+                session._verify_user(username)
                 session.logged_in = True
             _set("Loading your dashboard…", 0.08)
             snapshot = fetch_snapshot(

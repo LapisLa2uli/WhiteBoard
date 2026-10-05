@@ -938,7 +938,7 @@ def _cookie_from_record(record: dict):
 def _restore_cookies() -> None:
     import data
 
-    path = data.DATA_DIR / "cookies.json"
+    path = data.APP_DIR / "cookies.json"
     if not path.is_file():
         return
     try:
@@ -1012,7 +1012,7 @@ def save_cookies() -> None:
     try:
         data.DATA_DIR.mkdir(parents=True, exist_ok=True)
         from secure_storage import save_secret
-        save_secret(data.DATA_DIR / "cookies.json", records)
+        save_secret(data.APP_DIR / "cookies.json", records)
     except Exception as exc:
         _cookie_problem("could not write cookies.json: %s" % exc)
 
@@ -1023,11 +1023,12 @@ def clear_cookies() -> None:
 
     try:
         from secure_storage import delete_secret
-        delete_secret(data.DATA_DIR / "cookies.json")
+        delete_secret(data.APP_DIR / "cookies.json")
     except FileNotFoundError:
         pass
     except Exception:
         pass
+    _on_main(lambda: [_close_tab(str(tab["id"])) for tab in list(_docs.get("tabs") or [])])
     store = _cookie_store()
     holder: list = []
     done = threading.Event()

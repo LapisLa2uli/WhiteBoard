@@ -994,6 +994,12 @@ def handle(path: str, body: dict | None = None) -> dict:
     """Answer one window request. Nothing listens on a network port."""
     payload = body if isinstance(body, dict) else {}
     route = str(path or "").split("?", 1)[0]
+    if route == "/api/logout":
+        if _google.get("busy"):
+            raise RuntimeError("Wait for Google sync to finish before signing out.")
+        from accounts import logout
+        logout(bool(payload.get("keep_offline")))
+        return _state()
     if route == "/api/state":
         return _state()
     if route == "/api/cancel":

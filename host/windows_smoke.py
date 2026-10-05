@@ -45,6 +45,8 @@ def run():
             while not backend._docs.get("tabs") and time.monotonic() < deadline:
                 time.sleep(.1)
             assert backend._docs.get("tabs"), "document tab did not open"
+            backend.clear_cookies()
+            assert not backend._docs.get("tabs"), "sign-out left document tabs open"
         except Exception as exc:
             failures.append(str(exc) or type(exc).__name__)
         finally:

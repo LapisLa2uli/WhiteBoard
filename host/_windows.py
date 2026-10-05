@@ -1224,4 +1224,36 @@ def save_cookies() -> None:
     """Windows keeps its own session; WebView2 owns that folder already."""
 
 def clear_cookies() -> None:
-    """Windows keeps its own session; WebView2 owns that folder already."""
+    """Clear HttpOnly cookies through the supported cookie manager on the UI thread."""
+    done = threading.Event()
+    errors = []
+    def clear():
+        interface, manager = c_void_p(), c_void_p()
+        try:
+            for tab in list(_docs.get("tabs") or []):
+                _close_doc_tab(str(tab["id"]))
+            web = int(_state["bb_webview"])
+            iid = GUID.from_text("{9E8F0CF8-E670-4B5E-B2BC-73E061E3184C}")
+            hr = QI_FN(_vtable_slot(web, 0))(web, byref(iid), byref(interface))
+            if hr < 0:
+                raise RuntimeError("Update Microsoft WebView2 to sign out securely.")
+            hr = GET_WEBVIEW(_vtable_slot(interface.value, 66))(interface, byref(manager))
+            if hr < 0:
+                raise RuntimeError("The browser cookie manager is unavailable.")
+            hr = CLOSE_CTRL(_vtable_slot(manager.value, 10))(manager)
+            if hr < 0:
+                raise RuntimeError("The browser could not clear its session cookies.")
+            NAVIGATE(_vtable_slot(web, 5))(web, "about:blank")
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            for ptr in (manager, interface):
+                if ptr.value:
+                    ADDREF(_vtable_slot(ptr.value, 2))(ptr)
+            done.set()
+    _queue_call(clear)
+    if not done.wait(15):
+        raise TimeoutError("The browser did not finish signing out.")
+    if errors:
+        raise errors[0]
+

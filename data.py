@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 
 
@@ -28,23 +29,41 @@ def data_dir() -> Path:
     folder, and nothing WebKit needs lives outside it: host/_macos.py keeps its
     own cookie jar rather than letting WebKit scatter one into ~/Library.
     """
+    if os.environ.get("WHITEBOARD_DATA_DIR"):
+        return Path(os.environ["WHITEBOARD_DATA_DIR"]).resolve()
     if sys.platform == "darwin":
         return Path.home() / ".config" / "whiteboard"
     return Path.home() / ".whiteboard_slim"
 
 
 DATA_DIR = data_dir()
+APP_DIR = DATA_DIR
 SNAPSHOT_PATH = DATA_DIR / "snapshot.json"
 SETTINGS_PATH = DATA_DIR / "settings.json"
 GOOGLE_PATH = DATA_DIR / "google_calendar.json"
 WEBVIEW_PATH = DATA_DIR / "webview"
 
 _installed = False
+_restored = False
+
+
+def use_profile(key):
+    global DATA_DIR, SNAPSHOT_PATH, SETTINGS_PATH, GOOGLE_PATH, _restored
+    _restored = True
+    DATA_DIR = APP_DIR / 'accounts' / key
+    SNAPSHOT_PATH = DATA_DIR / 'snapshot.json'
+    SETTINGS_PATH = DATA_DIR / 'settings.json'
+    GOOGLE_PATH = DATA_DIR / 'google_calendar.json'
+    install()
 
 
 def install() -> None:
     """Point shared modules at this app's data folder for this process only."""
-    global _installed
+    global _installed, _restored
+    if not _restored:
+        _restored = True
+        from accounts import restore
+        restore()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     import blackboard.store as store
 

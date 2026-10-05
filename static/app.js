@@ -1772,7 +1772,7 @@ function contentsBody() {
   if (needle) return contentsSearchView(courses, nodes, needle);
   if (!courses.length) return `<p class="empty">No courses in this filter.</p>`;
   const hint = !nodes.length
-    ? `<p class="empty">${state.files_indexed
+    ? `<p class="empty">${!state.content_loaded && state.files_indexed ? "Loading saved files…" : state.files_indexed
       ? "No course files were found in this filter."
       : (loading || state.content_indexing) ? "Files are still being indexed. This page updates when indexing finishes."
       : "File indexing is incomplete. Use Refresh to finish loading your files."}</p>`
@@ -2857,7 +2857,7 @@ function enhanceAccessibility() {
       if (!el.id) el.id='field-'+index;
       previous.htmlFor=el.id;
     }
-    if (el.getAttribute('aria-label') || el.labels?.length || (el.tagName==='BUTTON' && el.textContent.trim())) return;
+    if (el.getAttribute('aria-label') || [...(el.labels || [])].some(label=>label.textContent.trim()) || (el.tagName==='BUTTON' && el.textContent.trim())) return;
     const row=el.closest('.file-row,.assign,.card');
     const name=row?.querySelector('.name,strong')?.textContent.trim();
     const label=el.title || el.placeholder || (el.dataset.open != null ? 'Open '+(name || 'file') : el.dataset.expand ? 'Expand or collapse '+(name || 'folder') : el.type==='checkbox' ? 'Select '+(name || 'item') : (el.id || 'Option').replaceAll('-',' '));

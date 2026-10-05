@@ -68,6 +68,45 @@ jobs:
         if: matrix.platform == 'macos'
         shell: bash
         run: PYTHON="$(command -v python)" bash packaging/build_macos.sh
+      - name: Install, reinstall and uninstall Windows setup
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (python -c "from version import APP_VERSION; print(APP_VERSION)").Trim()
+          $setup = Join-Path $PWD "dist/WhiteBoard-$version-Setup.exe"
+          $installed = Join-Path $env:RUNNER_TEMP 'WhiteBoard acceptance'
+          $env:WHITEBOARD_DATA_DIR = Join-Path $env:RUNNER_TEMP 'whiteboard-acceptance-profile'
+          foreach ($pass in 1..2) {
+            $process = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=',"/DIR=`"$installed`"") -WindowStyle Hidden -PassThru
+            if (-not $process.WaitForExit(120000)) { Stop-Process -Id $process.Id; throw 'Setup timed out' }
+            if ($process.ExitCode -ne 0) { throw "Setup failed: $($process.ExitCode)" }
+            $exe = Join-Path $installed 'WhiteBoard.exe'
+            $process = Start-Process -FilePath $exe -ArgumentList '--selftest' -WindowStyle Hidden -PassThru
+            if (-not $process.WaitForExit(120000)) { Stop-Process -Id $process.Id; throw 'Installed app timed out' }
+            if ($process.ExitCode -ne 0) { throw "Installed app failed: $($process.ExitCode)" }
+          }
+          $uninstaller = Join-Path $installed 'unins000.exe'
+          $process = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART') -WindowStyle Hidden -PassThru
+          if (-not $process.WaitForExit(120000)) { Stop-Process -Id $process.Id; throw 'Uninstall timed out' }
+          if ($process.ExitCode -ne 0) { throw "Uninstall failed: $($process.ExitCode)" }
+          if (Test-Path -LiteralPath $exe) { throw 'Uninstall left the application executable behind' }
+      - name: Verify and install Apple silicon disk image
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python -c 'from version import APP_VERSION; print(APP_VERSION)')"
+          dmg="$PWD/dist/WhiteBoard-$version-AppleSilicon.dmg"
+          work="$(mktemp -d)"
+          trap 'hdiutil detach "$work/mount" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
+          hdiutil verify "$dmg"
+          hdiutil attach -readonly -nobrowse -mountpoint "$work/mount" "$dmg"
+          [[ -L "$work/mount/Applications" ]] || { echo 'Missing Applications shortcut' >&2; exit 1; }
+          ditto "$work/mount/WhiteBoard.app" "$work/WhiteBoard.app"
+          hdiutil detach "$work/mount"
+          codesign --verify --deep --strict "$work/WhiteBoard.app"
+          WHITEBOARD_DATA_DIR="$work/profile" "$work/WhiteBoard.app/Contents/MacOS/WhiteBoard" --selftest
       - name: Collect installers and release metadata
         shell: python
         env:

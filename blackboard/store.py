@@ -80,6 +80,7 @@ class Store:
 
 
 _UI_FONTS = {
+    "system",
     "segoe",
     "calibri",
     "candara",
@@ -93,8 +94,8 @@ _UI_FONTS = {
 
 
 def _ui_font(value: object) -> str:
-    font = str(value or "segoe")
-    return font if font in _UI_FONTS else "segoe"
+    font = str(value or "system")
+    return font if font in _UI_FONTS else "system"
 
 
 _PAGE_OPENERS = {"builtin", "system", "edge", "chrome"}
@@ -110,6 +111,9 @@ def load_settings() -> dict:
         "base_url": "https://shs.blackboardchina.cn",
         "username": "",
         "inactivity": "all",
+        "sidebar_collapsed": False,
+        "motion_effects": False,
+        "favorite_courses": [],
         "custom_filters": [],
         "active_custom_filter": "",
         "hide_overdue": "off",
@@ -127,7 +131,7 @@ def load_settings() -> dict:
         "deadline_colors": {},
         "course_colors": {},
         "google_sync_enabled": False,
-        "ui_font": "segoe",
+        "ui_font": "system",
         "page_opener": "builtin",
     }
     if not SETTINGS_PATH.exists():
@@ -196,6 +200,9 @@ def save_settings(settings: dict) -> None:
         "base_url": settings.get("base_url", "https://shs.blackboardchina.cn"),
         "username": str(settings.get("username") or ""),
         "inactivity": settings.get("inactivity", "all"),
+        "sidebar_collapsed": bool(settings.get("sidebar_collapsed")),
+        "motion_effects": bool(settings.get("motion_effects")),
+        "favorite_courses": [str(x) for x in (settings.get("favorite_courses") or [])][:200],
         "custom_filters": settings.get("custom_filters") or [],
         "active_custom_filter": settings.get("active_custom_filter") or "",
         "hide_overdue": settings.get("hide_overdue") or "off",

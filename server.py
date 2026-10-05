@@ -144,6 +144,9 @@ def _settings_patch(settings: dict) -> dict:
         "contents_view_mode": settings.get("contents_view_mode") or "tree",
         "google_sync_enabled": bool(settings.get("google_sync_enabled")),
         "ui_font": _ui_font(settings.get("ui_font")),
+        "sidebar_collapsed": bool(settings.get("sidebar_collapsed")),
+        "motion_effects": bool(settings.get("motion_effects")),
+        "favorite_courses": list(settings.get("favorite_courses") or []),
         "page_opener": _page_opener(settings.get("page_opener")),
     }
 
@@ -221,6 +224,10 @@ class Handler(BaseHTTPRequestHandler):
         return {"patch": _settings_patch(settings)}
 
     def _edit_settings(self, settings: dict, body: dict) -> None:
+        for key in ("sidebar_collapsed", "motion_effects"):
+            if key in body: settings[key] = bool(body[key])
+        if "favorite_courses" in body and isinstance(body["favorite_courses"], list):
+            settings["favorite_courses"] = [str(x) for x in body["favorite_courses"]][:200]
         if "list_page_size" in body:
             try:
                 size = int(body.get("list_page_size") or 10)

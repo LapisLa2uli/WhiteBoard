@@ -8,6 +8,7 @@ let hideEvents = false;
 let busy = false;
 let feedback = null;
 let viewer = null;
+let logoutDialog = false;
 let calendarMode = "list";
 let calendarDays = 7;
 let calendarDay = "";
@@ -45,6 +46,7 @@ let courseFilterCache = null;
 let manualMarks = new Set();
 let detailReturn = "";
 const UI_FONTS = {
+  system: "system-ui, sans-serif",
   segoe: '"Segoe UI", sans-serif',
   calibri: "Calibri, sans-serif",
   candara: "Candara, sans-serif",
@@ -56,6 +58,7 @@ const UI_FONTS = {
   arial: "Arial, sans-serif",
 };
 const UI_FONT_LABELS = [
+  ["system", "System default"],
   ["segoe", "Segoe UI"],
   ["calibri", "Calibri"],
   ["candara", "Candara"],
@@ -155,7 +158,7 @@ function go(path) {
 }
 
 function applyUiFont(id) {
-  document.body.style.fontFamily = UI_FONTS[id] || UI_FONTS.segoe;
+  document.body.style.fontFamily = UI_FONTS[id] || UI_FONTS.system;
 }
 
 const RIPPLE_HOST = ".assign, .card, .nav-btn, .outline-btn, .fill-btn, .text-btn, .course-link, .chip-btn, .event-chip, .folder > button";
@@ -235,6 +238,11 @@ function controlOf(event) {
 
 function onClick(event) {
   const source = controlOf(event);
+  if (source.closest("#sidebar-toggle")) { persistSettings({sidebar_collapsed:!state.sidebar_collapsed}).then(render).catch(showError); return; }
+  const favorite=source.closest("[data-favorite]");
+  if (favorite) { const ids=new Set(state.favorite_courses || []); const id=favorite.dataset.favorite; if(ids.has(id))ids.delete(id);else ids.add(id);persistSettings({favorite_courses:[...ids]}).then(paintCourses).catch(showError);return; }
+  if (source.closest("#logout-cancel")) { logoutDialog=false;paintPage();return; }
+  if (source.closest("#logout-confirm")) { finishSignOut(document.getElementById("keep-offline").checked);return; }
   const moreDay = source.closest("[data-cal-day]");
   if (moreDay) { calendarReturn = {mode:calendarMode,anchor:calendarAnchor,scroll:document.getElementById("page-body").scrollTop}; calendarDay=moreDay.dataset.calDay; paintCalendarRoot(); return; }
   if (source.closest("#cal-day-back")) { calendarDay=""; calendarMode=calendarReturn.mode; calendarAnchor=calendarReturn.anchor; paintCalendarRoot(); document.getElementById("page-body").scrollTop=calendarReturn.scroll; return; }
@@ -630,6 +638,7 @@ function onInput(event) {
 }
 
 function onChange(event) {
+  if (event.target.id === "motion-effects") { persistSettings({motion_effects:event.target.checked}).catch(showError); return; }
   if (event.target.id === "history-mode") {
     const mode = event.target.value;
     saveFilters({
@@ -947,20 +956,17 @@ function paintChrome() {
   const topbar = document.getElementById("topbar");
   const busySlot = document.getElementById("busy-slot");
   if (!topbar) return;
+  document.getElementById("shell").classList.toggle("sidebar-collapsed", !!state.sidebar_collapsed);
   const nav = NAV.map(([path, label, icon]) => {
     const active = topOf(route) === path ? "active" : "";
     const badge = path === "/assignments" ? todoBadge() : "";
     return `<button class="nav-btn ${active}" data-go="${path}">${navIcon(icon)}<span class="label">${label}</span>${badge}</button>`;
   }).join("");
   topbar.innerHTML = `
-    <img class="logo" src="logo.png" alt="" />
-    ${nav}
-    <span class="spacer"></span>
-    <span class="muted">${escapeHtml(state.fetched_at)}</span>
-    <span class="muted">${escapeHtml(state.user_name || "")}</span>
-    ${busy || state.google_busy ? '<span class="spin"></span>' : ""}
-    <button class="outline-btn pill" id="refresh">Refresh</button>
-    <button class="text-btn pill" id="logout">Log out</button>`;
+    <button class="text-btn" id="sidebar-toggle" aria-label="Toggle course sidebar" aria-expanded="${!state.sidebar_collapsed}">☰</button>
+    <nav class="primary-nav" aria-label="Main navigation">${nav}</nav>
+    <button class="outline-btn pill" id="refresh" ${loading ? 'disabled' : ''}>Refresh</button>
+    <details class="account-menu"><summary>Account</summary><div class="account-popover"><strong>${escapeHtml(state.user_name || state.username || "WhiteBoard")}</strong><p class="muted">${state.offline ? 'Offline copy · ' : ''}Updated ${escapeHtml(state.fetched_at)}</p><button class="text-btn" data-go="/settings">Settings</button><button class="text-btn" id="logout">Sign out</button></div></details>`;
   if (busySlot) {
     const on = busy || state.google_busy;
     busySlot.innerHTML = loading ? `<div class="sync-status" role="status">${escapeHtml(loading.message)} <button id="cancel-loading" class="text-btn">Cancel refresh</button>${state.partial ? '<span>Some details are still being verified.</span>' : ''}</div>` : `<div class="busy-bar ${on ? "" : "idle"}"><span></span></div>`;
@@ -1145,25 +1151,23 @@ function paintCourses() {
   if (!box) return;
   const rows = listedCourses();
   const empty = query.courses.trim() ? "No matching courses." : "No courses in this filter.";
-  box.innerHTML = rows.map(({ course, hidden }) => {
-    const active = route.endsWith(course.id) ? "active" : "";
-    const style = hidden
-      ? "background:#e2e8f0;border-color:#cbd5e1;opacity:0.55"
-      : `background:${course.fill};border-color:${course.ink}`;
-    const flag = hidden ? `<span class="flag">Filtered out</span>` : "";
-    return `<button class="course-link ${active}" data-go="/courses/${encodeURIComponent(course.id)}" style="${style}">
-      <span class="name">${escapeHtml(course.name)}</span>
-      <span class="term">${escapeHtml(course.term || "Course")}</span>
-      ${flag}
-    </button>`;
-  }).join("") || `<p class="side-note">${empty}</p>`;
+  const favorites=new Set(state.favorite_courses || []);
+  const rowHtml=({course,hidden})=>`<div class="course-row"><button class="course-link ${route.endsWith(course.id)?'active':''}" data-go="/courses/${encodeURIComponent(course.id)}" title="${escapeAttr(course.name)}" style="border-left:4px solid ${course.ink};opacity:${hidden ? 0.55 : 1}"><span class="name">${escapeHtml(course.name)}</span><span class="term">${escapeHtml(course.term || 'Course')}</span></button><button class="favorite" data-favorite="${escapeAttr(course.id)}" aria-label="${favorites.has(course.id)?'Unfavorite':'Favorite'} ${escapeAttr(course.name)}" aria-pressed="${favorites.has(course.id)}">${favorites.has(course.id)?'★':'☆'}</button></div>`;
+  const favoriteRows=rows.filter(row=>favorites.has(row.course.id));
+  const others=rows.filter(row=>!favorites.has(row.course.id));
+  const cutoff=Date.now()/1000-180*86400;
+  const current=others.filter(row=>!row.course.activity || row.course.activity>=cutoff);
+  const older=others.filter(row=>row.course.activity && row.course.activity<cutoff);
+  box.innerHTML=(favoriteRows.length?`<div class="label">Favorites</div>${favoriteRows.map(rowHtml).join('')}`:'')+`<div class="label">Current and undated</div>${current.map(rowHtml).join('')}`+(older.length?`<details ${query.courses?'open':''}><summary>Older courses (${older.length})</summary>${older.map(rowHtml).join('')}</details>`:'');
+  if (!rows.length) box.innerHTML=`<p class="side-note">${empty}</p>`;
+
 }
 
 function paintPage() {
   const body = document.getElementById("page-body");
   if (!body) return;
   const banner = jobError ? `<div class="banner">${escapeHtml(jobError)}</div>` : "";
-  body.innerHTML = banner + viewFor(route);
+  body.innerHTML = banner + viewFor(route) + (logoutDialog ? `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true"><h3>Sign out of WhiteBoard</h3><p>Your school session and saved Google credentials will be removed.</p><label class="row"><input id="keep-offline" type="checkbox" />Keep an offline dashboard on this computer</label><p class="muted">Anyone using this computer account can open an offline copy.</p><div class="row"><button class="text-btn" id="logout-cancel">Cancel</button><button class="fill-btn" id="logout-confirm">Sign out</button></div></div></div>` : "");
   animateMeters();
 }
 
@@ -1219,7 +1223,7 @@ function homeView() {
   const banners = errorBanners();
   return `<h2>Home</h2><p class="muted">This week at a glance.</p>${banners}
     <h3>Upcoming this week</h3>${legend()}${due}
-    <h3>Recent grades</h3>${grades}`;
+    <h3>Grades</h3><p class="muted">Posted dates may be unavailable; this is not necessarily chronological.</p>${grades}`;
 }
 
 function assignmentMode() {
@@ -1503,7 +1507,7 @@ function gradesView() {
       <div class="row"><span class="swatch" style="border-color:${line.ink};background:${line.fill}"></span><strong>${escapeHtml(line.name)}</strong><span class="spacer"></span><span>${line.percent}%</span></div>
       <div class="bar"><span data-bar="${line.percent}" style="background:${line.ink}"></span></div>
     </div>`).join("");
-  return `<h2>Grades</h2><p class="muted">Posted scores and submitted work waiting for a grade.</p>
+  return `<h2>Grades</h2><p class="muted">Posted scores and submitted work waiting for a grade. Percentages are unweighted points estimates; Blackboard may use a different weighting.</p>
     ${searchBox("grades", "Search grades")}
     ${lines}
     <div id="list-root">${gradesLists()}</div>
@@ -1521,7 +1525,7 @@ function courseView(id) {
   ensureLazyCourse(id);
   const course = state.courses.find((item) => item.id === id);
   const page = (state.course_pages || {})[id];
-  if (!course || !page) return `<h2>Course</h2><p class="muted">No course data.</p>`;
+  if (!course || !page) return `<h2>Course</h2><p class="muted">Loading course details…</p>`;
   const ring = page.percent == null ? "" : `<div>${ringSvg(page.percent)}<div class="muted" style="text-align:center">${escapeHtml(page.fraction)}</div></div>`;
   const upcoming = (page.upcoming || []).filter(keptByHistory).map((item) => assignCard(item, true)).join("") || `<p class="empty">No upcoming work for this course.</p>`;
   const grades = page.grades.map((row) => `<div class="card row"><div><strong>${escapeHtml(row.title)}</strong><div class="muted">${escapeHtml(row.due)}</div></div><span class="spacer"></span><strong>${escapeHtml(row.label)}</strong></div>`).join("") || `<p class="empty">No grades for this course yet.</p>`;
@@ -2310,18 +2314,31 @@ function settingsView() {
       ${course.custom ? `<button class="text-btn" data-reset-course="${escapeAttr(course.id)}">Reset</button>` : ""}
     </div>
   </div>`).join("") || `<div class="card"><p class="muted">Sign in and refresh to choose course colors.</p></div>`;
-  return `<h2>Settings</h2>
+  return `<h2>Settings</h2><h3>Account</h3>
     <div class="card">
       <label>Blackboard base URL</label>
       <input class="settings-input" type="text" value="${escapeAttr(state.base_url || "")}" readonly />
       <p class="muted">${escapeHtml(state.fetched_at)}</p>
     </div>
     <p class="muted">This app is for your own account only. Course materials stay on Blackboard; do not republish them.</p>
+    <h2 style="font-size:20px">Google Calendar</h2>
+    <div class="card">
+      <p class="muted">Sign in once. After each refresh, WhiteBoard updates a calendar named WhiteBoard. Finished work is removed. Google has to be reachable from this computer.</p>
+      <label class="row"><input id="google-sync-enabled" type="checkbox" ${google.sync_enabled ? "checked" : ""}/> Update the WhiteBoard calendar after each refresh</label>
+      <div class="row">
+        <button class="fill-btn" id="google-signin" ${state.google_busy ? "disabled" : ""}>Sign in to Google</button>
+        <button class="outline-btn" id="google-sync" ${state.google_busy || !signed ? "disabled" : ""}>Sync now</button>
+        <button class="text-btn" id="google-signout" ${!signed || state.google_busy ? "disabled" : ""}>Sign out</button>
+      </div>
+      <p class="muted">${escapeHtml(who)}</p>
+      ${google.status ? `<p class="muted">${escapeHtml(google.status)}</p>` : ""}
+    </div>
+    <h2>Appearance</h2>
     <h2 style="font-size:20px">Font</h2>
     <div class="card">
-      <p class="muted">The typeface used for the window. These are the readable faces already installed with Windows.</p>
+      <p class="muted">Use your system font or an available typeface.</p>
       <select id="ui-font">
-        ${UI_FONT_LABELS.map(([id, label]) => `<option value="${id}" ${id === (state.ui_font || "segoe") ? "selected" : ""}>${label}</option>`).join("")}
+        ${UI_FONT_LABELS.filter(([id])=>id === "system" || document.fonts.check("12px " + UI_FONTS[id].split(",")[0])).map(([id, label]) => `<option value="${id}" ${id === (state.ui_font || "system") ? "selected" : ""}>${label}</option>`).join("")}
       </select>
     </div>
     <h2 style="font-size:20px">Opening pages</h2>
@@ -2342,22 +2359,12 @@ function settingsView() {
     <h2 style="font-size:20px">Colors</h2>
     <div class="card"><p class="muted">Borders show how close a deadline is. Fills show which course an item belongs to.</p>${swatches}
       <button class="text-btn" id="reset-deadline-colors">Reset deadline colors</button></div>
-    <p class="muted">Pick a color for each course. Courses you leave alone keep an automatic color.</p>
-    ${courseColors}
+    <details class="card"><summary>Course colors (${state.courses.length})</summary><p class="muted">Choose a course color.</p>${courseColors}</details>
     ${state.courses.some((course) => course.custom) ? '<button class="text-btn" id="reset-course-colors">Reset course colors</button>' : ""}
+    <h3>Storage and refresh</h3><div class="card"><p>Saved data stays on this computer. Sign out to remove it or keep an offline copy.</p><p class="muted">Refresh loads deadlines first, then grades and files. A failed refresh preserves the previous saved copy.</p></div>
+    <label class="row"><input id="motion-effects" type="checkbox" ${state.motion_effects ? "checked" : ""}/>Enable decorative ripple effects</label>
     ${colorDialog ? colorModal() : ""}
-    <h2 style="font-size:20px">Google Calendar</h2>
-    <div class="card">
-      <p class="muted">Sign in once. After each refresh, WhiteBoard updates a calendar named WhiteBoard. Finished work is removed. Google has to be reachable from this computer.</p>
-      <label class="row"><input id="google-sync-enabled" type="checkbox" ${google.sync_enabled ? "checked" : ""}/> Update the WhiteBoard calendar after each refresh</label>
-      <div class="row">
-        <button class="fill-btn" id="google-signin" ${state.google_busy ? "disabled" : ""}>Sign in to Google</button>
-        <button class="outline-btn" id="google-sync" ${state.google_busy || !signed ? "disabled" : ""}>Sync now</button>
-        <button class="text-btn" id="google-signout" ${!signed || state.google_busy ? "disabled" : ""}>Sign out</button>
-      </div>
-      <p class="muted">${escapeHtml(who)}</p>
-      ${google.status ? `<p class="muted">${escapeHtml(google.status)}</p>` : ""}
-    </div>`;
+`;
 }
 
 function assignCard(item, withActions) {
@@ -2794,8 +2801,9 @@ boot();
 
 function showError(error) { jobError = error.message || String(error); render(); }
 
-async function signOut() {
-  const keep = window.confirm("Keep an offline copy of this account on this computer? Cancel signs out and removes the saved dashboard.");
+function signOut() { logoutDialog=true;paintPage(); }
+async function finishSignOut(keep) {
+  logoutDialog=false;
   try {
     await api("/api/logout", { keep_offline: keep });
     manualMarks.clear(); contentsSelected.clear(); selectedAssignments.clear();

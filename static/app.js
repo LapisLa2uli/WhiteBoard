@@ -1749,7 +1749,7 @@ function ensureContentIndex() {
   byParent.forEach((list) => {
     list.sort((a, b) => (a.kind === "folder" ? 0 : 1) - (b.kind === "folder" ? 0 : 1) || a.name.localeCompare(b.name));
   });
-  contentIndex = { source: nodes, byParent, byCourse, byId };
+  contentIndex = { source: nodes, byParent, byCourse, byId, trails: new Map() };
   return contentIndex;
 }
 
@@ -1814,17 +1814,21 @@ function currentFolderNodes(nodes) {
 }
 
 function folderTrail(nodes, node) {
+  const index = ensureContentIndex();
+  if (index.trails.has(node.id)) return index.trails.get(node.id);
   const names = [];
   let parent = node.parent_id || "";
   const seen = new Set();
   while (parent && !seen.has(parent)) {
     seen.add(parent);
-    const folder = ensureContentIndex().byId.get(parent);
+    const folder = index.byId.get(parent);
     if (!folder) break;
     names.unshift(folder.name);
     parent = folder.parent_id || "";
   }
-  return names.join(" / ");
+  const trail = names.join(" / ");
+  index.trails.set(node.id, trail);
+  return trail;
 }
 
 function contentsSearchView(courses, nodes, needle) {

@@ -17,3 +17,12 @@ vm.runInContext(`applyAssignmentUpdates([{id:'a',status:'todo',manual:false,igno
 assert.equal(vm.runInContext('state.home_due.length',c),1);
 assert.equal(vm.runInContext('state.home_due[0].ignored',c),false);
 console.log('UI regression: badge, mark/undo, ignore/restore passed.');
+vm.runInContext(`
+state.content_nodes=[{id:'folder',name:'Week 1',course_id:'c',kind:'folder'},{id:'file',name:'Notes.pdf',course_id:'c',parent_id:'folder',kind:'file'}];
+contentIndex=null;
+`,c);
+assert.equal(vm.runInContext('folderTrail(state.content_nodes, state.content_nodes[1])',c),'Week 1');
+assert.equal(vm.runInContext('ensureContentIndex().trails.size',c),1);
+vm.runInContext(`state.content_nodes=[{id:'folder',name:'Week 2',course_id:'c',kind:'folder'},{id:'file',name:'Notes.pdf',course_id:'c',parent_id:'folder',kind:'file'}]`,c);
+assert.equal(vm.runInContext('folderTrail(state.content_nodes, state.content_nodes[1])',c),'Week 2');
+console.log('UI regression: folder path cache invalidates with content revisions.');

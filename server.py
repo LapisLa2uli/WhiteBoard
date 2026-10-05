@@ -609,17 +609,8 @@ def _remember(settings: dict, name: str, items: list, *, add: bool) -> None:
 
 
 def _assignment_update(item, marked: set[str], ignored_keys: set[str]) -> dict:
-    from present import _item_flagged
-
-    manual = _item_flagged(item, marked)
-    ignored = _item_flagged(item, ignored_keys)
-    base = item.status or "todo"
-    return {
-        "id": item.id,
-        "status": "submitted" if base == "submitted" or manual else base,
-        "manual": manual,
-        "ignored": ignored,
-    }
+    from app.status import effective
+    return effective(item, marked, ignored_keys)
 
 
 def _not_due(when) -> bool:

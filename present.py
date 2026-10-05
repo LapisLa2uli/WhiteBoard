@@ -116,23 +116,7 @@ def format_size(size_bytes: int) -> str:
     return "—"
 
 
-def _setting_keys(settings: dict, name: str) -> set[str]:
-    keys: set[str] = set()
-    for item in settings.get(name) or []:
-        if isinstance(item, str) and item:
-            keys.add(item)
-        elif isinstance(item, dict):
-            if item.get("id"):
-                keys.add(str(item["id"]))
-            keys.add(
-                f"{item.get('course_id') or ''}::{str(item.get('title') or '').strip().lower()}"
-            )
-    return keys
-
-
-def _item_flagged(item, keys: set[str]) -> bool:
-    token = f"{item.course_id}::{(item.title or '').strip().lower()}"
-    return bool(item.id and item.id in keys) or token in keys
+from app.status import setting_keys as _setting_keys, flagged as _item_flagged, effective
 
 
 def _submitted_ts(settings: dict, item) -> int:
@@ -160,6 +144,7 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
     settings = load_settings()
     apply_palette(settings)
     snapshot = snapshot or load_snapshot()
+    snapshot.manual_submitted_keys = _setting_keys(settings, "marked_submitted_assignments")
     from blackboard.api import hide_event_only_calendar_items
 
     hide_event_only_calendar_items(snapshot)
@@ -218,7 +203,7 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
             continue
         manual = _item_flagged(item, marked)
         ignored = _item_flagged(item, ignored_keys)
-        status = "submitted" if item.status == "submitted" or manual else item.status
+        status = effective(item, marked, ignored_keys)["status"]
         assignments.append(
             {
                 "id": item.id,

@@ -1192,7 +1192,7 @@ function viewFor(path) {
 
 function homeView() {
   const dueItems = (state.home_due || []).filter((item) =>
-    keptByHistory(item) && (!item.course_id || inActiveFilter(item.course_id))
+    !item.ignored && !item.finished && keptByHistory(item) && (!item.course_id || inActiveFilter(item.course_id))
   );
   const gradeItems = (state.home_grades || []).filter((grade) => inActiveFilter(grade.course_id));
   const due = dueItems.map((item) => assignCard(item, true)).join("") || `<p class="empty">No deadlines this week.</p>`;
@@ -1210,7 +1210,7 @@ function assignmentMode() {
 
 function todoCount() {
   if (!state || !state.assignments) return 0;
-  return assignmentItems("all").filter((item) => item.status !== "submitted").length;
+  return state.assignments.filter(item => item.status !== "submitted" && !item.ignored && keptByHistory(item) && inActiveFilter(item.course_id)).length;
 }
 
 function todoBadge() {
@@ -1328,6 +1328,7 @@ function refreshAssignToolbar() {
 }
 
 let assignmentWrite = 0;
+let assignmentQueue = Promise.resolve();
 
 function lateAssignments() {
   reapplyManualMarks();
@@ -1389,6 +1390,7 @@ function applyAssignmentUpdates(updates) {
   const touch = (item) => {
     const next = byId.get(item.assignment_id) || byId.get(item.id);
     if (!next) return;
+    Object.assign(item, next);
     item.finished = next.status === "submitted";
   };
   (state.calendar || []).forEach(touch);
@@ -1396,10 +1398,7 @@ function applyAssignmentUpdates(updates) {
   Object.values(state.course_pages || {}).forEach((page) => {
     (page.upcoming || []).forEach(touch);
   });
-  state.home_due = (state.home_due || []).filter((item) => {
-    const next = byId.get(item.assignment_id) || byId.get(item.id);
-    return !next || !next.ignored;
-  });
+
 }
 
 function paintAssignmentSurface() {
@@ -1435,12 +1434,15 @@ function changeAssignments(action, ids) {
     selectMode = false;
   }
   paintAssignmentSurface();
-  api("/api/assignments", { action, ids: ids || [] }).then((result) => {
+  assignmentQueue = assignmentQueue.catch(() => {}).then(() => api("/api/assignments", { action, ids: ids || [] })).then(async (result) => {
     if (token !== assignmentWrite) return;
     applyAssignmentUpdates((result && result.updates) || []);
+    await loadState();
     paintAssignmentSurface();
-  }).catch(() => {
+  }).catch(async (error) => {
     if (token !== assignmentWrite) return;
+    await loadState().catch(() => {});
+    jobError = error.message;
     applyAssignmentUpdates(before);
     paintAssignmentSurface();
   });

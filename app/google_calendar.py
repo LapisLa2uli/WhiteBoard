@@ -81,6 +81,9 @@ def events_for_sync(
     allowed_course_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Events that should exist on the WhiteBoard calendar right now."""
+    from app.status import setting_keys
+    from blackboard.store import load_settings
+    snapshot.manual_submitted_keys = setting_keys(load_settings(), "marked_submitted_assignments")
     events: list[dict[str, Any]] = []
     seen: set[str] = set()
     for deadline in snapshot.deadlines:

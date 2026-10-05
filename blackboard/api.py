@@ -118,6 +118,7 @@ def fetch_snapshot(
     include_files: bool = False,
 ) -> Snapshot:
     snapshot = Snapshot(fetched_at=datetime.now(timezone.utc))
+    snapshot.sync_scope = ",".join(sorted(course_ids)) if course_ids else "all"
     session._tell("Loading your profile…", 0.04)
 
     user = _try_paths(session, USER_PATHS[:2], snapshot, "profile")
@@ -242,6 +243,7 @@ def fetch_snapshot(
             "courses",
             "Signed in, but no course list was returned. Try Refresh, or confirm the school URL.",
         )
+    snapshot.completeness.update(profile=bool(snapshot.user_id), courses=bool(snapshot.courses) and "courses" not in snapshot.errors, grades="grades" not in snapshot.errors)
     return snapshot
 
 
@@ -321,6 +323,7 @@ def _fetch_calendar_payloads(
     ]
     payloads: list[Any] = []
     got_full_calendar = False
+    got_due_calendar = False
     last_error = ""
     rows: list[Any] = []
     if hasattr(session, "get_json_many"):
@@ -342,18 +345,17 @@ def _fetch_calendar_payloads(
             continue
         status = int(row.get("status") or 0)
         data = row.get("data")
-        if not data or status >= 400:
+        if data is None or status >= 400 or not status:
             if status:
                 last_error = f"HTTP {status} for {resolve_url(session.base_url, path)}"
             elif row.get("error"):
                 last_error = str(row.get("error"))
             continue
-        items = _as_list(data)
-        if not items:
-            continue
-        payloads.append(data)
-        if "duedate" not in path.lower():
+        if "duedate" in path.lower():
+            got_due_calendar = True
+        else:
             got_full_calendar = True
+        payloads.append(data)
     if not got_full_calendar and hasattr(session, "harvest_learn_json"):
         try:
             harvested_more = session.harvest_learn_json(("/ultra/calendar",))
@@ -365,6 +367,7 @@ def _fetch_calendar_payloads(
                 got_full_calendar = True
         except Exception:
             pass
+    snapshot.completeness["calendar"] = got_full_calendar and got_due_calendar
     if payloads:
         snapshot.errors.pop("calendar", None)
     elif last_error:

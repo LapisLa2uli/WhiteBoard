@@ -233,7 +233,7 @@ def _sync_google() -> None:
     settings = load_settings()
     if not settings.get("google_sync_enabled"):
         return
-    from app.google_calendar import GoogleCalendarError, events_for_sync, load_account, sync_account
+    from app.google_calendar import GoogleCalendarError, events_for_sync, load_account, sync_account, sync_policy
 
     account = load_account()
     if not account.get("refresh_token"):
@@ -250,7 +250,7 @@ def _sync_google() -> None:
             base_url=str(settings.get("base_url") or ""),
             hide_other=bool(settings.get("hide_calendar_events")),
         )
-        _account, message = sync_account(account, events)
+        _account, message = sync_account(account, events, cancelled=_cancel.is_set, **sync_policy(snapshot.snapshot, settings))
         progress["google"] = message
     except GoogleCalendarError as exc:
         progress["google"] = str(exc)

@@ -97,6 +97,7 @@ def events_for_sync(
             if deadline.course_id not in allowed_course_ids:
                 continue
         event = _event_body(snapshot, deadline, base_url)
+        event["id"] = google_event_id(base_url + "::" + snapshot.user_id + "::" + deadline.id)
         if event["id"] in seen:
             continue
         seen.add(event["id"])
@@ -226,9 +227,14 @@ def sync_account(
     events: list[dict[str, Any]],
     *,
     transport: Transport | None = None,
+    complete: bool = False,
+    scope: str = "",
+    cancelled: Callable[[], bool] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Create or update the WhiteBoard calendar so it matches `events`."""
     with _LOCK:
+        if cancelled and cancelled():
+            raise GoogleCalendarError("Sync cancelled.")
         account = _ensure_access(dict(account), transport)
         calendar_id = str(account.get("calendar_id") or "")
         if calendar_id and not _calendar_exists(account, calendar_id, transport):
@@ -243,20 +249,35 @@ def sync_account(
         wanted = {str(event["id"]) for event in events}
         updated = _upsert_events(account, calendar_id, events, transport)
         removed = 0
-        stale = [
-            existing_id
-            for existing_id in _list_event_ids(account, calendar_id, transport)
-            if existing_id not in wanted
-        ]
-        _delete_events(account, calendar_id, stale, transport)
-        removed = len(stale)
+        manifests = dict(account.get("sync_manifests") or {})
+        previous = set(manifests.get(scope) or [])
+        can_delete = complete and bool(scope) and bool(events)
+        if cancelled and cancelled():
+            raise GoogleCalendarError("Sync cancelled before event removal.")
+        if can_delete:
+            existing = set(_list_event_ids(account, calendar_id, transport))
+            stale = sorted((previous & existing) - wanted)
+            _delete_events(account, calendar_id, stale, transport)
+            removed = len(stale)
+            manifests[scope] = sorted(wanted)
+            account["sync_manifests"] = manifests
         save_account(account)
     noun = "event" if updated == 1 else "events"
     return (
         account,
         f"Google Calendar updated: {updated} {noun}, removed {removed}. "
+        + ("Existing events preserved because this refresh is partial or empty. " if not can_delete else "") +
         "Turn on the calendar named WhiteBoard in Google Calendar's sidebar.",
     )
+
+
+def sync_policy(snapshot, settings):
+    from accounts import profile_key
+    scope = profile_key(str(settings.get("base_url") or ""), snapshot.user_id)
+    scope += ":" + snapshot.sync_scope + ":" + str(bool(settings.get("hide_calendar_events")))
+    complete = all(snapshot.completeness.get(k, False) for k in ("profile", "courses", "calendar"))
+    complete = complete and not snapshot.errors and not settings.get("load_filter_courses_only")
+    return {"complete": complete, "scope": scope}
 
 
 def _event_body(snapshot: Snapshot, deadline: Deadline, base_url: str) -> dict[str, Any]:
@@ -639,6 +660,7 @@ def _clean_account(data: dict[str, Any]) -> dict[str, Any]:
         "access_token": str(data.get("access_token") or ""),
         "email": str(data.get("email") or ""),
         "calendar_id": str(data.get("calendar_id") or ""),
+        "sync_manifests": data.get("sync_manifests") if isinstance(data.get("sync_manifests"), dict) else {},
     }
     try:
         cleaned["expires_at"] = float(data.get("expires_at") or 0)

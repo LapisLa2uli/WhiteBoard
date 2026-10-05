@@ -220,6 +220,8 @@ class Snapshot:
     fetched_at: datetime | None = None
     errors: dict[str, str] = field(default_factory=dict)
     manual_submitted_keys: set[str] = field(default_factory=set)
+    completeness: dict[str, bool] = field(default_factory=dict)
+    sync_scope: str = ""
 
     def course_by_id(self, course_id: str) -> Course | None:
         return next((c for c in self.courses if c.id == course_id), None)
@@ -242,6 +244,8 @@ class Snapshot:
             "announcements": [a.to_dict() for a in self.announcements],
             "content_nodes": [n.to_dict() for n in self.content_nodes],
             "files_indexed": self.files_indexed,
+            "completeness": dict(self.completeness),
+            "sync_scope": self.sync_scope,
             "fetched_at": _iso(self.fetched_at),
             "errors": dict(self.errors),
         }
@@ -258,6 +262,8 @@ class Snapshot:
             announcements=[Announcement.from_dict(x) for x in data.get("announcements", [])],
             content_nodes=[ContentNode.from_dict(x) for x in data.get("content_nodes", [])],
             files_indexed=_stored_files_indexed(data),
+            completeness=dict(data.get("completeness") or {}),
+            sync_scope=str(data.get("sync_scope") or ""),
             fetched_at=_parse_stored_dt(data.get("fetched_at")),
             errors=dict(data.get("errors") or {}),
         )

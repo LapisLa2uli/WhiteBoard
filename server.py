@@ -31,6 +31,7 @@ from app.google_calendar import (
     sign_in,
     sign_out,
     sync_account,
+    sync_policy,
 )
 
 STATIC = ROOT / "static"
@@ -362,7 +363,7 @@ def _run_sync(client_id: str, client_secret: str, status: str = "") -> None:
             base_url=str(settings.get("base_url") or ""),
             hide_other=bool(settings.get("hide_calendar_events")),
         )
-        _account, message = sync_account(load_account(), events)
+        _account, message = sync_account(load_account(), events, **sync_policy(snapshot, settings))
         _google["status"] = status or message
     except GoogleCalendarError as exc:
         _google["status"] = str(exc)

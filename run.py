@@ -85,7 +85,7 @@ def _check_cookies(failures: list[str]) -> None:
         if not cond:
             failures.append(name)
 
-    from secure_storage import load_secret, delete_secret
+    from secure_storage import load_secret, save_secret, delete_secret
     real, real_app = data.DATA_DIR, data.APP_DIR
     temporary = tempfile.TemporaryDirectory(prefix="wb-selftest")
     scratch = _Path(temporary.name)
@@ -103,13 +103,12 @@ def _check_cookies(failures: list[str]) -> None:
         host.clear_cookies()
         check("cookies cleared", not saved.is_file())
 
-        # Rebuild one and push it back through the restore path.
-        backend._on_main(lambda: backend._cookie_store().setCookies_completionHandler_(
-            [backend._cookie_from_record(
-                {"name": "wbtest", "value": "1", "domain": "example.com",
-                 "path": "/", "secure": False, "httpOnly": False, "expires": 0})],
-            backend._cookie_noop,
-        ))
+        # Exercise the same encrypted restore path used at app startup.
+        save_secret(saved, [
+            {"name": "wbtest", "value": "1", "domain": "example.com",
+             "path": "/", "secure": False, "httpOnly": False, "expires": 0},
+        ])
+        backend._on_main(backend._restore_cookies)
         deadline = time.time() + 15
         got = None
         import Foundation
@@ -136,7 +135,7 @@ def _check_cookies(failures: list[str]) -> None:
             if "wbtest" in got:
                 break
             time.sleep(0.2)
-        check("cookie set with a real handler", "wbtest" in got, "names=%s" % got)
+        check("saved cookie restored", "wbtest" in got, "names=%s" % got)
         host.save_cookies()
         check("test cookie persisted securely", any(row.get("name") == "wbtest" for row in load_secret(saved, [])))
         host.clear_cookies()

@@ -983,7 +983,9 @@ def _restore_cookies() -> None:
     if skipped:
         _cookie_problem("could not restore %d cookie(s): %s" % (len(skipped), skipped[0]))
     if cookies:
-        _cookie_store().setCookies_completionHandler_(cookies, _cookie_noop)
+        store = _cookie_store()
+        for cookie in cookies:
+            store.setCookie_completionHandler_(cookie, _cookie_noop)
 
 
 def save_cookies() -> None:

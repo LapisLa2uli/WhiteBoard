@@ -2040,7 +2040,7 @@ function folderRow(key, name, depth, expanded, sizeLabel, dateLabel, isCourse, n
     ? `<span></span>`
     : `<label data-select="${escapeAttr(node.id)}"><input type="checkbox" ${selected ? "checked" : ""} /></label>`;
   return `<div class="file-row ${selected ? "selected" : depth % 2 ? "alt" : ""}" style="padding-left:${pad}px" ${node ? `data-row-id="${escapeAttr(node.id)}"` : ""}>
-    <button class="chevron" data-expand="${escapeAttr(key)}">${expanded ? "▾" : "▸"}</button>
+    <button class="chevron" data-expand="${escapeAttr(key)}" aria-label="${expanded ? 'Collapse' : 'Expand'} ${escapeAttr(name)}" aria-expanded="${expanded}">${expanded ? "▾" : "▸"}</button>
     ${check}
     ${folderSvg(expanded)}
     <span class="name folder">${escapeHtml(name)}</span>

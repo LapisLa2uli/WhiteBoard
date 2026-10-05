@@ -238,10 +238,6 @@ class Handler(BaseHTTPRequestHandler):
             settings["ui_font"] = _ui_font(body.get("ui_font"))
         if "page_opener" in body:
             settings["page_opener"] = _page_opener(body.get("page_opener"))
-        client_id = str(body.get("client_id") or "")
-        client_secret = str(body.get("client_secret") or "")
-        if client_id or client_secret:
-            remember_client(client_id, client_secret)
         allowed = {name for name, _label, _color in DEADLINE_ROWS}
         if body.get("reset_deadline_colors"):
             settings["deadline_colors"] = {}
@@ -277,8 +273,7 @@ class Handler(BaseHTTPRequestHandler):
                 return _state()
             _google["busy"] = True
             _google["status"] = "Waiting for Google sign-in in your browser…"
-        client_id = str(body.get("client_id") or "")
-        client_secret = str(body.get("client_secret") or "")
+        client_id, client_secret = _google_client()
 
         def work() -> None:
             try:
@@ -306,8 +301,7 @@ class Handler(BaseHTTPRequestHandler):
                 return _state()
             _google["busy"] = True
             _google["status"] = "Updating Google Calendar…"
-        client_id = str(body.get("client_id") or "")
-        client_secret = str(body.get("client_secret") or "")
+        client_id, client_secret = _google_client()
 
         def work() -> None:
             try:
@@ -350,6 +344,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+
+def _google_client() -> tuple[str, str]:
+    from app.google_calendar import builtin_google_client
+
+    return builtin_google_client()
 
 
 def _run_sync(client_id: str, client_secret: str, status: str = "") -> None:

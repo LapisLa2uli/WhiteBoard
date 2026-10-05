@@ -379,8 +379,6 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
         "content_count": len(content_nodes),
         "files_indexed": bool(snapshot.files_indexed),
         "google": {
-            "client_id": str(account.get("client_id") or ""),
-            "client_secret": str(account.get("client_secret") or ""),
             "signed_in": bool(account.get("refresh_token")),
             "email": str(account.get("email") or ""),
             "sync_enabled": bool(settings.get("google_sync_enabled")),

@@ -9,6 +9,9 @@ datas = [
     (str(ROOT / "static"), "static"),
     (str(ROOT / "assets"), "assets"),
 ]
+_auth = ROOT / "authid.txt"
+if _auth.is_file():
+    datas.append((str(_auth), "."))
 hiddenimports = [
     "app",
     "app.theme",

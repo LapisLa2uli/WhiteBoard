@@ -21,7 +21,6 @@ let contentsSort = { key: "name", dir: 1 };
 let contentsOnlySelected = false;
 let contentsSearchHere = false;
 let contentsDrag = null;
-let googleDraft = { client_id: "", client_secret: "" };
 let loading = null;
 let colorDialog = null;
 let jobError = "";
@@ -113,9 +112,6 @@ async function loadState() {
   pageSize = state.page_size || 10;
   hideEvents = !!state.hide_calendar_events;
   contentsMode = state.contents_view_mode || contentsMode;
-  const google = state.google || {};
-  googleDraft.client_id = google.client_id || googleDraft.client_id;
-  googleDraft.client_secret = google.client_secret || googleDraft.client_secret;
   if (state.job && state.job.error) jobError = state.job.error;
   if (!state.has_snapshot && route !== "/login") route = "/login";
   contentIndex = null;
@@ -607,8 +603,6 @@ function onInput(event) {
     paintListRoot();
     return;
   }
-  if (event.target.id === "google-client-id") googleDraft.client_id = event.target.value;
-  if (event.target.id === "google-client-secret") googleDraft.client_secret = event.target.value;
 }
 
 function onChange(event) {
@@ -661,23 +655,32 @@ function onChange(event) {
     return;
   }
   if (event.target.id === "google-sync-enabled") {
-    persistSettings({
-      google_sync_enabled: event.target.checked,
-      client_id: googleDraft.client_id,
-      client_secret: googleDraft.client_secret,
-    });
+    persistSettings({ google_sync_enabled: event.target.checked });
   }
+}
+
+function beginLoading(kind, message) {
+  pollGen += 1;
+  loading = {
+    kind,
+    percent: 0.02,
+    message,
+    detail: "",
+    log: [],
+    counts: { courses: 0, folders: 0, files: 0 },
+  };
+  document.title = `WhiteBoard — ${message}`;
+  render();
 }
 
 function startLogin() {
   const username = (document.getElementById("user") || {}).value || "";
   const password = (document.getElementById("pass") || {}).value || "";
   const baseUrl = (document.getElementById("base-url") || {}).value || "";
-  loading = { kind: "login", percent: 0.02, message: "Signing in…" };
-  document.title = "WhiteBoard — Signing in…";
-  render();
-  api("/api/login", { username: username.trim(), password, base_url: baseUrl.trim() }).catch(() => {});
-  pollJob();
+  beginLoading("login", "Signing in…");
+  api("/api/login", { username: username.trim(), password, base_url: baseUrl.trim() })
+    .catch(() => {})
+    .then(() => pollJob());
 }
 
 function onSubmit(event) {
@@ -693,7 +696,9 @@ async function pollJob() {
     let job = null;
     try {
       job = await api("/api/progress");
+      if (mine !== pollGen) return;
     } catch (error) {
+      if (mine !== pollGen) return;
       loading = {
         kind: (loading && loading.kind) || "login",
         percent: loading ? loading.percent : 0,
@@ -786,7 +791,7 @@ function reapplyManualMarks() {
 async function googleAction(path) {
   busy = true;
   paintChrome();
-  state = await api(path, googleDraft);
+  state = await api(path, {});
   pollGoogle();
 }
 
@@ -804,11 +809,8 @@ async function pollGoogle() {
 
 async function refreshNow() {
   busy = true;
-  loading = { kind: "refresh", percent: 0.02, message: "Refreshing from Blackboard…" };
-  document.title = "WhiteBoard — Refreshing…";
-  render();
-  api("/api/refresh", {}).catch(() => {});
-  pollJob();
+  beginLoading("refresh", "Refreshing from Blackboard…");
+  api("/api/refresh", {}).catch(() => {}).then(() => pollJob());
 }
 
 function render() {
@@ -2298,11 +2300,7 @@ function settingsView() {
     ${colorDialog ? colorModal() : ""}
     <h2 style="font-size:20px">Google Calendar</h2>
     <div class="card">
-      <p class="muted">Create a Desktop OAuth client in Google Cloud, enable the Google Calendar API, and paste the client ID and secret. Sign in once. After each refresh, WhiteBoard updates a calendar named WhiteBoard. Finished work is removed. Google has to be reachable from this computer.</p>
-      <label>OAuth client ID</label>
-      <input class="settings-input" id="google-client-id" type="text" value="${escapeAttr(googleDraft.client_id)}" />
-      <label>OAuth client secret</label>
-      <input class="settings-input" id="google-client-secret" type="password" value="${escapeAttr(googleDraft.client_secret)}" />
+      <p class="muted">Sign in once. After each refresh, WhiteBoard updates a calendar named WhiteBoard. Finished work is removed. Google has to be reachable from this computer.</p>
       <label class="row"><input id="google-sync-enabled" type="checkbox" ${google.sync_enabled ? "checked" : ""}/> Update the WhiteBoard calendar after each refresh</label>
       <div class="row">
         <button class="fill-btn" id="google-signin" ${state.google_busy ? "disabled" : ""}>Sign in to Google</button>

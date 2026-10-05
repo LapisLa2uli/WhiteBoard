@@ -130,10 +130,10 @@ button { cursor: pointer; }
 .load-latest { margin: 12px 0 0; font-size: 14px; word-break: break-word; }
 .load-log {
   margin: 12px 0 0; padding: 8px 10px; list-style: none;
-  max-height: 168px; overflow: auto; background: var(--page); border-radius: 8px;
+  max-height: 168px; overflow: hidden; background: var(--page); border-radius: 8px;
 }
 .load-log li {
-  font-size: 12px; color: var(--muted); padding: 3px 0;
+  font-size: 12px; line-height: 18px; height: 18px; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .load-log li:last-child { color: var(--text); font-weight: 600; }

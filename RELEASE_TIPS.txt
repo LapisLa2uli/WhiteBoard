@@ -62,3 +62,9 @@ The previous Flet app, its installer, and its tests are in archive/original/.
 4. Follow packaging/README.md to build Windows x64 and Apple silicon from the same clean revision.
 5. Verify signatures, notarization, install/update/uninstall and clean-machine launch before publishing.
 6. Push/tag/publish only when requested. Confirm both installers, checksums and readable notes.
+
+0.4.0 signing exception
+----------------------
+The owner explicitly approved publishing 0.4.0 without production signing.
+Windows is unsigned; macOS retains its ad-hoc signature and is not notarized.
+The published release notes disclose this status. This is specific to 0.4.0.

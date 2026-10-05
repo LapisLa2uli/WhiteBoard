@@ -1,10 +1,10 @@
 # WhiteBoard 0.4.0 release review
 
-Reviewed on 5 October 2026. The findings below describe the original baseline. The subsequent implementation is documented in [IMPLEMENTATION_0.4.0.md](D:/stuff/WhiteBoard/IMPLEMENTATION_0.4.0.md): source improvements are committed, Windows x64 and Apple silicon packaging/native smoke tests pass, and loading strategies were measured. **Candidate installers are Windows unsigned and macOS ad-hoc signed; publication awaits the signing decision.** Current verification details and remaining acceptance limits are in the implementation record. The attached older DMG does not contain these changes.
+Reviewed on 5 October 2026. The findings below describe the original baseline. The subsequent implementation is documented in [IMPLEMENTATION_0.4.0.md](D:/stuff/WhiteBoard/IMPLEMENTATION_0.4.0.md): source improvements are committed, Windows x64 and Apple silicon packaging/native smoke tests pass, and loading strategies were measured. **[0.4.0 is published](https://github.com/LapisLa2uli/WhiteBoard/releases/tag/v0.4.0) with approval to distribute Windows unsigned and macOS ad-hoc signed/not notarized.** Current verification details and remaining acceptance limits are in the implementation record. The attached older DMG does not contain these changes.
 
 ## Scope and evidence
 
-I read the root README, changelog, release notes, native hosts, login/crawler, Blackboard parsers and models, persistence, presentation layer, frontend, Google integration, and packaging scripts. I treated the archived Flet app as historical context. The working tree had seven modified files before this review. Those changes were preserved in `2cb3e2c` before implementation; later commits implement the findings. No release was published.
+I read the root README, changelog, release notes, native hosts, login/crawler, Blackboard parsers and models, persistence, presentation layer, frontend, Google integration, and packaging scripts. I treated the archived Flet app as historical context. The working tree had seven modified files before this review. Those changes were preserved in `2cb3e2c` before implementation; later commits implement the findings. Publication and current verification results are recorded in the implementation document.
 
 - Source baseline: commit `0d8532c`, plus the existing working-tree modifications. Baseline `static/app.js` SHA-256: `54e83e7333611875debd86f362a6b9aa40686a00968cacd4bfaa47430789fd83`.
 - Attached DMG: 17,900,572 bytes; SHA-256 `afe0fc6b020249546303e1657efb80a59cfddc96d9ad9750db01f1b78e985284`.

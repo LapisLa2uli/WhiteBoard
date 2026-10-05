@@ -47,6 +47,8 @@ PYTHON=.venv/bin/python bash packaging/build_macos.sh
 
 Both app and DMG are submitted for notarization and stapled. Any failed signing, verification, stapling, Gatekeeper assessment or native smoke test stops the build. The default ad-hoc development build is not a publicly validated release.
 
+For the published 0.4.0 release, the owner explicitly approved Windows unsigned and macOS ad-hoc signed/not notarized distribution. The release notes disclose this exception; the production signing commands above remain available for future builds.
+
 ## Validation and outputs
 
 The manual **Build release installers** GitHub Actions workflow builds both Windows x64 and Apple silicon on native runners. Configure `WHITEBOARD_GOOGLE_OAUTH_CONFIG` with the same two-line desktop OAuth configuration. It runs native packaged smoke tests, verifies Windows installation/reinstallation/uninstallation, and mounts/copies/launches the Mac DMG. It produces candidate installers and checksums and does not publish a release. Its default artifacts are Windows unsigned and macOS ad-hoc signed; production signing remains a separate release decision.

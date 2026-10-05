@@ -70,7 +70,7 @@ IID_IUnknown = "{00000000-0000-0000-C000-000000000046}"
 IID_ENV_DONE = "{4E8A3389-C9D8-4BD2-B6B5-124FEE6CC14D}"
 IID_CTRL_DONE = "{6C4819F3-C9B7-4260-8127-C9F5BDE7F68C}"
 IID_SCRIPT_DONE = "{49511172-CC67-4BCA-9923-137112F4C4CC}"
-IID_WEB_MESSAGE = "{57213F19-00E6-49FA-8E3D-5B8E5A0B0B0E}"
+IID_WEB_MESSAGE = "{57213F19-00E6-49FA-8E07-898EA01ECBD2}"
 
 def _resource_root() -> Path:
     import data
@@ -184,7 +184,8 @@ MOVE_FOCUS = WINFUNCTYPE(HRESULT, c_void_p, ctypes.c_int)
 CLOSE_CTRL = WINFUNCTYPE(HRESULT, c_void_p)
 ADDREF = WINFUNCTYPE(c_ulong, c_void_p)
 POST_MSG = WINFUNCTYPE(HRESULT, c_void_p, wt.LPCWSTR)
-ADD_WEB_MESSAGE = WINFUNCTYPE(HRESULT, c_void_p, c_void_p)
+ADD_WEB_MESSAGE = WINFUNCTYPE(HRESULT, c_void_p, c_void_p, POINTER(ctypes.c_int64))
+REMOVE_WEB_MESSAGE = WINFUNCTYPE(HRESULT, c_void_p, ctypes.c_int64)
 TRY_WEB_MESSAGE = WINFUNCTYPE(HRESULT, c_void_p, POINTER(c_void_p))
 MSG_INVOKE = WINFUNCTYPE(HRESULT, c_void_p, c_void_p, c_void_p)
 ole32.CoTaskMemFree.argtypes = [c_void_p]
@@ -393,10 +394,18 @@ def _drop_popup(hwnd: int) -> None:
 
 def _hook_messages(webview: int) -> None:
     handler = _make_message_handler()
-    _state["msg_handler"] = handler
-    hr = ADD_WEB_MESSAGE(_vtable_slot(webview, 34))(webview, ctypes.addressof(handler))
+    token = ctypes.c_int64()
+    hr = ADD_WEB_MESSAGE(_vtable_slot(webview, 34))(webview, ctypes.addressof(handler), byref(token))
     if hr < 0:
         _state["error"] = f"Could not connect the window (0x{hr & 0xFFFFFFFF:08X})"
+    else:
+        _state.setdefault("message_handlers", {})[webview] = (handler, token)
+
+
+def _unhook_messages(webview: int) -> None:
+    registration = _state.get("message_handlers", {}).pop(webview, None)
+    if registration:
+        REMOVE_WEB_MESSAGE(_vtable_slot(webview, 35))(webview, registration[1])
 
 
 def _make_message_handler() -> Handler:
@@ -794,9 +803,21 @@ def _on_strip(controller: int, token: int) -> None:
 
 
 def _close_controller() -> None:
+    for tab in list(_docs.get("tabs") or []):
+        _close_doc_tab(str(tab["id"]))
+    strip = int(_docs.get("strip_controller") or 0)
+    if strip:
+        _unhook_messages(int(_docs.get("strip_webview") or 0))
+        CLOSE_CTRL(_vtable_slot(strip, 24))(strip)
+        _docs["strip_controller"] = 0
+    hidden = int(_state.get("bb_controller") or 0)
+    if hidden:
+        CLOSE_CTRL(_vtable_slot(hidden, 24))(hidden)
+        _state["bb_controller"] = 0
     controller = _state.get("controller")
     if not controller:
         return
+    _unhook_messages(int(_state.get("webview") or 0))
     CLOSE_CTRL(_vtable_slot(int(controller), 24))(int(controller))
     _state["controller"] = None
 
@@ -853,50 +874,6 @@ def _make_handler(kind: int) -> Handler:
     handler = Handler(ctypes.pointer(vtbl), kind)
     _keep.append(handler)
     return handler
-
-
-def _reg_read(root: int, subkey: str, name: str) -> str:
-    key = wt.HKEY()
-    if advapi32.RegOpenKeyExW(root, subkey, 0, KEY_READ | KEY_WOW64_32KEY, byref(key)):
-        return ""
-    size = wt.DWORD(0)
-    if advapi32.RegQueryValueExW(key, name, None, None, None, byref(size)) or not size.value:
-        advapi32.RegCloseKey(key)
-        return ""
-    buf = ctypes.create_unicode_buffer(size.value // 2 + 1)
-    advapi32.RegQueryValueExW(key, name, None, None, buf, byref(size))
-    advapi32.RegCloseKey(key)
-    return buf.value.strip("\x00")
-
-
-def _runtime_dll() -> Path:
-    for root, key, name in (
-        (HKEY_LOCAL_MACHINE, WEBVIEW_CLIENT, "EBWebView"),
-        (HKEY_CURRENT_USER, WEBVIEW_CLIENT, "EBWebView"),
-    ):
-        folder = _reg_read(root, key, name)
-        if folder:
-            candidate = Path(folder) / "EBWebView" / "x64" / "EmbeddedBrowserWebView.dll"
-            if candidate.is_file():
-                return candidate
-    version = _reg_read(HKEY_LOCAL_MACHINE, WEBVIEW_CLIENTS, "pv")
-    location = _reg_read(HKEY_LOCAL_MACHINE, WEBVIEW_CLIENTS, "location")
-    if version and location:
-        candidate = Path(location) / version / "EBWebView" / "x64" / "EmbeddedBrowserWebView.dll"
-        if candidate.is_file():
-            return candidate
-    roots = [
-        Path(r"C:\Program Files (x86)\Microsoft\EdgeWebView\Application"),
-        Path(r"C:\Program Files\Microsoft\EdgeWebView\Application"),
-    ]
-    found: list[Path] = []
-    for root in roots:
-        if not root.is_dir():
-            continue
-        found.extend(root.glob("*/EBWebView/x64/EmbeddedBrowserWebView.dll"))
-    if not found:
-        raise FileNotFoundError("Microsoft Edge WebView2 Runtime is not installed.")
-    return sorted(found)[-1]
 
 
 def _user_data() -> str:
@@ -980,10 +957,11 @@ def _create_window() -> int:
 
 
 def _create_webview() -> None:
-    dll_path = _runtime_dll()
+    dll_path = ROOT / "assets" / "webview2" / "WebView2Loader.dll"
     dll = ctypes.WinDLL(str(dll_path))
-    create = dll.CreateWebViewEnvironmentWithOptionsInternal
-    create.argtypes = [wt.BOOL, c_int, wt.LPCWSTR, c_void_p, c_void_p]
+    _state["loader"] = dll
+    create = dll.CreateCoreWebView2EnvironmentWithOptions
+    create.argtypes = [wt.LPCWSTR, wt.LPCWSTR, c_void_p, c_void_p]
     create.restype = HRESULT
     env_handler = _make_handler(0)
     ctrl_handler = _make_handler(1)
@@ -992,7 +970,7 @@ def _create_webview() -> None:
     _state["script_handler"] = _make_handler(2)
     _state["app_ready"] = threading.Event()
     _state["bb_ready"] = threading.Event()
-    hr = create(1, 0, _user_data(), None, ctypes.addressof(env_handler))
+    hr = create(None, _user_data(), None, ctypes.addressof(env_handler))
     if hr < 0:
         raise OSError(f"Could not start WebView2 (0x{hr & 0xFFFFFFFF:08X})")
 

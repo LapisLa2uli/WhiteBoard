@@ -156,6 +156,10 @@ def selftest() -> int:
     """
     import threading
 
+    if sys.platform == "win32":
+        from host.windows_smoke import run
+        return run()
+
     import AppKit
     import Foundation
 

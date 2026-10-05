@@ -7,6 +7,7 @@ from pathlib import Path
 from blackboard.api import fetch_snapshot, index_course_files
 from blackboard.auth import BlackboardSession
 from blackboard.models import Snapshot
+from persistence import read_json, write_json, remove_json, validate_snapshot
 
 DATA_DIR = Path.home() / ".blackboard_dashboard"
 SNAPSHOT_PATH = DATA_DIR / "snapshot.json"
@@ -55,7 +56,9 @@ class Store:
         if not SNAPSHOT_PATH.exists():
             return False
         try:
-            data = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+            data, recovery = read_json(SNAPSHOT_PATH, validate=validate_snapshot)
+            if data is None:
+                return False
             self.snapshot = Snapshot.from_dict(data)
             self.signed_in = True
             return True
@@ -64,14 +67,11 @@ class Store:
 
     def save_cache(self) -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        SNAPSHOT_PATH.write_text(
-            json.dumps(self.snapshot.to_dict(), indent=2, default=str),
-            encoding="utf-8",
-        )
+        validate_snapshot(self.snapshot.to_dict())
+        write_json(SNAPSHOT_PATH, self.snapshot.to_dict())
 
     def clear_disk_cache(self) -> None:
-        if SNAPSHOT_PATH.exists():
-            SNAPSHOT_PATH.unlink()
+        remove_json(SNAPSHOT_PATH)
 
     def clear_cache(self) -> None:
         self.clear_disk_cache()
@@ -133,7 +133,7 @@ def load_settings() -> dict:
     if not SETTINGS_PATH.exists():
         return dict(defaults)
     try:
-        data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+        data, _ = read_json(SETTINGS_PATH, {})
         if not isinstance(data, dict):
             return dict(defaults)
         merged = dict(defaults)
@@ -178,7 +178,7 @@ def load_settings() -> dict:
         return dict(defaults)
 
 
-_settings_lock = threading.Lock()
+_settings_lock = threading.RLock()
 
 
 def update_settings(mutator) -> dict:
@@ -233,7 +233,7 @@ def save_settings(settings: dict) -> None:
         "ui_font": _ui_font(settings.get("ui_font")),
         "page_opener": _page_opener(settings.get("page_opener")),
     }
-    SETTINGS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_json(SETTINGS_PATH, payload)
 
 
 def _clean_hex(value: object) -> str:

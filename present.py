@@ -41,20 +41,20 @@ _snapshot_cache: dict = {"key": None, "snapshot": None}
 
 
 def load_snapshot() -> Snapshot:
-    if not SNAPSHOT_PATH.exists():
-        _snapshot_cache["key"] = None
-        _snapshot_cache["snapshot"] = None
-        return Snapshot()
-    key = SNAPSHOT_PATH.stat().st_mtime_ns
-    cached = _snapshot_cache.get("snapshot")
-    if cached is not None and _snapshot_cache.get("key") == key:
-        return cached
-    import json
-
-    data = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
-    snapshot = Snapshot.from_dict(data)
-    _snapshot_cache["key"] = key
-    _snapshot_cache["snapshot"] = snapshot
+    from persistence import read_json, validate_snapshot
+    path = data.SNAPSHOT_PATH
+    key = (str(path), path.stat().st_mtime_ns if path.exists() else None)
+    if _snapshot_cache.get("key") == key and _snapshot_cache.get("snapshot") is not None:
+        return _snapshot_cache["snapshot"]
+    payload, recovery = read_json(path, {}, validate=validate_snapshot)
+    try:
+        snapshot = Snapshot.from_dict(payload)
+    except (TypeError, ValueError, AttributeError):
+        snapshot = Snapshot()
+        recovery = "Saved data could not be read. Sign in to refresh it."
+    if recovery:
+        snapshot.errors["storage"] = recovery
+    _snapshot_cache.update(key=key, snapshot=snapshot)
     return snapshot
 
 

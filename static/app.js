@@ -123,7 +123,10 @@ async function loadState() {
 async function boot() {
   bindOnce();
   setInterval(tickCountdowns, 1000);
-  await loadState();
+  try { await loadState(); } catch (error) {
+    state = { has_snapshot: false };
+    jobError = error.message;
+  }
   route = "/login";
   window.addEventListener("hashchange", () => {
     route = location.hash.slice(1) || "/login";

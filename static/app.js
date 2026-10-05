@@ -37,6 +37,8 @@ let selectMode = false;
 let selectedAssignments = new Set();
 let filterDialog = null;
 let contentIndex = null;
+let searchTimer = 0;
+let lazyRequests = new Set();
 let courseFilterCache = null;
 let manualMarks = new Set();
 let detailReturn = "";
@@ -130,14 +132,14 @@ async function boot() {
     state = { has_snapshot: false };
     jobError = error.message;
   }
-  route = "/login";
+  route = state.has_snapshot ? "/home" : "/login";
   window.addEventListener("hashchange", () => {
     route = location.hash.slice(1) || "/login";
     if (route === "/submitted") route = "/assignments";
     if (!state.has_snapshot && route !== "/login") route = "/login";
     render();
   });
-  if (location.hash !== "#/login") location.hash = "/login";
+  if (location.hash !== "#" + route) location.hash = route;
   else render();
 }
 
@@ -602,7 +604,7 @@ function onInput(event) {
   if (event.target.id === "contents-search") {
     query.contents = event.target.value;
     pages["contents-search"] = 0;
-    paintContentsRoot();
+    clearTimeout(searchTimer); searchTimer = setTimeout(paintContentsRoot, 120);
     return;
   }
   if (event.target.id === "filter-name" && filterDialog) {
@@ -705,6 +707,7 @@ function onSubmit(event) {
 async function pollJob() {
   const mine = ++pollGen;
   let failures = 0;
+  let shownRevision = 0;
   while (mine === pollGen) {
     let job = null;
     try {
@@ -732,8 +735,13 @@ async function pollJob() {
       log: job.log || [],
       counts: job.counts || null,
     };
+    const changedStage = job.revision > shownRevision;
+    if (changedStage) {
+      shownRevision = job.revision; await loadState();
+      if (state.has_snapshot && route === "/login") { route = "/home"; location.hash = route; }
+    }
     document.title = `WhiteBoard — ${loading.message}`;
-    render();
+    if (state.has_snapshot && document.getElementById("shell") && !changedStage) paintChrome(); else render();
     if (!job.busy) {
       await loadState();
       loading = null;
@@ -811,8 +819,8 @@ async function googleAction(path) {
 }
 
 async function pollGoogle() {
-  await loadState();
-  paintPage();
+  try { Object.assign(state, await api("/api/google/status")); } catch (error) { busy=false; showError(error); return; }
+  if (route === "/settings") paintPage();
   paintChrome();
   if (state.google_busy) {
     setTimeout(pollGoogle, 800);
@@ -831,7 +839,7 @@ async function refreshNow() {
 function render() {
   applyUiFont(state && state.ui_font);
   const app = document.getElementById("app");
-  if (loading) {
+  if (loading && !(state && state.has_snapshot)) {
     app.innerHTML = loadingView();
     return;
   }
@@ -856,7 +864,7 @@ function render() {
 
 function loadingView() {
   const percent = Math.max(0, Math.min(100, Math.round((loading.percent || 0) * 100)));
-  const title = loading.kind === "refresh" ? "Refreshing your dashboard" : "Signing in";
+  const title = loading.percent > .12 ? "Loading your dashboard" : "Signing in";
   const blurb = loading.message || (loading.kind === "refresh"
     ? "Collecting courses, assignment links, and submission status."
     : "Opening Blackboard…");
@@ -945,7 +953,7 @@ function paintChrome() {
     <button class="text-btn pill" id="logout">Log out</button>`;
   if (busySlot) {
     const on = busy || state.google_busy;
-    busySlot.innerHTML = `<div class="busy-bar ${on ? "" : "idle"}"><span></span></div>`;
+    busySlot.innerHTML = loading ? `<div class="sync-status" role="status">${escapeHtml(loading.message)} <button id="cancel-loading" class="text-btn">Cancel refresh</button>${state.partial ? '<span>Some details are still being verified.</span>' : ''}</div>` : `<div class="busy-bar ${on ? "" : "idle"}"><span></span></div>`;
   }
 }
 
@@ -1186,7 +1194,7 @@ function viewFor(path) {
   if (path === "/ignored") return assignmentList("ignored");
   if (path === "/grades") return gradesView();
   if (path === "/calendar") return calendarView();
-  if (path === "/contents") return contentsView();
+  if (path === "/contents") { ensureLazyContent(); return contentsView(); }
   if (path === "/settings") return settingsView();
   return homeView();
 }
@@ -1493,6 +1501,7 @@ function gradesLists() {
 }
 
 function courseView(id) {
+  ensureLazyCourse(id);
   const course = state.courses.find((item) => item.id === id);
   const page = (state.course_pages || {})[id];
   if (!course || !page) return `<h2>Course</h2><p class="muted">No course data.</p>`;
@@ -1784,7 +1793,7 @@ function folderTrail(nodes, node) {
   const seen = new Set();
   while (parent && !seen.has(parent)) {
     seen.add(parent);
-    const folder = nodes.find((item) => item.id === parent);
+    const folder = ensureContentIndex().byId.get(parent);
     if (!folder) break;
     names.unshift(folder.name);
     parent = folder.parent_id || "";
@@ -2686,6 +2695,7 @@ function colorForDue(ts) {
 }
 
 function tickCountdowns() {
+  if (document.hidden) return;
   const nodes = document.querySelectorAll(".countdown[data-due]");
   if (!nodes.length) return;
   nodes.forEach((node) => {
@@ -2769,4 +2779,25 @@ async function signOut() {
     query = {assignments:"", grades:"", courses:"", contents:""}; pages = {};
     await loadState(); go("/login"); render();
   } catch (error) { showError(error); }
+}
+
+async function ensureLazyContent() {
+  if (!state || state.content_loaded || lazyRequests.has("content")) return;
+  lazyRequests.add("content");
+  const revision = state.revision;
+  try {
+    const result = await api("/api/content");
+    if (state.revision === revision) { Object.assign(state,result); contentIndex=null; if (route === "/contents") paintContentsRoot(); }
+  } catch (error) { showError(error); }
+  finally { lazyRequests.delete("content"); }
+}
+async function ensureLazyCourse(id) {
+  if (state.course_pages[id] || lazyRequests.has(id)) return;
+  lazyRequests.add(id);
+  const revision = state.revision;
+  try {
+    const result=await api("/api/course",{id});
+    if (state.revision === revision) { Object.assign(state.course_pages,result.course_pages); if (route.startsWith("/courses/")) paintPage(); }
+  } catch(error) { showError(error); }
+  finally { lazyRequests.delete(id); }
 }

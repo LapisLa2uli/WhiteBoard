@@ -137,6 +137,7 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
         detail="",
         log=["Starting…"],
         counts={"courses": 0, "folders": 0, "files": 0},
+        stage="authentication", revision=0, timings={},
     )
 
     def work() -> None:
@@ -162,11 +163,19 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
                 session._verify_user(username)
                 session.logged_in = True
             _set("Loading your dashboard…", 0.08)
+            from present import publish_stage
+            def staged(snapshot, stage):
+                _check_cancelled()
+                publish_stage(snapshot)
+                progress["stage"] = stage
+                progress["revision"] += 1
+                progress["timings"][stage] = round(time.monotonic() - progress["started_at"], 3)
             snapshot = fetch_snapshot(
                 session,
                 quick=False,
                 include_files=True,
                 course_ids=_load_course_ids(),
+                on_stage=staged,
             )
             _check_cancelled()
             store = Store()
@@ -175,6 +184,9 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
             with _lock:
                 _check_cancelled()
                 store.save_cache()
+            publish_stage(None)
+            progress["stage"] = "complete"
+            progress["timings"]["complete"] = round(time.monotonic() - progress["started_at"], 3)
             _save_session()
             _set("Ready.", 1.0)
             _check_cancelled()
@@ -188,6 +200,8 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
             _set(text, error=text)
         finally:
             secret = ""
+            from present import publish_stage
+            publish_stage(None)
             _session = None
             progress["busy"] = False
             progress["cancelled"] = _cancel.is_set()

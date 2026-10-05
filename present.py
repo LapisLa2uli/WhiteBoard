@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import html
+import copy
+import threading
+import time
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,10 +40,25 @@ from app.google_calendar import load_account
 from app.palette import deadline_color, subject_fill, subject_ink, apply_palette
 
 
+_live_snapshot = None
+_live_revision = 0
+_state_cache = {}
+_state_lock = threading.RLock()
+
+def publish_stage(snapshot):
+    global _live_snapshot, _live_revision
+    with _state_lock:
+        _live_snapshot = copy.deepcopy(snapshot) if snapshot is not None else None
+        _live_revision += 1
+        _state_cache.clear()
+
+
 _snapshot_cache: dict = {"key": None, "snapshot": None}
 
 
 def load_snapshot() -> Snapshot:
+    if _live_snapshot is not None:
+        return _live_snapshot
     from persistence import read_json, validate_snapshot
     path = data.SNAPSHOT_PATH
     key = (str(path), path.stat().st_mtime_ns if path.exists() else None)
@@ -140,7 +158,7 @@ def _submitted_ts(settings: dict, item) -> int:
     return 0
 
 
-def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") -> dict:
+def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", include_content=True, course_id=None) -> dict:
     settings = load_settings()
     apply_palette(settings)
     snapshot = snapshot or load_snapshot()
@@ -260,7 +278,7 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
         )
 
     course_pages = {}
-    for course in snapshot.courses:
+    for course in (snapshot.courses if course_id is None else [c for c in snapshot.courses if c.id == course_id]):
         percent = course_score_percent(snapshot, course.id)
         totals = course_score_totals(snapshot, course.id)
         upcoming_items = [
@@ -308,7 +326,7 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
     ]
     account = load_account()
     content_nodes = []
-    for node in snapshot.content_nodes:
+    for node in (snapshot.content_nodes if include_content else []):
         stamp = node.modified_at or node.created_at
         content_nodes.append(
             {
@@ -361,7 +379,10 @@ def build_state(snapshot: Snapshot | None = None, *, google_status: str = "") ->
         "home_grades": home_grades,
         "calendar": calendar,
         "content_nodes": content_nodes,
-        "content_count": len(content_nodes),
+        "content_count": len(snapshot.content_nodes),
+        "content_loaded": include_content,
+        "revision": _live_revision,
+        "partial": _live_snapshot is not None,
         "files_indexed": bool(snapshot.files_indexed),
         "google": {
             "signed_in": bool(account.get("refresh_token")),
@@ -416,3 +437,20 @@ def _custom_filters(settings: dict) -> list[dict]:
 def _trim(value: float) -> str:
     text = f"{value:.2f}".rstrip("0").rstrip(".")
     return text or "0"
+
+
+def build_state(snapshot=None, *, google_status="", include_content=True, course_id=None):
+    # Cache only immutable presentation output; callers receive their own copy.
+    if snapshot is not None:
+        return _build_state(snapshot, google_status=google_status, include_content=include_content, course_id=course_id)
+    def stamp(path):
+        return (str(path), path.stat().st_mtime_ns) if path.exists() else (str(path), 0)
+    key = (stamp(data.SNAPSHOT_PATH), stamp(data.SETTINGS_PATH), stamp(data.GOOGLE_PATH), _live_revision, int(time.time() // 60), include_content, course_id)
+    with _state_lock:
+        if key not in _state_cache:
+            if len(_state_cache) >= 8:
+                _state_cache.clear()
+            _state_cache[key] = _build_state(include_content=include_content, course_id=course_id)
+        result = copy.deepcopy(_state_cache[key])
+    result['google']['status'] = google_status
+    return result

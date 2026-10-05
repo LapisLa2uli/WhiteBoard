@@ -26,6 +26,7 @@ from present import build_state, load_snapshot
 from app.palette import DEADLINE_ROWS, apply_palette, normalize_hex
 from app.google_calendar import (
     GoogleCalendarError,
+    load_account,
     events_for_sync,
     remember_client,
     sign_in,
@@ -43,7 +44,7 @@ _google_lock = threading.Lock()
 
 def _state() -> dict:
     status = str(progress.get("google") or _google.get("status") or "")
-    payload = build_state(google_status=status)
+    payload = build_state(google_status=status, include_content=False, course_id="")
     payload["google_busy"] = bool(_google.get("busy"))
     payload["job"] = {
         "busy": bool(progress.get("busy")),
@@ -375,6 +376,9 @@ def _progress_payload() -> dict:
     counts = progress.get("counts") if isinstance(progress.get("counts"), dict) else {}
     return {
         "id": progress.get("id", ""),
+        "stage": progress.get("stage", ""),
+        "revision": progress.get("revision", 0),
+        "timings": dict(progress.get("timings") or {}),
         "cancelled": progress.get("cancelled", False),
         "busy": bool(progress.get("busy")),
         "kind": progress.get("kind") or "",
@@ -997,6 +1001,15 @@ def handle(path: str, body: dict | None = None) -> dict:
     """Answer one window request. Nothing listens on a network port."""
     payload = body if isinstance(body, dict) else {}
     route = str(path or "").split("?", 1)[0]
+    if route == "/api/content":
+        result = build_state(include_content=True, course_id="")
+        return {"content_nodes": result["content_nodes"], "content_loaded": True, "revision": result["revision"]}
+    if route == "/api/course":
+        result = build_state(include_content=False, course_id=str(payload.get("id") or ""))
+        return {"course_pages": result["course_pages"]}
+    if route == "/api/google/status":
+        account = load_account()
+        return {"google_busy": bool(_google.get("busy")), "google": {"signed_in": bool(account.get("refresh_token")), "email": str(account.get("email") or ""), "sync_enabled": bool(load_settings().get("google_sync_enabled")), "status": str(_google.get("status") or "")}}
     if route == "/api/logout":
         if _google.get("busy"):
             raise RuntimeError("Wait for Google sync to finish before signing out.")

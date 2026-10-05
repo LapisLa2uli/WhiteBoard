@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from dataclasses import dataclass
 from html import unescape
 from datetime import date, datetime, timedelta, timezone
@@ -116,6 +117,7 @@ def fetch_snapshot(
     quick: bool = False,
     course_ids: set[str] | None = None,
     include_files: bool = False,
+    on_stage=None,
 ) -> Snapshot:
     snapshot = Snapshot(fetched_at=datetime.now(timezone.utc))
     snapshot.sync_scope = ",".join(sorted(course_ids)) if course_ids else "all"
@@ -192,6 +194,9 @@ def fetch_snapshot(
         0.20,
     )
 
+    if on_stage:
+        on_stage(snapshot, "deadlines")
+
     grades = harvested_grades or _try_paths(
         session,
         [p.format(user_id=quote(user_id, safe="")) for p in GRADE_STREAM_PATHS],
@@ -231,6 +236,10 @@ def fetch_snapshot(
 
     _merge_assignments_from_deadlines(snapshot)
     _drop_old_assignments(snapshot)
+    if on_stage:
+        _apply_assignment_status(snapshot)
+        _apply_launch_urls(snapshot, session.base_url)
+        on_stage(snapshot, "dashboard")
     _enrich_assignment_links(session, snapshot, quick=quick, include_files=include_files)
     _check_live_submissions(session, snapshot, quick=quick)
     snapshot.files_indexed = bool(include_files)
@@ -1667,6 +1676,7 @@ def _is_manually_submitted(snapshot: Snapshot, assignment: Assignment) -> bool:
     return token in keys
 
 
+@lru_cache(maxsize=8192)
 def _norm_title(text: str) -> str:
     cleaned = "".join(ch.lower() if ch.isalnum() or ch.isspace() else " " for ch in (text or ""))
     return " ".join(cleaned.split())

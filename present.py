@@ -88,8 +88,11 @@ def format_dt(value: datetime | None, *, with_time: bool = True) -> str:
     if value is None:
         return "No date"
     local = _as_utc(value).astimezone()
+    # Numeric UTC offset avoids OS-language-specific timezone names.
+    offset = local.strftime("%z")
+    zone = f"UTC{offset[:3]}:{offset[3:]}"
     if with_time:
-        return local.strftime("%a %b %d %Y, %H:%M %Z")
+        return local.strftime("%a %b %d %Y, %H:%M ") + zone
     return local.strftime("%a %b %d %Y")
 
 

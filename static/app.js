@@ -960,7 +960,8 @@ function paintChrome() {
   const nav = NAV.map(([path, label, icon]) => {
     const active = topOf(route) === path ? "active" : "";
     const badge = path === "/assignments" ? todoBadge() : "";
-    return `<button class="nav-btn ${active}" data-go="${path}">${navIcon(icon)}<span class="label">${label}</span>${badge}</button>`;
+    const name = path === "/assignments" ? `${label}, ${todoCount()} to do` : label;
+    return `<button class="nav-btn ${active}" data-go="${path}" aria-label="${escapeAttr(name)}" title="${escapeAttr(label)}" ${active ? 'aria-current="page"' : ''}>${navIcon(icon)}<span class="label">${label}</span>${badge}</button>`;
   }).join("");
   topbar.innerHTML = `
     <button class="text-btn" id="sidebar-toggle" aria-label="Toggle course sidebar" aria-expanded="${!state.sidebar_collapsed}">☰</button>

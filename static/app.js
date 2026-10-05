@@ -176,6 +176,8 @@ function bindOnce() {
   document.addEventListener("input", onInput);
   document.addEventListener("change", onChange);
   document.addEventListener("submit", onSubmit);
+  document.addEventListener("keydown", onKeyDown);
+  new MutationObserver(() => { if (!a11yPending) { a11yPending=true; requestAnimationFrame(() => { a11yPending=false; enhanceAccessibility(); }); } }).observe(document.getElementById("app"),{childList:true,subtree:true});
 }
 
 function rememberPointer(event) {
@@ -204,6 +206,7 @@ function spawnRipple(host, x, y) {
 }
 
 function onRipple(event) {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || !state || !state.motion_effects) return;
   const target = event.target;
   if (!target || !target.closest) return;
   const host = target.closest(RIPPLE_HOST);
@@ -214,6 +217,7 @@ function onRipple(event) {
 }
 
 function onScrollRipple() {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || !state || !state.motion_effects) return;
   if (rippleFrame) return;
   rippleFrame = requestAnimationFrame(() => {
     rippleFrame = 0;
@@ -1059,7 +1063,7 @@ function filterModal() {
   if (filterDialog.kind === "late") {
     const count = filterDialog.count || 0;
     const noun = count === 1 ? "assignment" : "assignments";
-    return `<div class="modal-back"><div class="modal">
+    return `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true">
       <h3>Mark overdue assignments done in WhiteBoard?</h3>
       <p>This marks ${count} overdue ${noun} done in WhiteBoard only. It does not submit coursework to Blackboard. Undo is available on each card.</p>
       <div class="row" style="margin-top:12px">
@@ -1069,7 +1073,7 @@ function filterModal() {
     </div></div>`;
   }
   if (filterDialog.kind === "delete") {
-    return `<div class="modal-back"><div class="modal">
+    return `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true">
       <h3>Delete filter?</h3>
       <p>Delete "${escapeHtml(filterDialog.name)}"? This cannot be undone.</p>
       <div class="row" style="margin-top:12px">
@@ -1082,7 +1086,7 @@ function filterModal() {
       <input type="checkbox" data-filter-course="${escapeAttr(course.id)}" ${filterDialog.selected.has(course.id) ? "checked" : ""} />
       <span>${escapeHtml(course.name)}</span>
     </label>`).join("");
-  return `<div class="modal-back"><div class="modal">
+  return `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true">
     <h3>New course filter</h3>
     <p class="muted">Only the courses you check appear in the left list when this filter is on. Assignments and deadlines from other courses still show until you hide them.</p>
     <label>Filter name</label>
@@ -1310,7 +1314,7 @@ function assignmentItems(mode) {
 }
 
 function assignmentList(mode) {
-  const title = mode === "submitted" ? "Submitted" : mode === "ignored" ? "Ignored" : "Assignments";
+  const title = mode === "submitted" ? "Completed" : mode === "ignored" ? "Ignored" : "Assignments";
   return `<h2>${title}</h2>${historyControl()}${assignToolbar(mode)}${searchBox("assignments", "Search assignments")}<div id="list-root">${assignmentFolders(mode)}</div>`;
 }
 
@@ -1454,6 +1458,7 @@ function changeAssignments(action, ids) {
     applyAssignmentUpdates((result && result.updates) || []);
     await loadState();
     paintAssignmentSurface();
+    if (action === "submitted") showToast("Marked done in WhiteBoard. No coursework was submitted.", () => changeAssignments("unsubmit", ids));
   }).catch(async (error) => {
     if (token !== assignmentWrite) return;
     await loadState().catch(() => {});
@@ -2377,8 +2382,8 @@ function assignCard(item, withActions) {
     actions = `${mark}${open}${actionButton(`data-assign-ignore="${escapeAttr(item.id)}"`, "Ignore", "ignore")}`;
   }
   const timing = submitted
-    ? `<div class="countdown submitted" data-due="${item.ts || 0}" data-submitted="1" data-submitted-at="${item.submitted_ts || 0}">${escapeHtml(submittedTiming(item.ts || 0, item.submitted_ts || 0))}</div>`
-    : `<div class="countdown" data-due="${item.ts || 0}" style="color:${item.border}">${escapeHtml(item.countdown || formatCountdown(item.ts || 0))}</div>`;
+    ? `<div class="countdown submitted" data-due="${item.ts || 0}" data-submitted="1" data-submitted-at="${item.submitted_ts || 0}" data-local="${item.manual ? "1" : "0"}">${escapeHtml(submittedTiming(item.ts || 0, item.submitted_ts || 0, item.manual))}</div>`
+    : `<div class="countdown" data-due="${item.ts || 0}" style="color:var(--text)">${escapeHtml(item.countdown || formatCountdown(item.ts || 0))}</div>`;
   return `<article class="assign ${extra}" style="border-color:${submitted ? "#94a3b8" : item.border};background:${background}" ${item.kind === "other" ? `data-open="${escapeAttr(item.url || "")}"` : `data-go="/assignments/${encodeURIComponent(dest)}"`}>
     <div class="assign-copy">
       ${check}
@@ -2477,7 +2482,7 @@ function animateMeters() {
 }
 
 function feedbackModal() {
-  return `<div class="modal-back"><div class="modal">
+  return `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true">
     <h3>${escapeHtml(feedback.title)}</h3>
     <p class="muted">${escapeHtml(feedback.course)}</p>
     <p><strong>${escapeHtml(feedback.label)}</strong></p>
@@ -2503,11 +2508,13 @@ async function openUrl(url, title, id) {
     const result = await api("/api/open", { url: url || "", title: title || "", id: id || "" });
     if (result && result.fallback && result.message) {
       contentsNote = result.message;
+      showToast(result.message);
       const note = document.getElementById("contents-note");
       if (note) note.textContent = contentsNote;
     }
   } catch (error) {
     contentsNote = (error && error.message) || "Could not open that page.";
+    showToast(contentsNote);
     const note = document.getElementById("contents-note");
     if (note) note.textContent = contentsNote;
   }
@@ -2653,7 +2660,7 @@ function colorModal() {
   const picks = SWATCHES.map((color) =>
     `<button class="swatch-pick ${color === current ? "current" : ""}" data-swatch="${color}" style="background:${color}" title="${color}"></button>`
   ).join("");
-  return `<div class="modal-back"><div class="modal">
+  return `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true">
     <h3>${escapeHtml(colorDialog.title)}</h3>
     <p class="muted">Choose a swatch, or type a hex color.</p>
     <div class="row">${picks}</div>
@@ -2666,9 +2673,9 @@ function colorModal() {
   </div></div>`;
 }
 
-function submittedTiming(dueTs, submittedTs) {
+function submittedTiming(dueTs, submittedTs, local = false) {
   const since = dueTs ? `${formatSpan(Math.abs(dueTs - Date.now() / 1000))} ${Date.now() / 1000 >= dueTs ? "since the deadline" : "until the deadline"}` : "";
-  let submitted = "Submitted";
+  let submitted = local ? "Done in WhiteBoard" : "Submitted on Blackboard";
   if (submittedTs) {
     submitted = `Submitted ${new Date(submittedTs * 1000).toLocaleString("en-GB", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
   }
@@ -2718,7 +2725,7 @@ function tickCountdowns() {
     const ts = Number(node.dataset.due || 0);
     if (!ts) return;
     if (node.dataset.submitted === "1") {
-      const text = submittedTiming(ts, Number(node.dataset.submittedAt || 0));
+      const text = submittedTiming(ts, Number(node.dataset.submittedAt || 0), node.dataset.local === "1");
       if (node.textContent !== text) node.textContent = text;
       return;
     }
@@ -2727,7 +2734,7 @@ function tickCountdowns() {
     const band = colorForDue(ts);
     if (node.dataset.band === band) return;
     node.dataset.band = band;
-    node.style.color = band;
+    node.style.color = "var(--text)";
     const card = node.closest(".assign");
     if (card && !card.classList.contains("event") && !card.classList.contains("dimmed")) {
       card.style.borderColor = band;
@@ -2816,4 +2823,58 @@ async function ensureLazyCourse(id) {
     if (state.revision === revision) { Object.assign(state.course_pages,result.course_pages); if (route.startsWith("/courses/")) paintPage(); }
   } catch(error) { showError(error); }
   finally { lazyRequests.delete(id); }
+}
+
+let a11yPending = false;
+let activeModal = null;
+let focusBeforeModal = null;
+function enhanceAccessibility() {
+  document.querySelectorAll('[data-go]:not(button):not(a), [data-open]:not(button):not(a), [data-enter]:not(button), [data-reveal]:not(button)').forEach(el => {
+    el.setAttribute('role','button'); el.tabIndex=0;
+  });
+  document.querySelectorAll('button, input, select').forEach((el,index) => {
+    if (el.type === 'hidden') return;
+    const previous=el.previousElementSibling;
+    if (previous && previous.tagName === 'LABEL' && !previous.htmlFor) {
+      if (!el.id) el.id='field-'+index;
+      previous.htmlFor=el.id;
+    }
+    if (el.getAttribute('aria-label') || el.labels?.length || (el.tagName==='BUTTON' && el.textContent.trim())) return;
+    const row=el.closest('.file-row,.assign,.card');
+    const name=row?.querySelector('.name,strong')?.textContent.trim();
+    const label=el.title || el.placeholder || (el.dataset.open != null ? 'Open '+(name || 'file') : el.dataset.expand ? 'Expand or collapse '+(name || 'folder') : el.type==='checkbox' ? 'Select '+(name || 'item') : (el.id || 'Option').replaceAll('-',' '));
+    el.setAttribute('aria-label',label);
+  });
+  document.querySelectorAll('[data-folder]').forEach(el=>el.setAttribute('aria-expanded',String(!!openFolders[el.dataset.folder])));
+  const modal=document.querySelector('.modal');
+  if (modal) {
+    modal.setAttribute('role','dialog'); modal.setAttribute('aria-modal','true');
+    const heading=modal.querySelector('h3'); if (heading) { heading.id='dialog-title'; modal.setAttribute('aria-labelledby',heading.id); }
+    if (!activeModal) focusBeforeModal=document.activeElement;
+    if (modal!==activeModal) { activeModal=modal; (modal.querySelector('input,button,select') || modal).focus(); }
+  } else if (activeModal) {
+    activeModal=null;
+    if (focusBeforeModal?.isConnected) focusBeforeModal.focus();
+  }
+}
+function onKeyDown(event) {
+  const modal=document.querySelector('.modal');
+  if (event.key==='Escape' && modal) {
+    event.preventDefault(); feedback=null; colorDialog=null; filterDialog=null; logoutDialog=false; render(); return;
+  }
+  if (event.key==='Tab' && modal) {
+    const controls=[...modal.querySelectorAll('button:not(:disabled),input:not(:disabled),select,[tabindex="0"]')];
+    const first=controls[0], last=controls.at(-1);
+    if (event.shiftKey && document.activeElement===first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement===last) { event.preventDefault(); first?.focus(); }
+  }
+  const button=event.target.closest('[role="button"]');
+  if (button===event.target && (event.key==='Enter' || event.key===' ')) { event.preventDefault(); button.click(); }
+}
+function showToast(message, undo) {
+  let toast=document.getElementById('toast');
+  if (!toast) { toast=document.createElement('div'); toast.id='toast'; toast.className='toast'; toast.setAttribute('role','status'); document.body.appendChild(toast); }
+  toast.replaceChildren(document.createTextNode(message));
+  if (undo) { const button=document.createElement('button'); button.textContent='Undo'; button.className='outline-btn'; button.onclick=()=>{undo();toast.remove();};toast.appendChild(button); }
+  clearTimeout(toast.dismissTimer); toast.dismissTimer=setTimeout(()=>toast.remove(),12000);
 }

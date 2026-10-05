@@ -352,3 +352,12 @@ input[type="password"], input[type="text"], textarea {
   border-radius: 50%; animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Keyboard, motion, and readable status colors. */
+:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+.countdown { color: var(--text) !important; }
+.toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:1000; max-width:90vw; padding:14px 20px; border:1px solid #94a3b8; border-radius:12px; background:white; color:#0f172a; box-shadow:0 8px 32px #0f172a26; display:flex; gap:16px; align-items:center; }
+.sync-status { display:flex; align-items:center; gap:12px; padding:8px 20px; background:#eff6ff; font-size:13px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
+}

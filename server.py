@@ -403,9 +403,12 @@ def _open_page(body: dict) -> dict:
 
 def _dispatch_open(choice: str, target: str, title: str, *, start, builtin) -> dict:
     """Open in Chrome or Edge, and use the built-in window when that cannot start."""
-    external = choice in {"edge", "chrome"} and target.lower().startswith(("http://", "https://"))
-    if external and start(choice, target):
-        return {"ok": True, "url": target, "opened_with": choice}
+    external = choice in {"system", "edge", "chrome"} and target.lower().startswith(("http://", "https://"))
+    try:
+        if external and start(choice, target):
+            return {"ok": True, "url": target, "opened_with": choice}
+    except (OSError, RuntimeError):
+        pass
     builtin(target, title)
     if not external:
         return {"ok": True, "url": target, "opened_with": "builtin"}
@@ -422,6 +425,8 @@ def _dispatch_open(choice: str, target: str, title: str, *, start, builtin) -> d
 def _browser_executable(kind: str):
     import os
     import shutil
+    if sys.platform != "win32":
+        return None
     import winreg
 
     name = {"edge": "msedge.exe", "chrome": "chrome.exe"}.get(kind)
@@ -464,6 +469,12 @@ def _start_browser(kind: str, url: str) -> bool:
     import subprocess
     import time
 
+    if kind == "system":
+        import webbrowser
+        return bool(webbrowser.open(url))
+    if sys.platform == "darwin":
+        name = {"chrome": "Google Chrome", "edge": "Microsoft Edge"}.get(kind)
+        return bool(name) and subprocess.run(["/usr/bin/open", "-a", name, url], capture_output=True, timeout=10).returncode == 0
     exe = _browser_executable(kind)
     if exe is None:
         return False

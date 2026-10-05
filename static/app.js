@@ -63,6 +63,7 @@ const UI_FONT_LABELS = [
   ["arial", "Arial"],
 ];
 const PAGE_OPENERS = [
+  ["system", "System default browser"],
   ["builtin", "Built-in display"],
   ["edge", "Microsoft Edge"],
   ["chrome", "Google Chrome"],

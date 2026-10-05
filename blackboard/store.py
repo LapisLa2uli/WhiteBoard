@@ -97,7 +97,7 @@ def _ui_font(value: object) -> str:
     return font if font in _UI_FONTS else "segoe"
 
 
-_PAGE_OPENERS = {"builtin", "edge", "chrome"}
+_PAGE_OPENERS = {"builtin", "system", "edge", "chrome"}
 
 
 def _page_opener(value: object) -> str:

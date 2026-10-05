@@ -235,7 +235,6 @@ def fetch_snapshot(
         snapshot.announcements = _fetch_announcements(session, snapshot)
 
     _merge_assignments_from_deadlines(snapshot)
-    _drop_old_assignments(snapshot)
     if on_stage:
         _apply_assignment_status(snapshot)
         _apply_launch_urls(snapshot, session.base_url)

@@ -3,7 +3,7 @@ let route = "/login";
 let pageSize = 10;
 let pages = {};
 let query = { assignments: "", grades: "", courses: "", contents: "" };
-let openFolders = { todo: true, submitted: false, graded: true, pending: true };
+let openFolders = { todo: true, now:true, upcoming:true, overdue:true, archived:false, submitted: false, graded: true, pending: true };
 let hideEvents = false;
 let busy = false;
 let feedback = null;
@@ -1060,11 +1060,11 @@ function filterModal() {
     const count = filterDialog.count || 0;
     const noun = count === 1 ? "assignment" : "assignments";
     return `<div class="modal-back"><div class="modal">
-      <h3>Mark late assignments as submitted?</h3>
-      <p>This will mark ${count} late ${noun} as submitted. You can undo each one from its card.</p>
+      <h3>Mark overdue assignments done in WhiteBoard?</h3>
+      <p>This marks ${count} overdue ${noun} done in WhiteBoard only. It does not submit coursework to Blackboard. Undo is available on each card.</p>
       <div class="row" style="margin-top:12px">
         <button class="text-btn" id="filter-cancel" type="button">Cancel</button>
-        <button class="fill-btn" id="mark-late-confirm" type="button">Mark submitted</button>
+        <button class="fill-btn" id="mark-late-confirm" type="button">Mark done locally</button>
       </div>
     </div></div>`;
   }
@@ -1210,7 +1210,7 @@ function homeView() {
     !item.ignored && !item.finished && keptByHistory(item) && (!item.course_id || inActiveFilter(item.course_id))
   );
   const gradeItems = (state.home_grades || []).filter((grade) => inActiveFilter(grade.course_id));
-  const due = dueItems.map((item) => assignCard(item, true)).join("") || `<p class="empty">No deadlines this week.</p>`;
+  const due = dueItems.map((item) => assignCard(item, item.kind !== "other")).join("") || `<p class="empty">No deadlines this week.</p>`;
   const grades = gradeItems.map((grade) => `<div class="card row grade-card" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}" style="background:${grade.fill};border-color:${grade.ink}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong style="color:${grade.ink}">${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="empty">No new grades.</p>`;
   const banners = errorBanners();
   return `<h2>Home</h2><p class="muted">This week at a glance.</p>${banners}
@@ -1267,13 +1267,13 @@ function keptByHistory(item) {
 function historyControl() {
   const mode = state.assignment_history || "off";
   const options = [
-    ["off", "Load all assignments"],
-    ["1w", "Skip due more than 1 week ago"],
-    ["1m", "Skip due more than 1 month ago"],
-    ["3m", "Skip due more than 3 months ago"],
-    ["6m", "Skip due more than 6 months ago"],
-    ["1y", "Skip due more than 1 year ago"],
-    ["date", "Skip due before a date"],
+    ["off", "Show all assignments"],
+    ["1w", "Hide due more than 1 week ago"],
+    ["1m", "Hide due more than 1 month ago"],
+    ["3m", "Hide due more than 3 months ago"],
+    ["6m", "Hide due more than 6 months ago"],
+    ["1y", "Hide due more than 1 year ago"],
+    ["date", "Hide due before a date"],
   ].map(([key, label]) => `<option value="${key}" ${mode === key ? "selected" : ""}>${label}</option>`).join("");
   const date = mode === "date"
     ? `<input id="history-date" type="date" value="${escapeAttr(state.assignment_history_date || "")}" />`
@@ -1283,7 +1283,7 @@ function historyControl() {
       <select id="history-mode">${options}</select>
       ${date}
     </div>
-    <p class="muted">Assignments due before this stay off the lists. The next refresh does not load them.</p>`;
+    <p class="muted">This display filter is reversible. Refresh keeps older assignments available.</p>`;
 }
 
 function byDueSoonest(a, b) {
@@ -1322,17 +1322,17 @@ function assignToolbar(mode) {
   const late = mode === "ignored" ? [] : lateAssignments();
   const bulk = mode === "ignored"
     ? `<button class="outline-btn with-icon" id="assign-restore" type="button" ${selected.length ? "" : "disabled"}>${actionIcon("restore")}<span>Restore selected (${selected.length})</span></button>`
-    : `<button class="outline-btn with-icon mark-btn" id="assign-mark" type="button" ${markable ? "" : "disabled"}>${actionIcon("submitted")}<span>Mark submitted (${markable})</span></button>
+    : `<button class="outline-btn with-icon mark-btn" id="assign-mark" type="button" ${markable ? "" : "disabled"}>${actionIcon("submitted")}<span>Mark done (${markable})</span></button>
        <button class="outline-btn with-icon" id="assign-ignore" type="button" ${selected.length ? "" : "disabled"}>${actionIcon("ignore")}<span>Ignore selected (${selected.length})</span></button>`;
   const undoButton = `<button class="outline-btn with-icon" id="assign-undo-open" type="button" title="Clear the submitted mark on every item that is not due yet." ${undoOpen ? "" : "disabled"}>${actionIcon("undo")}<span>Undo not due yet</span></button>`;
-  const lateButton = mode === "ignored" ? "" : `<button class="outline-btn with-icon mark-btn" id="assign-mark-late" type="button" title="Mark every overdue assignment as submitted." ${late.length ? "" : "disabled"}>${actionIcon("submitted")}<span>Mark late as submitted (${late.length})</span></button>`;
+  const lateButton = mode === "ignored" ? "" : `<button class="outline-btn with-icon mark-btn" id="assign-mark-late" type="button" title="Mark overdue items done locally. This does not submit coursework." ${late.length ? "" : "disabled"}>${actionIcon("submitted")}<span>Mark overdue done locally (${late.length})</span></button>`;
   return `<div class="row" id="assign-toolbar">
     <button class="outline-btn" id="assign-select" type="button">${selectMode ? "Done selecting" : "Select"}</button>
     <button class="text-btn" id="assign-select-all" type="button">Select all</button>
     ${bulk}
     ${lateButton}
     ${undoButton}
-    <span class="muted">Mark a card submitted, ignore it, or select several to update them together.</span>
+    <span class="muted">Mark done changes WhiteBoard only; submit coursework on Blackboard. Select several items for a bulk update.</span>
   </div>`;
 }
 
@@ -1470,9 +1470,15 @@ function assignmentFolders(mode) {
   if (mode === "ignored") {
     return items.length ? paged("assignments-ignored", items, card) : `<p class="empty">No ignored assignments.</p>`;
   }
-  const todo = items.filter((item) => item.status !== "submitted");
-  const done = items.filter((item) => item.status === "submitted");
-  return `${folder("todo", "To do", todo, card)}${folder("submitted", "Submitted", done, card)}`;
+  const now=Date.now()/1000, archiveBefore=now-180*86400;
+  const todo = items.filter(item=>item.status !== "submitted");
+  const current=todo.filter(item=>!item.ts || item.ts>=archiveBefore);
+  const dueNow=current.filter(item=>item.ts>=now && item.ts<now+86400);
+  const upcoming=current.filter(item=>!item.ts || item.ts>=now+86400);
+  const overdue=current.filter(item=>item.ts && item.ts<now).sort((a,b)=>b.ts-a.ts);
+  const archived=todo.filter(item=>item.ts && item.ts<archiveBefore).sort((a,b)=>b.ts-a.ts);
+  const done=items.filter(item=>item.status === "submitted");
+  return `<p class="muted">${items.length} results · Older work stays available in Archived (over 6 months old).</p>${folder("now","Due in 24 hours",dueNow,card)}${folder("upcoming","Upcoming and undated",upcoming,card)}${folder("overdue","Overdue",overdue,card)}${folder("archived","Archived",archived,card)}${folder("submitted","Completed",done,card)}`;
 }
 
 function assignmentView(id) {
@@ -1673,18 +1679,18 @@ function calendarDest(item) {
 
 function periodTitle() {
   if (calendarMode === "month") {
-    return calendarAnchor.toLocaleString(undefined, { month: "long", year: "numeric" });
+    return calendarAnchor.toLocaleString("en-GB", { month: "long", year: "numeric" });
   }
   if (calendarMode === "week") {
     const start = weekStart(calendarAnchor);
     const end = addDays(start, 6);
     if (start.getMonth() === end.getMonth()) {
-      return `${start.toLocaleString(undefined, { month: "short" })} ${start.getDate()} – ${end.getDate()}, ${end.getFullYear()}`;
+      return `${start.toLocaleString("en-GB", { month: "short" })} ${start.getDate()} – ${end.getDate()}, ${end.getFullYear()}`;
     }
-    return `${start.toLocaleString(undefined, { month: "short" })} ${start.getDate()} – ${end.toLocaleString(undefined, { month: "short" })} ${end.getDate()}, ${end.getFullYear()}`;
+    return `${start.toLocaleString("en-GB", { month: "short" })} ${start.getDate()} – ${end.toLocaleString("en-GB", { month: "short" })} ${end.getDate()}, ${end.getFullYear()}`;
   }
   if (calendarAnchor.getTime() === startOfDay(new Date()).getTime()) return `Next ${calendarDays} days`;
-  return `From ${calendarAnchor.toLocaleString(undefined, { month: "short" })} ${calendarAnchor.getDate()}`;
+  return `From ${calendarAnchor.toLocaleString("en-GB", { month: "short" })} ${calendarAnchor.getDate()}`;
 }
 
 function shiftCalendar(delta) {
@@ -2353,7 +2359,7 @@ function assignCard(item, withActions) {
   const dest = item.assignment_id || item.id;
   const submitted = item.status === "submitted" || !!item.finished;
   const extra = [item.kind === "other" ? "event" : "", submitted || item.finished ? "dimmed" : ""].filter(Boolean).join(" ");
-  const kind = item.kind || item.status || "";
+  const kind = item.manual ? "Done locally" : submitted ? "Submitted on Blackboard" : item.kind || item.status || "";
   const background = submitted ? "#e2e8f0" : (item.kind === "other" ? "" : item.fill);
   const check = withActions && selectMode
     ? `<input class="assign-check" type="checkbox" data-assign-select="${escapeAttr(item.id)}" ${selectedAssignments.has(item.id) ? "checked" : ""} />`
@@ -2364,16 +2370,16 @@ function assignCard(item, withActions) {
   let actions = "";
   if (withActions && route === "/ignored") {
     actions = `${open}${actionButton(`data-assign-restore="${escapeAttr(item.id)}"`, "Restore", "restore")}`;
-  } else if (withActions) {
+  } else if (withActions && item.kind !== "other") {
     const mark = submitted
       ? (item.manual ? actionButton(`data-assign-undo="${escapeAttr(item.id)}"`, "Undo", "undo") : "")
-      : actionButton(`data-assign-mark="${escapeAttr(item.id)}"`, "Mark submitted", "submitted", "mark-btn");
+      : actionButton(`data-assign-mark="${escapeAttr(item.id)}"`, "Mark done in WhiteBoard", "submitted", "mark-btn");
     actions = `${mark}${open}${actionButton(`data-assign-ignore="${escapeAttr(item.id)}"`, "Ignore", "ignore")}`;
   }
   const timing = submitted
     ? `<div class="countdown submitted" data-due="${item.ts || 0}" data-submitted="1" data-submitted-at="${item.submitted_ts || 0}">${escapeHtml(submittedTiming(item.ts || 0, item.submitted_ts || 0))}</div>`
     : `<div class="countdown" data-due="${item.ts || 0}" style="color:${item.border}">${escapeHtml(item.countdown || formatCountdown(item.ts || 0))}</div>`;
-  return `<article class="assign ${extra}" style="border-color:${submitted ? "#94a3b8" : item.border};background:${background}" data-go="/assignments/${encodeURIComponent(dest)}">
+  return `<article class="assign ${extra}" style="border-color:${submitted ? "#94a3b8" : item.border};background:${background}" ${item.kind === "other" ? `data-open="${escapeAttr(item.url || "")}"` : `data-go="/assignments/${encodeURIComponent(dest)}"`}>
     <div class="assign-copy">
       ${check}
       <div class="assign-main"><strong>${escapeHtml(item.title)}</strong><div class="assign-when">${escapeHtml(item.when || "")} · ${escapeHtml(item.course || "")}</div></div>
@@ -2664,7 +2670,7 @@ function submittedTiming(dueTs, submittedTs) {
   const since = dueTs ? `${formatSpan(Math.abs(dueTs - Date.now() / 1000))} ${Date.now() / 1000 >= dueTs ? "since the deadline" : "until the deadline"}` : "";
   let submitted = "Submitted";
   if (submittedTs) {
-    submitted = `Submitted ${new Date(submittedTs * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
+    submitted = `Submitted ${new Date(submittedTs * 1000).toLocaleString("en-GB", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
   }
   return since ? `${submitted}\n${since}` : submitted;
 }

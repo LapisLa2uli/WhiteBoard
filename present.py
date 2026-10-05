@@ -87,8 +87,8 @@ def format_dt(value: datetime | None, *, with_time: bool = True) -> str:
         return "No date"
     local = _as_utc(value).astimezone()
     if with_time:
-        return local.strftime("%a %b %d, %H:%M")
-    return local.strftime("%a %b %d")
+        return local.strftime("%a %b %d %Y, %H:%M %Z")
+    return local.strftime("%a %b %d %Y")
 
 
 def format_countdown(due_at: datetime | None, *, now: datetime | None = None) -> str:
@@ -217,8 +217,6 @@ def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", i
     for item in snapshot.assignments:
         due_local = _as_utc(item.due_at).astimezone() if item.due_at else None
         due_ts = int(due_local.timestamp()) if due_local else 0
-        if not _kept_history(due_ts, "assignment", history_cutoff):
-            continue
         manual = _item_flagged(item, marked)
         ignored = _item_flagged(item, ignored_keys)
         status = effective(item, marked, ignored_keys)["status"]
@@ -256,7 +254,7 @@ def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", i
             "fill": subject_fill(grade.course_id),
             "ink": subject_ink(grade.course_id),
             "assignment_id": grade.assignment_id,
-            "due": format_dt(grade.posted_at, with_time=False),
+            "due": format_dt(grade.posted_at, with_time=False) if grade.posted_at else "Posted date unavailable",
         }
 
     score_lines = []

@@ -17,7 +17,8 @@ Implemented on 5 October 2026. Each improvement/fix was committed independently;
 - [x] Keyboard controls, dialog focus/Escape, readable status text, reduced motion, consistent local UTC offsets
 - [x] Collapsible sidebar, favorites, grouped settings and unweighted grade labels
 - [x] Runtime asset parity, build identity, pinned build dependencies, signing/notarization gates
-- [x] Windows executable/setup build and native packaged smoke test
+- [x] Windows x64 setup and Apple silicon DMG builds with native packaged smoke tests
+- [x] macOS document-window lifetime, Cocoa-thread cookie access and secure session restoration
 - [x] Python/JavaScript regressions and browser UI verification
 
 ## Loading experiments
@@ -50,4 +51,8 @@ Real Windows WebView2 and the packaged application passed startup, script result
 
 Private live-test snapshots and authenticated profiles were removed after testing. Aggregate timings remain in ignored `build/implementation-test/`. No external Google/calendar or coursework writes were performed.
 
-**Still required before publishing:** a real Apple silicon build/runtime test, Developer ID signing/notarization/Gatekeeper checks, Windows production signing, clean-machine installer upgrade/uninstall, screen-reader/high-DPI coverage, SSO/MFA variations, and actual Google OAuth/sync with a disposable calendar. The Windows setup produced here is unsigned. No release was published. See `packaging/README.md` for the gated build commands.
+The native Windows x64 and macOS 15 Apple silicon builds both passed at revision `0e7c34a` ([build evidence](https://github.com/LapisLa2uli/WhiteBoard/actions/runs/37308962734)). macOS verified arm64 architecture and the ad-hoc signature, opened/closed document tabs, and saved, cleared and restored an encrypted session through Keychain. Native testing found and fixed Cocoa window ownership, cookie-store thread access and an unsupported cookie setter. Windows regressions and packaged WebView2 startup passed.
+
+The workflow also checks Windows setup, same-version reinstall, installed-app launch and uninstall on a disposable runner, and verifies/mounts the DMG before copying and launching the Mac app. These checks do not establish upgrades from older releases or the oldest supported macOS version.
+
+**Distribution status:** the candidate Windows installer is unsigned; the Mac app is ad-hoc signed and not notarized. Production signing and Gatekeeper acceptance remain unverified, and publication awaits the signing decision. Broader manual acceptance still includes screen-reader/high-DPI coverage, SSO/MFA variations, old-version upgrades and Google OAuth/sync with a disposable calendar. No release has been published at the time of this record. See `packaging/README.md` for build and verification commands.

@@ -49,7 +49,7 @@ Both app and DMG are submitted for notarization and stapled. Any failed signing,
 
 ## Validation and outputs
 
-The manual **Build release installers** GitHub Actions workflow builds both Windows x64 and Apple silicon on native runners. Configure `WHITEBOARD_GOOGLE_OAUTH_CONFIG` with the same two-line desktop OAuth configuration. It produces candidate installers and checksums and does not publish a release. Its default artifacts are Windows unsigned and macOS ad-hoc signed; production signing remains a separate release decision.
+The manual **Build release installers** GitHub Actions workflow builds both Windows x64 and Apple silicon on native runners. Configure `WHITEBOARD_GOOGLE_OAUTH_CONFIG` with the same two-line desktop OAuth configuration. It runs native packaged smoke tests, verifies Windows installation/reinstallation/uninstallation, and mounts/copies/launches the Mac DMG. It produces candidate installers and checksums and does not publish a release. Its default artifacts are Windows unsigned and macOS ad-hoc signed; production signing remains a separate release decision.
 
 ```sh
 python tools/test.py

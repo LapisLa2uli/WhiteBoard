@@ -1,6 +1,6 @@
 # WhiteBoard 0.4.0 release review
 
-Reviewed on 5 October 2026. The findings below describe the original baseline. The subsequent implementation is documented in [IMPLEMENTATION_0.4.0.md](D:/stuff/WhiteBoard/IMPLEMENTATION_0.4.0.md): source improvements are committed, Windows packaging/native smoke tests pass, and loading strategies were measured. **Public release still requires signed artifacts and real Apple silicon/clean-machine acceptance checks.** The attached older DMG does not contain these changes.
+Reviewed on 5 October 2026. The findings below describe the original baseline. The subsequent implementation is documented in [IMPLEMENTATION_0.4.0.md](D:/stuff/WhiteBoard/IMPLEMENTATION_0.4.0.md): source improvements are committed, Windows x64 and Apple silicon packaging/native smoke tests pass, and loading strategies were measured. **Candidate installers are Windows unsigned and macOS ad-hoc signed; publication awaits the signing decision.** Current verification details and remaining acceptance limits are in the implementation record. The attached older DMG does not contain these changes.
 
 ## Scope and evidence
 

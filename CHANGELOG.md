@@ -18,6 +18,7 @@ headings below. Packaging and GitHub Releases copy this text.
 
 ### Bugfixes
 - Fixed Windows startup crashes and unreliable document tabs.
+- Fixed Mac crashes after closing document tabs and restored saved school sessions securely on restart.
 - Sign out clears the school session and separates saved data/settings by account. You can explicitly keep an offline dashboard.
 - Saved session credentials use operating-system protection. Interrupted saves and incomplete refreshes preserve usable data.
 - Cancel stops a refresh. Searching no longer changes the total assignment badge, and local completion stays consistent across screens.

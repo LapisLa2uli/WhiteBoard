@@ -1,12 +1,12 @@
 # WhiteBoard 0.4.0 release review
 
-Reviewed on 5 October 2026. Recommendation: **hold the public release until the startup, session, data-integrity, and platform-parity issues below are addressed.** The basic dashboard is useful and successfully retrieved the supplied account, but the current working tree and existing installers are different builds.
+Reviewed on 5 October 2026. The findings below describe the original baseline. The subsequent implementation is documented in [IMPLEMENTATION_0.4.0.md](D:/stuff/WhiteBoard/IMPLEMENTATION_0.4.0.md): source improvements are committed, Windows packaging/native smoke tests pass, and loading strategies were measured. **Public release still requires signed artifacts and real Apple silicon/clean-machine acceptance checks.** The attached older DMG does not contain these changes.
 
 ## Scope and evidence
 
-I read the root README, changelog, release notes, native hosts, login/crawler, Blackboard parsers and models, persistence, presentation layer, frontend, Google integration, and packaging scripts. I treated the archived Flet app as historical context. The working tree had seven modified files before this review; I did not edit any application source or publish a release.
+I read the root README, changelog, release notes, native hosts, login/crawler, Blackboard parsers and models, persistence, presentation layer, frontend, Google integration, and packaging scripts. I treated the archived Flet app as historical context. The working tree had seven modified files before this review. Those changes were preserved in `2cb3e2c` before implementation; later commits implement the findings. No release was published.
 
-- Source baseline: commit `0d8532c`, plus the existing working-tree modifications. Current `static/app.js` SHA-256: `54e83e7333611875debd86f362a6b9aa40686a00968cacd4bfaa47430789fd83`.
+- Source baseline: commit `0d8532c`, plus the existing working-tree modifications. Baseline `static/app.js` SHA-256: `54e83e7333611875debd86f362a6b9aa40686a00968cacd4bfaa47430789fd83`.
 - Attached DMG: 17,900,572 bytes; SHA-256 `afe0fc6b020249546303e1657efb80a59cfddc96d9ad9750db01f1b78e985284`.
 - Windows: launched the current source in an isolated profile with Python 3.12.14 and the installed WebView2 runtime. The unmodified source hit the bridge exception described below. An **in-memory workaround in a disposable test launcher**, supplying the missing event-token pointer, allowed login and crawling. This is not a fix to the shipped application.
 - Signed in to the configured Blackboard school using the supplied credentials. The snapshot contains **40 courses, 119 assignments, 136 grades, 699 calendar records, and 2,906 content nodes**, with no recorded crawl errors. The first full crawl took approximately 70–80 seconds. Its displayed counters reached 512 folders and 3,593 files; those are progress counts, not unique final inventory totals.

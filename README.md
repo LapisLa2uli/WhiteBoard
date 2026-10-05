@@ -24,3 +24,9 @@ Open the `.dmg` and Control-click → “Open” to run WhiteBoard.
 - No dependencies required beyond a functioning macOS system.
 
 Your courses stay in `~/.config/whiteboard`. 
+
+Accounts keep separate saved data. Use **Account → Sign out** to clear the session and choose whether to retain an offline dashboard. Passwords are not saved; session credentials use Windows DPAPI or macOS Keychain.
+
+## Development and release checks
+
+Run `python tools/test.py` for isolated regressions (Python 3.12 and Node.js), and `python tools/benchmark_loading.py` to compare loading strategies with synthetic data. Build instructions and signing requirements are in [packaging/README.md](packaging/README.md). Implementation results and remaining platform acceptance checks are in [IMPLEMENTATION_0.4.0.md](IMPLEMENTATION_0.4.0.md).

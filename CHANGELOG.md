@@ -7,6 +7,9 @@ headings below. Packaging and GitHub Releases copy this text.
 ## [0.4.0] - 2026-10-02
 
 ### Added features
+- Your dashboard opens in stages: deadlines first, then grades, while course files finish loading. A saved first-run dashboard can reopen even if indexing was interrupted.
+- Collapse the course sidebar, favorite courses, and browse assignments grouped into current, overdue and archived work.
+- Open every event on a busy calendar day with the “more” button. Keyboard controls, clearer focus, reduced motion and readable status text make navigation easier.
 - The Assignments tab shows a red badge with how many items are still to do. The number can grow to four digits without pushing the other tabs aside.
 - You can leave old assignments off the lists: skip work due more than a week, a month, three months, six months, or a year ago, or before a date you choose. The next refresh does not load those old items.
 - Assignments has **Mark late as submitted**. It asks you to confirm, then marks every overdue assignment that is still to do.
@@ -24,6 +27,11 @@ headings below. Packaging and GitHub Releases copy this text.
   - Data directory is in `~/.config/whiteboard` (for macOS only). The app starts fresh once cleared.
 
 ### Bugfixes
+- Fixed Windows startup crashes and unreliable document tabs.
+- Sign out now clears the school session. Different accounts keep separate settings and saved data, and you can choose whether to keep an offline copy.
+- Saved credentials use operating-system protection. Interrupted saves and incomplete refreshes preserve usable data.
+- Cancel stops a refresh, local completion stays consistent across screens, and searching no longer changes the total assignment badge.
+- Partial refreshes cannot silently delete managed Google events. Downloads stream to disk and avoid overwriting existing filenames.
 - Opening an assignment stays on that assignment. It no longer drops you on the Blackboard home page.
 - Homework stays an assignment when the title also contains a word such as holiday, as long as it has a due date and a submission page.
 - Submitted work no longer shows an overdue countdown. It shows that it was submitted, the time WhiteBoard recorded when you marked it, and how long it has been since the deadline.
@@ -32,6 +40,8 @@ headings below. Packaging and GitHub Releases copy this text.
 - Home and the course filters use less of the computer while you are looking at them.
 
 ### Other changes
+- Settings identifies the app version and build. Release builds check signatures and include checksums; 0.4.0 targets Windows x64 and Apple silicon macOS.
+- Grades label point totals as unweighted estimates. Deadlines show the local UTC offset, and local completion is clearly distinguished from a Blackboard submission.
 - There is no separate Submitted tab. Submitted work is a foldable group on Assignments.
 - The app opens on the sign-in page. It does not reopen a dashboard saved by the previous WhiteBoard.
 - Your courses are stored in `%USERPROFILE%\.whiteboard_slim`. The previous app’s files are left where they were.

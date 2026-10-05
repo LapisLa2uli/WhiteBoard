@@ -18,4 +18,4 @@ class NetworkTests(unittest.TestCase):
             row=session.get_json_many(['/a'])[0]
             self.assertEqual(row['status'],0)
             self.assertTrue(row['error'])
-            self.assertTrue(session.network_errors)
+            self.assertTrue(session.request_warnings)

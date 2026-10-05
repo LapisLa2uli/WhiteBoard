@@ -250,6 +250,8 @@ def fetch_snapshot(
             "courses",
             "Signed in, but no course list was returned. Try Refresh, or confirm the school URL.",
         )
+    if getattr(session, "failed_file_courses", set()):
+        snapshot.errors["files"] = f"Files could not be loaded for {len(session.failed_file_courses)} courses."
     if getattr(session, "network_errors", []):
         snapshot.errors["network"] = f"{len(session.network_errors)} requests failed or were incomplete. Saved data has been preserved."
     snapshot.completeness.update(profile=bool(snapshot.user_id), courses=bool(snapshot.courses) and "courses" not in snapshot.errors, grades="grades" not in snapshot.errors)
@@ -2247,7 +2249,7 @@ def _fetch_content_trees_parallel(
         still: list[str] = []
         for course_id, row in zip(pending, rows):
             items, nxt = _content_page(row.get("data")) if _json_ok(row) else ([], "")
-            if items:
+            if _json_ok(row):
                 found[course_id] = items
                 _note_items(session, course_id, items)
                 if nxt:
@@ -2256,6 +2258,7 @@ def _fetch_content_trees_parallel(
                 still.append(course_id)
         pending = still
     for course_id in pending:
+        getattr(session, "failed_file_courses", set()).add(course_id)
         found.setdefault(course_id, [])
     _follow_content_pages(session, found, next_urls)
     return found

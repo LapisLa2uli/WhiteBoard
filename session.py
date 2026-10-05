@@ -128,6 +128,8 @@ class WebSession:
         self.concurrency = 12
         self._responses = {}
         self.network_errors = []
+        self.request_warnings = []
+        self.failed_file_courses = set()
         self.metrics = {"requests": 0, "cache_hits": 0, "batches": 0}
 
     def _check_cancelled(self):
@@ -397,7 +399,7 @@ class WebSession:
                     row["error"] = "Response was not complete JSON"
                     if 200 <= int(row.get("status") or 0) < 300:
                         row["status"] = 0
-                        self.network_errors.append("Invalid JSON response")
+                        self.request_warnings.append("Invalid JSON response")
             parsed.append(
                 {"url": row.get("url") or "", "status": int(row.get("status") or 0), "data": data, "error": row.get("error", "")}
             )
@@ -488,7 +490,7 @@ class WebSession:
                 if 200 <= status < 300 and not row.get('error') and not re.search(r"/users/me(?:[?]|$)", row["url"]):
                     self._responses[(row['url'], accept)] = row
                 elif status == 0 or status >= 500 or status == 429:
-                    self.network_errors.append(str(row.get('error') or f'HTTP {status}'))
+                    self.request_warnings.append(str(row.get('error') or f'HTTP {status}'))
             if any(int(r.get('status') or 0) in (429,503) for r in rows):
                 self.concurrency = max(4, self.concurrency // 2)
         return [self._responses.get((url,accept)) or found.get(url) or {'url':url,'status':0,'error':'No response'} for url in urls]

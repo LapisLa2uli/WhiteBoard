@@ -209,6 +209,7 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
             from present import publish_stage
             if not keep_partial or _cancel.is_set():
                 publish_stage(None)
+            progress["timings"]["elapsed"] = round(time.monotonic() - progress["started_at"], 3)
             _session = None
             progress["busy"] = False
             progress["cancelled"] = _cancel.is_set()

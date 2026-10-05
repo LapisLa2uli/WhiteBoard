@@ -4,50 +4,35 @@ Summarized major changes for each WhiteBoard release, compared with the version 
 Write for someone using the app, not for developers. Every version needs the three
 headings below. Packaging and GitHub Releases copy this text.
 
-## [0.4.0] - 2026-10-02
+## [0.4.0] - 2026-10-05
 
 ### Added features
-- Your dashboard opens in stages: deadlines first, then grades, while course files finish loading. A saved first-run dashboard can reopen even if indexing was interrupted.
-- Collapse the course sidebar, favorite courses, and browse assignments grouped into current, overdue and archived work.
-- Open every event on a busy calendar day with the “more” button. Keyboard controls, clearer focus, reduced motion and readable status text make navigation easier.
-- The Assignments tab shows a red badge with how many items are still to do. The number can grow to four digits without pushing the other tabs aside.
-- You can leave old assignments off the lists: skip work due more than a week, a month, three months, six months, or a year ago, or before a date you choose. The next refresh does not load those old items.
-- Assignments has **Mark late as submitted**. It asks you to confirm, then marks every overdue assignment that is still to do.
-- Contents can search for a folder name, a file name, or a file extension.
-- The calendar list and the assignment list put the soonest due date first.
-- **Open** sits on each assignment card, next to **Mark submitted** and **Ignore**. It opens that Blackboard page in a WhiteBoard window with tabs.
-- Settings has a **Font** choice: Segoe UI, Calibri, Candara, Constantia, Cambria, Georgia, Verdana, Trebuchet MS, or Arial.
-- Recent grades on Home use the same course color as the assignment cards.
-- Assignment names, dates, and course names are larger. The countdown and buttons sit under that text.
-- The Windows setup asks whether to add a Desktop shortcut and a Windows Search shortcut. You can turn either one off.
-- Settings lets you choose how many rows appear on one page, change deadline and course colors, and send deadlines to a Google calendar named WhiteBoard.
-- While signing in or refreshing, the loading screen shows how many courses, folders, and files it has read, and the latest item.
-- Added distribution and full support for macOS, with corresponding Icon Composer, Acorn, and DMG Canvas design files. 
-  - The Mac app uses `pyobjc` to initiate the system’s built-in `WKWebView`.
-  - Data directory is in `~/.config/whiteboard` (for macOS only). The app starts fresh once cleared.
+- Windows x64 setup and an Apple silicon Mac disk image.
+- Your dashboard opens in stages: deadlines first, then grades, while course files finish loading. Saved data opens quickly, and you can cancel an active refresh.
+- Collapse the course sidebar, favorite courses, and browse assignments grouped into current, overdue, archived, and completed work.
+- Mark individual or overdue assignments **done in WhiteBoard**, with Undo. These are local reminders; submit coursework on Blackboard.
+- Open all events on a busy calendar day using the **more** button. Calendar list, week, and month views keep your place when you open an assignment.
+- Search files and folders by name or extension, browse them in tree/folder/column views, and download selected files or folders.
+- Use school sign-in for SSO/MFA, choose how external pages open, and adjust fonts, colors, page sizes, and decorative motion in grouped Settings.
+- Keyboard navigation, named controls, visible focus, dialog Escape handling, and reduced-motion support.
 
 ### Bugfixes
 - Fixed Windows startup crashes and unreliable document tabs.
-- Sign out now clears the school session. Different accounts keep separate settings and saved data, and you can choose whether to keep an offline copy.
-- Saved credentials use operating-system protection. Interrupted saves and incomplete refreshes preserve usable data.
-- Cancel stops a refresh, local completion stays consistent across screens, and searching no longer changes the total assignment badge.
-- Partial refreshes cannot silently delete managed Google events. Downloads stream to disk and avoid overwriting existing filenames.
-- Opening an assignment stays on that assignment. It no longer drops you on the Blackboard home page.
-- Homework stays an assignment when the title also contains a word such as holiday, as long as it has a due date and a submission page.
-- Submitted work no longer shows an overdue countdown. It shows that it was submitted, the time WhiteBoard recorded when you marked it, and how long it has been since the deadline.
-- Marking an assignment submitted stays marked after you filter that course out and turn the filter back on.
-- Course filters and the main list buttons respond again.
-- Home and the course filters use less of the computer while you are looking at them.
+- Sign out clears the school session and separates saved data/settings by account. You can explicitly keep an offline dashboard.
+- Saved session credentials use operating-system protection. Interrupted saves and incomplete refreshes preserve usable data.
+- Cancel stops a refresh. Searching no longer changes the total assignment badge, and local completion stays consistent across screens.
+- Partial or empty refreshes cannot silently delete managed Google Calendar events.
+- Downloads stream to disk, can be cancelled, and avoid overwriting existing filenames.
+- Calendar overflow is clickable, and older dates include the year and local UTC offset.
+- Updated a build dependency to fix reported security vulnerabilities.
 
 ### Other changes
-- Settings identifies the app version and build. Release builds check signatures and include checksums; 0.4.0 targets Windows x64 and Apple silicon macOS.
-- Grades label point totals as unweighted estimates. Deadlines show the local UTC offset, and local completion is clearly distinguished from a Blackboard submission.
-- There is no separate Submitted tab. Submitted work is a foldable group on Assignments.
-- The app opens on the sign-in page. It does not reopen a dashboard saved by the previous WhiteBoard.
-- Your courses are stored in `%USERPROFILE%\.whiteboard_slim`. The previous app’s files are left where they were.
-- Microsoft Edge is required. You do not need a separate Chrome install.
-- The Windows download is named `WhiteBoard-<version>-Setup.exe`.
-- Opening an assignment from the calendar, then going back, returns to the same list, week, or month.
+- Settings shows the app version and source revision. Both installers are built from the same commit and accompanied by SHA-256 checksums.
+- Dashboard presentation uses cached data and loads file details on demand. In one live-account comparison, the dashboard appeared in about 4.3 seconds while full indexing completed in about 45 seconds; results depend on your school and connection.
+- Grades label totals as unweighted points estimates and distinguish missing posted dates. Blackboard may calculate final grades differently.
+- Windows uses Microsoft Edge WebView2; macOS uses its built-in web view. Intel Macs are outside this release's scope.
+- Google sign-in uses the app's bundled desktop client configuration. User passwords and refresh tokens are never bundled in the installers.
+
 
 ## [0.3.0] - 2026-09-11
 

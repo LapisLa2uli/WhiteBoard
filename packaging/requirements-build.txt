@@ -1,5 +1,5 @@
 # Use Python 3.12 on each native platform; install into a clean build venv.
-altgraph==0.17.4
+altgraph==0.17.5
 packaging==24.2
 pyinstaller==6.11.1
 pyinstaller-hooks-contrib==2024.10

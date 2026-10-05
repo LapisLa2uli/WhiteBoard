@@ -55,6 +55,7 @@ packaging/.cache/
 
 # PyInstaller / packaged app output (hundreds of MB)
 dist/
+release-artifacts/
 build/
 *.dmg
 *.msi

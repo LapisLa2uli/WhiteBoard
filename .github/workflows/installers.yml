@@ -1,0 +1,98 @@
+name: Build release installers
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.platform }} installer
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            runner: windows-2022
+            architecture: x64
+          - platform: macos
+            runner: macos-15
+            architecture: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+          architecture: ${{ matrix.architecture }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned build dependencies
+        run: python -m pip install -r packaging/requirements-build.txt
+      - name: Restore desktop OAuth configuration
+        env:
+          OAUTH_CONFIG: ${{ secrets.WHITEBOARD_GOOGLE_OAUTH_CONFIG }}
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          config = os.environ['OAUTH_CONFIG'].strip()
+          if len(config.splitlines()) != 2:
+              raise SystemExit('Configure WHITEBOARD_GOOGLE_OAUTH_CONFIG with the two-line desktop OAuth configuration')
+          Path('authid.txt').write_text(config + '\n', encoding='utf-8')
+      - name: Windows regressions
+        if: matrix.platform == 'windows'
+        run: python tools/test.py
+      - name: Install Inno Setup compiler
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe'
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest -Uri $url -OutFile $setup
+          if ((Get-AuthenticodeSignature $setup).Status -ne 'Valid') { throw 'Compiler installer signature is invalid' }
+          $compiler = Join-Path $env:RUNNER_TEMP 'InnoSetup'
+          $process = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER',"/DIR=$compiler") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Compiler installation failed' }
+          "ISCC=$compiler\ISCC.exe" >> $env:GITHUB_ENV
+      - name: Build and smoke-test Windows
+        if: matrix.platform == 'windows'
+        run: ./packaging/build_windows.ps1 -Python python
+      - name: Verify Keychain on macOS
+        if: matrix.platform == 'macos'
+        run: python -m unittest discover -s tests -p test_secrets.py -v
+      - name: Build and smoke-test Apple silicon
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: PYTHON="$(command -v python)" bash packaging/build_macos.sh
+      - name: Collect installers and release metadata
+        shell: python
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          from version import APP_VERSION
+          platform = os.environ['PLATFORM']
+          filename = f'WhiteBoard-{APP_VERSION}-' + ('Setup.exe' if platform == 'windows' else 'AppleSilicon.dmg')
+          target = Path('release-artifacts')
+          target.mkdir()
+          package = Path('dist') / filename
+          if not package.is_file():
+              raise SystemExit(f'Missing installer: {filename}')
+          info = json.loads(Path(f'dist/build-info-{platform}.json').read_text())
+          if info['revision'] != os.environ['GITHUB_SHA']:
+              raise SystemExit('Build revision does not match checked-out commit')
+          shutil.copy2(package, target / filename)
+          shutil.copy2(f'dist/build-info-{platform}.json', target)
+          digest = hashlib.sha256(package.read_bytes()).hexdigest()
+          (target / f'SHA256SUMS-{platform}.txt').write_text(f'{digest}  {filename}\n')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}
+          path: release-artifacts/*
+          if-no-files-found: error
+          retention-days: 14

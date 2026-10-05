@@ -652,6 +652,7 @@ def _build(url: str) -> None:
     window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
         AppKit.NSMakeRect(0, 0, 1280, 840), style, AppKit.NSBackingStoreBuffered, False
     )
+    window.setReleasedWhenClosed_(False)
     window.setTitle_(_APP_NAME)
     window.setMinSize_(Foundation.NSMakeSize(900, 600))
     _apply_icon(window)
@@ -719,6 +720,9 @@ def _ensure_doc_window() -> None:
         AppKit.NSBackingStoreBuffered,
         False,
     )
+    # PyObjC owns the Python reference. AppKit's default release-on-close would
+    # leave that reference dangling when the last tab clears _docs below.
+    window.setReleasedWhenClosed_(False)
     window.setContentView_(container)
     window.setMinSize_(Foundation.NSMakeSize(520, 320))
     window.center()
@@ -829,7 +833,7 @@ def _close_tab(tab_id: str) -> None:
     view = views.pop(tab_id, None)
     if view is not None:
         try:
-            view.stopLoading_(None)
+            view.stopLoading()
         except Exception:
             pass
         view.removeFromSuperview()

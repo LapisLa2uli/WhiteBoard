@@ -237,7 +237,6 @@ def fetch_snapshot(
     _merge_assignments_from_deadlines(snapshot)
     if on_stage:
         _apply_assignment_status(snapshot)
-        _apply_launch_urls(snapshot, session.base_url)
         on_stage(snapshot, "dashboard")
     _enrich_assignment_links(session, snapshot, quick=quick, include_files=include_files)
     _check_live_submissions(session, snapshot, quick=quick)
@@ -377,7 +376,7 @@ def _fetch_calendar_payloads(
                 got_full_calendar = True
         except Exception:
             pass
-    snapshot.completeness["calendar"] = got_full_calendar and got_due_calendar
+    snapshot.completeness["calendar"] = got_full_calendar
     if payloads:
         snapshot.errors.pop("calendar", None)
     elif last_error:

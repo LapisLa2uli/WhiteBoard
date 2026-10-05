@@ -163,9 +163,6 @@ def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", i
     apply_palette(settings)
     snapshot = snapshot or load_snapshot()
     snapshot.manual_submitted_keys = _setting_keys(settings, "marked_submitted_assignments")
-    from blackboard.api import hide_event_only_calendar_items
-
-    hide_event_only_calendar_items(snapshot)
     courses = [
         {
             "id": course.id,

@@ -395,8 +395,9 @@ class WebSession:
                     data = json.loads(text)
                 except json.JSONDecodeError:
                     row["error"] = "Response was not complete JSON"
-                    row["status"] = 0
-                    self.network_errors.append("Invalid JSON response")
+                    if 200 <= int(row.get("status") or 0) < 300:
+                        row["status"] = 0
+                        self.network_errors.append("Invalid JSON response")
             parsed.append(
                 {"url": row.get("url") or "", "status": int(row.get("status") or 0), "data": data, "error": row.get("error", "")}
             )

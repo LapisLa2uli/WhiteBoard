@@ -990,7 +990,6 @@ def save_cookies() -> None:
     """
     import data
 
-    store = _cookie_store()
     holder: dict[str, object] = {}
     done = threading.Event()
 
@@ -1008,7 +1007,9 @@ def save_cookies() -> None:
 
     def go():
         try:
-            store.getAllCookies_(finished)
+            # Even obtaining WKHTTPCookieStore touches WebKit state and belongs
+            # on the Cocoa thread, just like the asynchronous read itself.
+            _cookie_store().getAllCookies_(finished)
         except Exception as exc:
             holder["error"] = str(exc)
             done.set()

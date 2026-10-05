@@ -90,6 +90,17 @@ jobs:
           shutil.copy2(f'dist/build-info-{platform}.json', target)
           digest = hashlib.sha256(package.read_bytes()).hexdigest()
           (target / f'SHA256SUMS-{platform}.txt').write_text(f'{digest}  {filename}\n')
+      - name: Native macOS crash diagnostics
+        if: failure() && matrix.platform == 'macos'
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          reports = Path.home() / 'Library/Logs/DiagnosticReports'
+          for report in sorted(reports.glob('WhiteBoard*'))[-2:]:
+              print(report.name)
+              print(report.read_text(errors='replace')[:40000])
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.platform }}

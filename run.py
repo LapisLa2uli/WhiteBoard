@@ -162,6 +162,9 @@ def selftest() -> int:
     which silently turns any such test into "the app started" and nothing more.
     """
     import threading
+    import faulthandler
+    if sys.stderr is not None:
+        faulthandler.enable()
 
     if sys.platform == "win32":
         from host.windows_smoke import run

@@ -69,9 +69,20 @@ class Store:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         validate_snapshot(self.snapshot.to_dict())
         write_json(SNAPSHOT_PATH, self.snapshot.to_dict())
+        remove_json(SNAPSHOT_PATH.with_name("dashboard.json"))
+
+    def save_dashboard(self) -> None:
+        """Keep a first-run checkpoint without replacing the last complete cache."""
+        if SNAPSHOT_PATH.exists() or self.snapshot.errors:
+            return
+        payload = self.snapshot.to_dict()
+        payload["errors"]["indexing"] = "Dashboard saved. Refresh to finish verifying assignments and indexing files."
+        validate_snapshot(payload)
+        write_json(SNAPSHOT_PATH.with_name("dashboard.json"), payload)
 
     def clear_disk_cache(self) -> None:
         remove_json(SNAPSHOT_PATH)
+        remove_json(SNAPSHOT_PATH.with_name("dashboard.json"))
 
     def clear_cache(self) -> None:
         self.clear_disk_cache()

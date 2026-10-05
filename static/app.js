@@ -1772,8 +1772,9 @@ function contentsBody() {
   if (!courses.length) return `<p class="empty">No courses in this filter.</p>`;
   const hint = !nodes.length
     ? `<p class="empty">${state.files_indexed
-      ? "No course files indexed yet. Use Refresh after signing in."
-      : "Course files load when you open this page. Sign in, or use Refresh to index everything."}</p>`
+      ? "No course files were found in this filter."
+      : (loading || state.content_indexing) ? "Files are still being indexed. This page updates when indexing finishes."
+      : "File indexing is incomplete. Use Refresh to finish loading your files."}</p>`
     : "";
   if (contentsMode === "folder") return hint + folderView(courses, nodes);
   if (contentsMode === "columns") return hint + columnsView(courses, nodes);
@@ -2458,6 +2459,10 @@ function errorBanners() {
     grades: "Couldn't load grades",
     courses: "Couldn't load courses",
     refresh: "Refresh failed",
+    files: "Some files could not be loaded",
+    network: "Refresh was incomplete",
+    storage: "Saved data recovery",
+    indexing: "File indexing is incomplete",
   };
   return Object.entries(labels).map(([key, label]) => {
     const text = (state.errors || {})[key];

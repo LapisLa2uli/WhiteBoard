@@ -61,6 +61,8 @@ def load_snapshot() -> Snapshot:
         return _live_snapshot
     from persistence import read_json, validate_snapshot
     path = data.SNAPSHOT_PATH
+    if not path.exists() and path.with_name("dashboard.json").exists():
+        path = path.with_name("dashboard.json")
     key = (str(path), path.stat().st_mtime_ns if path.exists() else None)
     if _snapshot_cache.get("key") == key and _snapshot_cache.get("snapshot") is not None:
         return _snapshot_cache["snapshot"]
@@ -379,9 +381,9 @@ def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", i
         "calendar": calendar,
         "content_nodes": content_nodes,
         "content_count": len(snapshot.content_nodes),
-        "content_loaded": include_content,
+        "content_loaded": include_content and bool(snapshot.files_indexed),
         "revision": _live_revision,
-        "partial": _live_snapshot is not None,
+        "partial": _live_snapshot is not None or bool(snapshot.errors) or not snapshot.files_indexed,
         "files_indexed": bool(snapshot.files_indexed),
         "google": {
             "signed_in": bool(account.get("refresh_token")),
@@ -444,7 +446,7 @@ def build_state(snapshot=None, *, google_status="", include_content=True, course
         return _build_state(snapshot, google_status=google_status, include_content=include_content, course_id=course_id)
     def stamp(path):
         return (str(path), path.stat().st_mtime_ns) if path.exists() else (str(path), 0)
-    key = (stamp(data.SNAPSHOT_PATH), stamp(data.SETTINGS_PATH), stamp(data.GOOGLE_PATH), _live_revision, int(time.time() // 60), include_content, course_id)
+    key = (stamp(data.SNAPSHOT_PATH), stamp(data.SNAPSHOT_PATH.with_name("dashboard.json")), stamp(data.SETTINGS_PATH), stamp(data.GOOGLE_PATH), _live_revision, int(time.time() // 60), include_content, course_id)
     with _state_lock:
         if key not in _state_cache:
             if len(_state_cache) >= 8:

@@ -252,6 +252,7 @@ def fetch_snapshot(
         )
     if getattr(session, "failed_file_courses", set()):
         snapshot.errors["files"] = f"Files could not be loaded for {len(session.failed_file_courses)} courses."
+        snapshot.files_indexed = False
     if getattr(session, "network_errors", []):
         snapshot.errors["network"] = f"{len(session.network_errors)} requests failed or were incomplete. Saved data has been preserved."
     snapshot.completeness.update(profile=bool(snapshot.user_id), courses=bool(snapshot.courses) and "courses" not in snapshot.errors, grades="grades" not in snapshot.errors)

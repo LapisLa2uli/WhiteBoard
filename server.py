@@ -1022,7 +1022,9 @@ def handle(path: str, body: dict | None = None) -> dict:
         raise RuntimeError("Cancel the download or wait for it to finish first.")
     if route == "/api/content":
         result = build_state(include_content=True, course_id="")
-        return {"content_nodes": result["content_nodes"], "content_loaded": True, "revision": result["revision"]}
+        return {"content_nodes": result["content_nodes"], "content_loaded": result["content_loaded"],
+                "files_indexed": result["files_indexed"], "content_indexing": bool(progress.get("busy")) and not result["files_indexed"],
+                "revision": result["revision"]}
     if route == "/api/course":
         result = build_state(include_content=False, course_id=str(payload.get("id") or ""))
         return {"course_pages": result["course_pages"]}

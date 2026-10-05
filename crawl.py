@@ -167,6 +167,12 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
             from present import publish_stage
             def staged(snapshot, stage):
                 _check_cancelled()
+                if stage == "dashboard":
+                    checkpoint = Store()
+                    checkpoint.snapshot = snapshot
+                    with _lock:
+                        _check_cancelled()
+                        checkpoint.save_dashboard()
                 publish_stage(snapshot)
                 progress["stage"] = stage
                 progress["revision"] += 1

@@ -69,6 +69,7 @@ def logout(keep_offline=False):
         write_json(data.APP_DIR / 'active.json', record, backup=False)
     else:
         remove_json(data.SNAPSHOT_PATH)
+        remove_json(data.SNAPSHOT_PATH.with_name('dashboard.json'))
         remove_json(data.APP_DIR / 'active.json')
         data.use_profile('signed-out')
 

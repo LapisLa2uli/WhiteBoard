@@ -20,7 +20,7 @@ data.install()
 ROOT = data.resource_root()
 
 from blackboard.store import _page_opener, _ui_font, load_settings, update_settings
-from crawl import progress, start_login, start_refresh
+from crawl import progress, start_login, start_refresh, cancel_job
 from present import build_state, load_snapshot
 
 from app.palette import DEADLINE_ROWS, apply_palette, normalize_hex
@@ -373,6 +373,8 @@ def _run_sync(client_id: str, client_secret: str, status: str = "") -> None:
 def _progress_payload() -> dict:
     counts = progress.get("counts") if isinstance(progress.get("counts"), dict) else {}
     return {
+        "id": progress.get("id", ""),
+        "cancelled": progress.get("cancelled", False),
         "busy": bool(progress.get("busy")),
         "kind": progress.get("kind") or "",
         "message": progress.get("message") or "",
@@ -994,6 +996,8 @@ def handle(path: str, body: dict | None = None) -> dict:
     route = str(path or "").split("?", 1)[0]
     if route == "/api/state":
         return _state()
+    if route == "/api/cancel":
+        return cancel_job(str(payload.get("id") or ""))
     if route == "/api/progress":
         return _progress_payload()
     blank = Handler.__new__(Handler)

@@ -74,7 +74,8 @@ function api(path, body) {
   }
   const id = ++apiSeq;
   return new Promise((resolve, reject) => {
-    pendingApi.set(id, { resolve, reject });
+    const timer = setTimeout(() => { pendingApi.delete(id); reject(new Error("The action timed out. Try again.")); }, path === "/api/download" ? 30 * 60 * 1000 : 45000);
+    pendingApi.set(id, { resolve, reject, timer });
     window.chrome.webview.postMessage(JSON.stringify({ id, path, body: body || {} }));
   });
 }
@@ -92,6 +93,7 @@ if (window.chrome && window.chrome.webview) {
     if (!message || message.id == null) return;
     const waiter = pendingApi.get(message.id);
     if (!waiter) return;
+    clearTimeout(waiter.timer);
     pendingApi.delete(message.id);
     if (message.error) waiter.reject(new Error(message.error));
     else waiter.resolve(message.body);
@@ -523,9 +525,8 @@ function onClick(event) {
     return;
   }
   if (source.closest("#cancel-loading")) {
-    pollGen += 1;
-    loading = null;
-    busy = false;
+    api("/api/cancel", { id: (loading || {}).id }).catch(showError);
+    if (loading) loading.message = "Cancelling…";
     render();
     return;
   }
@@ -682,8 +683,7 @@ function startLogin() {
   const baseUrl = (document.getElementById("base-url") || {}).value || "";
   beginLoading("login", "Signing in…");
   api("/api/login", { username: username.trim(), password, base_url: baseUrl.trim() })
-    .catch(() => {})
-    .then(() => pollJob());
+    .then(() => pollJob()).catch(error => { loading = null; busy = false; showError(error); });
 }
 
 function onSubmit(event) {
@@ -694,7 +694,7 @@ function onSubmit(event) {
 
 async function pollJob() {
   const mine = ++pollGen;
-  let sawBusy = false;
+  let failures = 0;
   while (mine === pollGen) {
     let job = null;
     try {
@@ -702,6 +702,7 @@ async function pollJob() {
       if (mine !== pollGen) return;
     } catch (error) {
       if (mine !== pollGen) return;
+      if (++failures >= 3) { loading = null; busy = false; showError(error); return; }
       loading = {
         kind: (loading && loading.kind) || "login",
         percent: loading ? loading.percent : 0,
@@ -711,8 +712,9 @@ async function pollJob() {
       await new Promise((resolve) => setTimeout(resolve, 700));
       continue;
     }
-    if (job.busy) sawBusy = true;
+    failures = 0;
     loading = {
+      id: job.id,
       kind: job.kind || (loading && loading.kind) || "refresh",
       percent: job.percent || 0,
       message: job.message || "Working…",
@@ -722,7 +724,7 @@ async function pollJob() {
     };
     document.title = `WhiteBoard — ${loading.message}`;
     render();
-    if (sawBusy && !job.busy) {
+    if (!job.busy) {
       await loadState();
       loading = null;
       busy = false;
@@ -813,7 +815,7 @@ async function pollGoogle() {
 async function refreshNow() {
   busy = true;
   beginLoading("refresh", "Refreshing from Blackboard…");
-  api("/api/refresh", {}).catch(() => {}).then(() => pollJob());
+  api("/api/refresh", {}).then(() => pollJob()).catch(error => { loading = null; busy = false; showError(error); });
 }
 
 function render() {
@@ -2743,3 +2745,5 @@ function escapeHtml(value) {
 function escapeAttr(value) { return escapeHtml(value); }
 
 boot();
+
+function showError(error) { jobError = error.message || String(error); render(); }

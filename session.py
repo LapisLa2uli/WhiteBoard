@@ -43,6 +43,7 @@ _FETCH_JS = r"""
       const index = cursor++;
       const url = urls[index];
       const controller = new AbortController();
+      (window.__wbControllers ||= new Set()).add(controller);
       const timer = setTimeout(() => controller.abort(), 20000);
       try {
         const res = await fetch(url, { method: "GET", credentials: "include", headers, signal: controller.signal });
@@ -59,6 +60,7 @@ _FETCH_JS = r"""
         found[index] = { url, status: 0, text: "", error: String(err) };
       } finally {
         clearTimeout(timer);
+        window.__wbControllers.delete(controller);
       }
     }
   }
@@ -111,8 +113,20 @@ class WebSession:
         self.base_url = base_url.rstrip("/")
         self.on_progress = on_progress
         self.logged_in = False
+        self.cancel_event = None
+
+    def _check_cancelled(self):
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise SessionError("Refresh cancelled.")
+
+    def abort(self):
+        try:
+            host.eval_js("(window.__wbControllers || []).forEach(c => c.abort())", timeout=3)
+        except Exception:
+            pass
 
     def _tell(self, message: str, progress: float | None = None) -> None:
+        self._check_cancelled()
         host.set_title(f"WhiteBoard — {message}")
         if self.on_progress:
             self.on_progress(message, progress)
@@ -131,6 +145,7 @@ class WebSession:
         last = ""
         last_error = ""
         while time.time() < deadline:
+            self._check_cancelled()
             try:
                 href = host.eval_js("location.href", timeout=15)
             except Exception as exc:
@@ -156,6 +171,7 @@ class WebSession:
         deadline = time.time() + 25
         filled = None
         while time.time() < deadline:
+            self._check_cancelled()
             filled = self._submit_login(username, password)
             if isinstance(filled, dict) and filled.get("found"):
                 break
@@ -173,6 +189,7 @@ class WebSession:
         self._tell("Signing in…", 0.1)
         deadline = time.time() + 40
         while time.time() < deadline:
+            self._check_cancelled()
             if self._page_logged_in() or self._me_ok():
                 self.logged_in = True
                 self._tell("Signed in.", 0.12)
@@ -277,6 +294,7 @@ class WebSession:
         deadline = time.time() + 70
         value = None
         while time.time() < deadline:
+            self._check_cancelled()
             value = host.eval_js(f"window[{json.dumps(key)}]", timeout=25)
             if value is None:
                 time.sleep(0.35)
@@ -411,6 +429,7 @@ class WebSession:
         return rows
 
     def _fetch_batch(self, urls: list[str], accept: str) -> list[dict[str, Any]]:
+        self._check_cancelled()
         if not urls:
             return []
         import secrets
@@ -424,6 +443,7 @@ class WebSession:
         host.eval_js(script, timeout=20)
         deadline = time.time() + 36
         while time.time() < deadline:
+            self._check_cancelled()
             value = host.eval_js(f"window[{json.dumps(key)}]", timeout=25)
             if value is None:
                 time.sleep(0.35)

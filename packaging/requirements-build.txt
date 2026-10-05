@@ -1,0 +1,13 @@
+# Use Python 3.12 on each native platform; install into a clean build venv.
+altgraph==0.17.4
+packaging==24.2
+pyinstaller==6.11.1
+pyinstaller-hooks-contrib==2024.10
+setuptools==75.6.0
+pefile==2023.2.7; sys_platform == 'win32'
+pywin32-ctypes==0.2.3; sys_platform == 'win32'
+pyobjc-core==10.3.2; sys_platform == 'darwin'
+pyobjc-framework-Cocoa==10.3.2; sys_platform == 'darwin'
+pyobjc-framework-WebKit==10.3.2; sys_platform == 'darwin'
+pyobjc-framework-Quartz==10.3.2; sys_platform == 'darwin'
+pyobjc-framework-Security==10.3.2; sys_platform == 'darwin'

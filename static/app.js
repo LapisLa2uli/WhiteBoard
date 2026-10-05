@@ -2315,7 +2315,7 @@ function settingsView() {
       ${course.custom ? `<button class="text-btn" data-reset-course="${escapeAttr(course.id)}">Reset</button>` : ""}
     </div>
   </div>`).join("") || `<div class="card"><p class="muted">Sign in and refresh to choose course colors.</p></div>`;
-  return `<h2>Settings</h2><h3>Account</h3>
+  return `<h2>Settings</h2><p class="muted">WhiteBoard ${escapeHtml((state.build || {}).version || "")} · Build ${escapeHtml((state.build || {}).revision || "development")} · ${escapeHtml((state.build || {}).platform || "source")}</p><h3>Account</h3>
     <div class="card">
       <label>Blackboard base URL</label>
       <input class="settings-input" type="text" value="${escapeAttr(state.base_url || "")}" readonly />

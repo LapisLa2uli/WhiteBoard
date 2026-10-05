@@ -161,6 +161,7 @@ def _submitted_ts(settings: dict, item) -> int:
 
 
 def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", include_content=True, course_id=None) -> dict:
+    from version import build_info
     settings = load_settings()
     apply_palette(settings)
     snapshot = snapshot or load_snapshot()
@@ -381,6 +382,7 @@ def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", i
         "calendar": calendar,
         "content_nodes": content_nodes,
         "content_count": len(snapshot.content_nodes),
+        "build": build_info(),
         "content_loaded": include_content and bool(snapshot.files_indexed),
         "revision": _live_revision,
         "partial": _live_snapshot is not None or bool(snapshot.errors) or not snapshot.files_indexed,

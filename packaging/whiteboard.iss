@@ -34,6 +34,10 @@ MinVersion=10.0
 ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
 AllowNoIcons=yes
+#ifdef SignRelease
+SignTool=WhiteBoard
+SignedUninstaller=yes
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -52,11 +56,3 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppName}.exe"; WorkingDir: 
 [Run]
 Filename: "{app}\{#AppName}.exe"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 
-[Code]
-function InitializeSetup(): Boolean;
-var
-  ResultCode: Integer;
-begin
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM WhiteBoard.exe /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Result := True;
-end;

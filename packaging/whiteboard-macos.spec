@@ -12,9 +12,12 @@ NSBundle.mainBundle() resolves and the window opens.
 """
 
 import os
+import sys
 from pathlib import Path
 
 ROOT = Path(SPECPATH).resolve().parent
+sys.path.insert(0, str(ROOT))
+from version import APP_VERSION
 
 # The build script generates a real .icns from assets/logo-macOS.png before
 # invoking this spec, and points the path here.
@@ -32,6 +35,8 @@ datas = [
 _auth = ROOT / "authid.txt"
 if _auth.is_file():
     datas.append((str(_auth), "."))
+if os.environ.get("WHITEBOARD_BUILD_INFO"):
+    datas.append((os.environ["WHITEBOARD_BUILD_INFO"], "."))
 
 hiddenimports = [
     "app",
@@ -49,6 +54,7 @@ hiddenimports = [
     "accounts",
     "persistence",
     "secure_storage",
+    "version",
     "host",
     "host._macos",
     "host.trust",
@@ -96,6 +102,9 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
+    target_arch="arm64",
+    codesign_identity=os.environ.get("SIGN_ID") or None,
+    entitlements_file=os.environ.get("WHITEBOARD_ENTITLEMENTS") or None,
 )
 coll = COLLECT(
     exe,
@@ -110,8 +119,8 @@ coll = COLLECT(
 info_plist = {
     "CFBundleName": "WhiteBoard",
     "CFBundleDisplayName": "WhiteBoard",
-    "CFBundleShortVersionString": os.environ.get("WHITEBOARD_VERSION", "0.4.0"),
-    "CFBundleVersion": "1",
+    "CFBundleShortVersionString": APP_VERSION,
+    "CFBundleVersion": APP_VERSION,
     "LSMinimumSystemVersion": "11.0",
     "NSHighResolutionCapable": True,
     "LSApplicationCategoryType": "public.app-category.education",

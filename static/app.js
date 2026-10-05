@@ -10,6 +10,8 @@ let feedback = null;
 let viewer = null;
 let calendarMode = "list";
 let calendarDays = 7;
+let calendarDay = "";
+let calendarReturn = null;
 let calendarAnchor = startOfDay(new Date());
 let contentsMode = "tree";
 let contentsPath = [];
@@ -229,6 +231,9 @@ function controlOf(event) {
 
 function onClick(event) {
   const source = controlOf(event);
+  const moreDay = source.closest("[data-cal-day]");
+  if (moreDay) { calendarReturn = {mode:calendarMode,anchor:calendarAnchor,scroll:document.getElementById("page-body").scrollTop}; calendarDay=moreDay.dataset.calDay; paintCalendarRoot(); return; }
+  if (source.closest("#cal-day-back")) { calendarDay=""; calendarMode=calendarReturn.mode; calendarAnchor=calendarReturn.anchor; paintCalendarRoot(); document.getElementById("page-body").scrollTop=calendarReturn.scroll; return; }
   if (source.closest("#cancel-download")) { api("/api/download/cancel",{}).catch(showError); return; }
   if (source.closest("#school-signin")) { startLogin(true); return; }
   if (source.closest("#show-password")) {
@@ -1544,6 +1549,10 @@ function calendarToolbar() {
 }
 
 function calendarBody() {
+  if (calendarDay) {
+    const items=visibleEvents(state.calendar.filter(item=>item.day===calendarDay || (item.ts && isoDate(new Date(item.ts*1000))===calendarDay)));
+    return `<button id="cal-day-back" class="text-btn">Back to calendar</button><h3>${escapeHtml(calendarDay)}</h3>${items.map(item=>assignCard(item, false)).join("")}`;
+  }
   if (calendarMode === "month") return monthGrid();
   if (calendarMode === "week") return weekGrid();
   return calendarList();
@@ -1602,7 +1611,7 @@ function monthGrid() {
       cells += `<div class="cal-cell ${inMonth ? "" : "out"} ${isToday ? "today" : ""}">
         <div class="day-num">${day.getDate()}</div>
         ${events.map((item) => eventChip(item)).join("")}
-        ${extra > 0 ? `<div class="muted">+${extra} more</div>` : ""}
+        ${extra > 0 ? `<button class="text-btn" data-cal-day="${isoDate(day)}" aria-label="Show all events on ${isoDate(day)}">+${extra} more</button>` : ""}
       </div>`;
     }
     rows += `<div class="cal-row">${cells}</div>`;

@@ -252,6 +252,8 @@ def fetch_snapshot(
             "courses",
             "Signed in, but no course list was returned. Try Refresh, or confirm the school URL.",
         )
+    if getattr(session, "network_errors", []):
+        snapshot.errors["network"] = f"{len(session.network_errors)} requests failed or were incomplete. Saved data has been preserved."
     snapshot.completeness.update(profile=bool(snapshot.user_id), courses=bool(snapshot.courses) and "courses" not in snapshot.errors, grades="grades" not in snapshot.errors)
     return snapshot
 
@@ -2206,6 +2208,8 @@ def _follow_content_pages(
             if url and url not in seen_urls and len(buckets.get(key) or []) < _CONTENT_NODE_CAP
         ]
         if not batch:
+            if any(next_urls.values()):
+                getattr(session, "network_errors", []).append("Content pagination limit or cycle reached")
             return
         for _key, url in batch:
             seen_urls.add(url)
@@ -2224,6 +2228,9 @@ def _follow_content_pages(
             _note_items(session, str(course_key), added)
             if nxt and len(buckets[key]) < _CONTENT_NODE_CAP:
                 next_urls[key] = nxt
+
+    if any(next_urls.values()):
+        getattr(session, "network_errors", []).append("Content pagination exceeds 30 pages")
 
 
 def _fetch_content_trees_parallel(

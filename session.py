@@ -36,7 +36,7 @@ _FETCH_JS = r"""
     if (keyName.includes("xsrf")) headers["X-Blackboard-XSRF"] = trimmed.slice(eq + 1);
   }
   const found = new Array(urls.length);
-  const limit = 24;
+  const limit = __LIMIT__;
   let cursor = 0;
   async function run() {
     while (cursor < urls.length) {
@@ -46,14 +46,21 @@ _FETCH_JS = r"""
       (window.__wbControllers ||= new Set()).add(controller);
       const timer = setTimeout(() => controller.abort(), 20000);
       try {
-        const res = await fetch(url, { method: "GET", credentials: "include", headers, signal: controller.signal });
+        let res;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          res = await fetch(url, { method: "GET", credentials: "include", headers, signal: controller.signal });
+          if (![429, 503].includes(res.status) || attempt === 2) break;
+          const retry = res.headers.get("retry-after");
+          const seconds = Number(retry) || Math.max(0, (Date.parse(retry) - Date.now()) / 1000) || 2 ** attempt;
+          await new Promise(resolve => setTimeout(resolve, Math.min(seconds, 8) * 1000));
+        }
         const type = (res.headers.get("content-type") || "").toLowerCase();
         const binary = type.startsWith("image/") || type.startsWith("audio/") || type.startsWith("video/")
           || type.includes("octet-stream") || type.includes("pdf") || type.includes("zip");
         let text = "";
         if (!binary) {
           text = await res.text();
-          if (text.length > 2000000) text = text.slice(0, 2000000);
+          if (text.length > 16000000) throw new Error("Response exceeds 16 MB; request a smaller page.");
         }
         found[index] = { url, status: res.status, text };
       } catch (err) {
@@ -116,6 +123,10 @@ class WebSession:
         self.on_progress = on_progress
         self.logged_in = False
         self.cancel_event = None
+        self.concurrency = 12
+        self._responses = {}
+        self.network_errors = []
+        self.metrics = {"requests": 0, "cache_hits": 0, "batches": 0}
 
     def _check_cancelled(self):
         if self.cancel_event is not None and self.cancel_event.is_set():
@@ -327,12 +338,14 @@ class WebSession:
         script = _BYTES_JS.replace("__KEY__", json.dumps(key)).replace("__URL__", json.dumps(url))
         host.eval_js(script, timeout=20)
         deadline = time.time() + 70
+        delay = .03
         value = None
         while time.time() < deadline:
             self._check_cancelled()
             value = host.eval_js(f"window[{json.dumps(key)}]", timeout=25)
             if value is None:
-                time.sleep(0.35)
+                time.sleep(delay)
+                delay = min(.2, delay * 1.4)
                 continue
             host.eval_js(f"window[{json.dumps(key)}] = null", timeout=8)
             break
@@ -358,7 +371,7 @@ class WebSession:
             raise SessionError(f"Refusing to request a different site: {url}")
         row = self._fetch([url])[0]
         status = int(row.get("status") or 0)
-        if row.get("error") and not status:
+        if row.get("error"):
             raise ApiRequestError(0, url, str(row.get("error")))
         if status >= 400:
             raise ApiRequestError(status, url)
@@ -384,9 +397,11 @@ class WebSession:
                 try:
                     data = json.loads(text)
                 except json.JSONDecodeError:
-                    data = None
+                    row["error"] = "Response was not complete JSON"
+                    row["status"] = 0
+                    self.network_errors.append("Invalid JSON response")
             parsed.append(
-                {"url": row.get("url") or "", "status": int(row.get("status") or 0), "data": data}
+                {"url": row.get("url") or "", "status": int(row.get("status") or 0), "data": data, "error": row.get("error", "")}
             )
         return parsed
 
@@ -458,10 +473,24 @@ class WebSession:
         return found
 
     def _fetch(self, urls: list[str], accept: str = "application/json") -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        for offset in range(0, len(urls), 24):
-            rows.extend(self._fetch_batch(urls[offset : offset + 24], accept))
-        return rows
+        self._check_cancelled()
+        pending = list(dict.fromkeys(url for url in urls if (url, accept) not in self._responses))
+        self.metrics['cache_hits'] += len(urls) - len(pending)
+        found = {}
+        for offset in range(0, len(pending), self.concurrency):
+            rows = self._fetch_batch(pending[offset:offset+self.concurrency], accept)
+            self.metrics['batches'] += 1
+            self.metrics['requests'] += len(rows)
+            for row in rows:
+                found[row['url']] = row
+                status = int(row.get('status') or 0)
+                if 200 <= status < 300 and not row.get('error'):
+                    self._responses[(row['url'], accept)] = row
+                elif status == 0 or status >= 500 or status == 429:
+                    self.network_errors.append(str(row.get('error') or f'HTTP {status}'))
+            if any(int(r.get('status') or 0) in (429,503) for r in rows):
+                self.concurrency = max(4, self.concurrency // 2)
+        return [self._responses.get((url,accept)) or found.get(url) or {'url':url,'status':0,'error':'No response'} for url in urls]
 
     def _fetch_batch(self, urls: list[str], accept: str) -> list[dict[str, Any]]:
         self._check_cancelled()
@@ -474,14 +503,17 @@ class WebSession:
             _FETCH_JS.replace("__KEY__", json.dumps(key))
             .replace("__URLS__", json.dumps(urls))
             .replace("__ACCEPT__", json.dumps(accept))
+            .replace("__LIMIT__", str(self.concurrency))
         )
         host.eval_js(script, timeout=20)
-        deadline = time.time() + 36
+        deadline = time.time() + 45
+        delay = .03
         while time.time() < deadline:
             self._check_cancelled()
             value = host.eval_js(f"window[{json.dumps(key)}]", timeout=25)
             if value is None:
-                time.sleep(0.35)
+                time.sleep(delay)
+                delay = min(.2, delay * 1.4)
                 continue
             host.eval_js(f"window[{json.dumps(key)}] = null", timeout=8)
             if isinstance(value, list):

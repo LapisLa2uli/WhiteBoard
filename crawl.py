@@ -143,6 +143,7 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
     def work() -> None:
         global _session
         secret = password
+        keep_partial = False
         try:
             _set("Preparing Blackboard…", 0.04)
             session = WebSession(base_url or "https://shs.blackboardchina.cn", on_progress=_on_progress)
@@ -178,6 +179,11 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
                 on_stage=staged,
             )
             _check_cancelled()
+            progress["metrics"] = dict(session.metrics)
+            if snapshot.errors:
+                keep_partial = True
+                publish_stage(snapshot)
+                raise SessionError("Refresh is partial. The previous saved copy was preserved; retry to load missing data.")
             store = Store()
             store.snapshot = snapshot
             store.signed_in = True
@@ -201,7 +207,8 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
         finally:
             secret = ""
             from present import publish_stage
-            publish_stage(None)
+            if not keep_partial or _cancel.is_set():
+                publish_stage(None)
             _session = None
             progress["busy"] = False
             progress["cancelled"] = _cancel.is_set()

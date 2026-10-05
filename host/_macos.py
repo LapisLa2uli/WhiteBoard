@@ -21,6 +21,7 @@ leave the hidden view wedged.
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 from pathlib import Path
@@ -1035,30 +1036,24 @@ def clear_cookies() -> None:
     """Forget the saved Blackboard session so the next launch asks again."""
     import data
 
-    try:
-        from secure_storage import delete_secret
-        delete_secret(data.APP_DIR / "cookies.json")
-    except FileNotFoundError:
-        pass
-    except Exception:
-        pass
-    _on_main(lambda: [_close_tab(str(tab["id"])) for tab in list(_docs.get("tabs") or [])])
-    store = _cookie_store()
-    holder: list = []
+    from secure_storage import delete_secret
+    delete_secret(data.APP_DIR / "cookies.json")
     done = threading.Event()
-
-    def finished(cookies):
-        holder.extend(cookies or [])
+    def finished():
         done.set()
-
-    _on_main(lambda: store.getAllCookies_(finished))
-    if not done.wait(10):
-        return
-    for cookie in holder:
-        try:
-            store.deleteCookie_completionHandler_(cookie, _cookie_noop)
-        except Exception:
-            continue
+    def clear():
+        for tab in list(_docs.get("tabs") or []):
+            _close_tab(str(tab["id"]))
+        view = _state.get("bb_view")
+        if view is not None:
+            view.stopLoading()
+            _load("about:blank", view)
+        _state["store"].removeDataOfTypes_modifiedSince_completionHandler_(
+            WebKit.WKWebsiteDataStore.allWebsiteDataTypes(), Foundation.NSDate.distantPast(), finished
+        )
+    _on_main(clear)
+    if not done.wait(15):
+        raise TimeoutError("The browser did not finish signing out. Try again.")
 
 
 def show_login():

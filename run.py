@@ -72,7 +72,6 @@ def _check_cookies(failures: list[str]) -> None:
     segfaulted the process on the next launch that had cookies to restore.
     Nothing short of actually doing it catches that.
     """
-    import json
     import tempfile
     import time
     from pathlib import Path as _Path
@@ -86,28 +85,31 @@ def _check_cookies(failures: list[str]) -> None:
         if not cond:
             failures.append(name)
 
-    real = data.DATA_DIR
-    scratch = _Path(tempfile.mkdtemp(prefix="wb-selftest"))
+    from secure_storage import load_secret, delete_secret
+    real, real_app = data.DATA_DIR, data.APP_DIR
+    temporary = tempfile.TemporaryDirectory(prefix="wb-selftest")
+    scratch = _Path(temporary.name)
     try:
-        data.DATA_DIR = scratch
+        data.DATA_DIR = data.APP_DIR = scratch
         backend._restore_cookies()          # no file yet: must be a clean no-op
         host.save_cookies()
         saved = scratch / "cookies.json"
         check("cookie save wrote a file", saved.is_file())
         if saved.is_file():
-            records = json.loads(saved.read_text("utf-8"))
+            records = load_secret(saved, [])
             check("cookie records readable", isinstance(records, list), "n=%d" % len(records))
+            check("cookies protected by Keychain", saved.read_bytes() == b"WBKC1\n")
 
         host.clear_cookies()
         check("cookies cleared", not saved.is_file())
 
         # Rebuild one and push it back through the restore path.
-        backend._cookie_store().setCookies_completionHandler_(
+        backend._on_main(lambda: backend._cookie_store().setCookies_completionHandler_(
             [backend._cookie_from_record(
                 {"name": "wbtest", "value": "1", "domain": "example.com",
                  "path": "/", "secure": False, "httpOnly": False, "expires": 0})],
             backend._cookie_noop,
-        )
+        ))
         deadline = time.time() + 15
         got = None
         import Foundation
@@ -135,10 +137,15 @@ def _check_cookies(failures: list[str]) -> None:
                 break
             time.sleep(0.2)
         check("cookie set with a real handler", "wbtest" in got, "names=%s" % got)
+        host.save_cookies()
+        check("test cookie persisted securely", any(row.get("name") == "wbtest" for row in load_secret(saved, [])))
+        host.clear_cookies()
     except Exception as exc:
         failures.append("cookies: %s: %s" % (type(exc).__name__, exc))
     finally:
-        data.DATA_DIR = real
+        delete_secret(scratch / "cookies.json")
+        data.DATA_DIR, data.APP_DIR = real, real_app
+        temporary.cleanup()
 
 
 def selftest() -> int:

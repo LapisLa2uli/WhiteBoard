@@ -229,6 +229,7 @@ function controlOf(event) {
 
 function onClick(event) {
   const source = controlOf(event);
+  if (source.closest("#cancel-download")) { api("/api/download/cancel",{}).catch(showError); return; }
   if (source.closest("#school-signin")) { startLogin(true); return; }
   if (source.closest("#show-password")) {
     const input = document.getElementById("pass");
@@ -2507,7 +2508,7 @@ function showDownloadProgress(message) {
     row = document.createElement("div");
     row.dataset.progress = id;
     row.className = "download-row";
-    row.innerHTML = `<div class="zip-label"></div><div class="load-track"><span></span></div>`;
+    row.innerHTML = `<div class="zip-label"></div><div class="load-track"><span></span></div><button id="cancel-download" class="text-btn">Cancel download</button>`;
     banner.appendChild(row);
   }
   const label = row.querySelector(".zip-label");

@@ -81,34 +81,36 @@ _FETCH_JS = r"""
 """
 
 
-_BYTES_JS = r"""
+_STREAM_JS = r"""
 (() => {
-  const key = __KEY__;
-  const url = __URL__;
-  window[key] = null;
-  const headers = { "X-Requested-With": "XMLHttpRequest" };
-  for (const part of document.cookie.split(";")) {
-    const trimmed = part.trim();
-    const eq = trimmed.indexOf("=");
-    if (eq < 0) continue;
-    const keyName = trimmed.slice(0, eq).toLowerCase();
-    if (keyName.includes("xsrf")) headers["X-Blackboard-XSRF"] = trimmed.slice(eq + 1);
-  }
+  const key = __KEY__, url = __URL__;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60000);
-  fetch(url, { method: "GET", credentials: "include", headers, signal: controller.signal })
-    .then(async (res) => {
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      let binary = "";
-      const size = 0x2000;
-      for (let index = 0; index < bytes.length; index += size) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(index, Math.min(index + size, bytes.length)));
+  (window.__wbControllers ||= new Set()).add(controller);
+  const state = window[key] = {queue: [], done: false, error: "", controller};
+  (async () => {
+    try {
+      const res = await fetch(url, {credentials:"include", signal:controller.signal});
+      if (!res.ok) throw new Error(`Download failed (HTTP ${res.status})`);
+      if ((res.headers.get("content-type") || "").includes("text/html")) throw new Error("Sign in again before downloading this file.");
+      const reader = res.body.getReader();
+      while (true) {
+        const {value,done} = await reader.read();
+        if (done) break;
+        for (let pos=0; pos<value.length; pos+=65536) {
+          while (state.queue.length >= 4) {
+            if (controller.signal.aborted) throw new Error("Download cancelled.");
+            await new Promise(r=>setTimeout(r,15));
+          }
+          const part=value.subarray(pos, pos+65536);
+          let binary="";
+          for (let i=0;i<part.length;i+=8192) binary+=String.fromCharCode(...part.subarray(i,i+8192));
+          state.queue.push(btoa(binary));
+        }
       }
-      window[key] = { status: res.status, b64: btoa(binary) };
-    })
-    .catch((err) => { window[key] = { status: 0, b64: "", error: String(err) }; })
-    .finally(() => clearTimeout(timer));
-  return "started";
+    } catch(error) { state.error=String(error); }
+    finally { state.done=true; window.__wbControllers.delete(controller); }
+  })();
+  return true;
 })()
 """
 
@@ -328,42 +330,37 @@ class WebSession:
             host.clear_cookies()
             raise SessionError("The signed-in account does not match the requested username. Sign in again.")
 
-    def get_bytes(self, path: str) -> bytes:
+    def iter_bytes(self, path):
         import base64
-
+        import secrets
         url = resolve_url(self.base_url, path).replace("/.learn/", "/learn/")
-        if not same_site(self.base_url, url):
-            raise SessionError(f"Refusing to download a different site: {url}")
-        key = "wb" + __import__("secrets").token_hex(4)
-        script = _BYTES_JS.replace("__KEY__", json.dumps(key)).replace("__URL__", json.dumps(url))
-        host.eval_js(script, timeout=20)
-        deadline = time.time() + 70
-        delay = .03
-        value = None
-        while time.time() < deadline:
-            self._check_cancelled()
-            value = host.eval_js(f"window[{json.dumps(key)}]", timeout=25)
-            if value is None:
-                time.sleep(delay)
-                delay = min(.2, delay * 1.4)
-                continue
-            host.eval_js(f"window[{json.dumps(key)}] = null", timeout=8)
-            break
-        if not isinstance(value, dict):
-            raise SessionError("Blackboard did not return the file.")
-        if value.get("error"):
-            raise SessionError(str(value["error"]))
-        status = int(value.get("status") or 0)
-        if status >= 400 or not status:
-            raise SessionError(f"Download failed (HTTP {status}).")
+        if not same_site(self.base_url, url) or urlparse(url).scheme != 'https':
+            raise SessionError("Downloads must come from the HTTPS school address.")
+        key = 'wb' + secrets.token_hex(8)
+        host.eval_js(_STREAM_JS.replace('__KEY__', json.dumps(key)).replace('__URL__', json.dumps(url)))
+        deadline = time.monotonic() + 60
         try:
-            data = base64.b64decode(str(value.get("b64") or ""))
-        except Exception as exc:
-            raise SessionError("Blackboard returned a file that could not be saved.") from exc
-        head = data[:80].lstrip().lower()
-        if head.startswith(b"<!doctype") or head.startswith(b"<html"):
-            raise SessionError("Sign in, then try the download again.")
-        return data
+            while True:
+                self._check_cancelled()
+                value = host.eval_js(f"(() => {{ const s=window[{json.dumps(key)}]; return {{chunks:s.queue.splice(0,4),done:s.done,error:s.error}}; }})()")
+                if value.get('error'):
+                    raise SessionError(value['error'])
+                chunks = value.get('chunks') or []
+                for chunk in chunks:
+                    deadline = time.monotonic() + 60
+                    yield base64.b64decode(chunk, validate=True)
+                if value.get('done') and not chunks:
+                    break
+                if time.monotonic() > deadline:
+                    raise SessionError('Download stalled for 60 seconds.')
+                if not chunks:
+                    time.sleep(.03)
+        finally:
+            host.eval_js(f"(() => {{ const s=window[{json.dumps(key)}]; if(s)s.controller.abort(); delete window[{json.dumps(key)}]; }})()",timeout=5)
+
+    def download_to(self, path, output):
+        for chunk in self.iter_bytes(path):
+            output.write(chunk)
 
     def get_json(self, path: str) -> Any:
         url = resolve_url(self.base_url, path).replace("/.learn/", "/learn/")
@@ -477,14 +474,17 @@ class WebSession:
         pending = list(dict.fromkeys(url for url in urls if (url, accept) not in self._responses))
         self.metrics['cache_hits'] += len(urls) - len(pending)
         found = {}
-        for offset in range(0, len(pending), self.concurrency):
-            rows = self._fetch_batch(pending[offset:offset+self.concurrency], accept)
+        offset = 0
+        while offset < len(pending):
+            batch = pending[offset:offset+self.concurrency]
+            offset += len(batch)
+            rows = self._fetch_batch(batch, accept)
             self.metrics['batches'] += 1
             self.metrics['requests'] += len(rows)
             for row in rows:
                 found[row['url']] = row
                 status = int(row.get('status') or 0)
-                if 200 <= status < 300 and not row.get('error'):
+                if 200 <= status < 300 and not row.get('error') and not re.search(r"/users/me(?:[?]|$)", row["url"]):
                     self._responses[(row['url'], accept)] = row
                 elif status == 0 or status >= 500 or status == 429:
                     self.network_errors.append(str(row.get('error') or f'HTTP {status}'))

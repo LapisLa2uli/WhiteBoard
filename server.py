@@ -774,44 +774,27 @@ def _write_folder_zip(session, downloads: Path, folder, files: list, by_id: dict
         raise OSError("Could not create the zip in Downloads.")
     large = _zip_is_large(files)
     total = max(len(files), 1)
-    packed: list[tuple[str, bytes]] = []
-    failures: list[str] = []
-    used: set[str] = set()
-    _zip_progress(zip_name, 0.02, large=large, zip_name=zip_name, phase="Packaging")
-    for index, node in enumerate(files):
-        label = node.display_name() or zip_name
-        _zip_progress(
-            f"{zip_name} · {label}",
-            (index + 0.35) / (total + 1),
-            large=large,
-            zip_name=zip_name,
-            phase="Packaging",
-        )
-        entry = _zip_entry_name(folder, node, by_id)
-        if entry in used:
-            entry = f"{index}-{entry}"
-        used.add(entry)
-        try:
-            packed.append((entry, session.get_bytes(node.download_path)))
-        except Exception as exc:
-            failures.append(f"{label}: {exc}")
-            continue
-        _zip_progress(
-            f"{zip_name} · {label}",
-            (index + 1) / (total + 1),
-            large=large,
-            zip_name=zip_name,
-            phase="Packaging",
-        )
-    if not packed:
-        raise OSError(failures[0] if failures else f"{folder.display_name()} has no downloadable files.")
-    _zip_progress(zip_name, total / (total + 1), large=large, zip_name=zip_name, phase="Saving")
-    with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for entry, data in packed:
-            archive.writestr(entry, data)
+    used = set()
+    dest = _reserve_path(dest)
+    temporary = dest.with_name(dest.name + '.' + uuid.uuid4().hex + '.part')
+    try:
+        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for index, node in enumerate(files):
+                session._check_cancelled()
+                entry = _zip_entry_name(folder, node, by_id)
+                if entry in used:
+                    entry = f"{index}-{entry}"
+                used.add(entry)
+                _zip_progress(node.display_name(), index / total, large=large, zip_name=zip_name, phase="Downloading")
+                with archive.open(entry, 'w', force_zip64=True) as output:
+                    session.download_to(node.download_path, output)
+        os.replace(temporary, dest)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        dest.unlink(missing_ok=True)
+        raise
     _zip_progress(zip_name, 1, large=large, zip_name=zip_name, done=large, phase="Downloading")
-    problems.extend(failures)
-    return zip_name
+    return dest.name
 
 
 def _download_files(body: dict) -> dict:
@@ -865,6 +848,7 @@ def _download_files(body: dict) -> dict:
     base = str(settings.get("base_url") or "https://shs.blackboardchina.cn")
     _download_progress("files", 0.02, track="main", phase="Preparing")
     session = WebSession(base)
+    session.cancel_event = _download_cancel
     try:
         session.prepare()
     except Exception as exc:
@@ -901,6 +885,7 @@ def _download_files(body: dict) -> dict:
                 errors.append(f"{folder.display_name()}: {exc}")
         total = max(len(loose), 1)
         for index, node in enumerate(loose):
+            session._check_cancelled()
             name = _download_filename(node)
             _download_progress(name, index / total, track="main")
             dest = _inside(_unique_path(folder_dir / name), folder_dir)
@@ -908,7 +893,16 @@ def _download_files(body: dict) -> dict:
                 errors.append(f"{name}: invalid file name")
                 continue
             try:
-                dest.write_bytes(session.get_bytes(node.download_path))
+                dest = _reserve_path(dest)
+                temporary = dest.with_name(dest.name + "." + uuid.uuid4().hex + ".part")
+                try:
+                    with temporary.open("xb") as output:
+                        session.download_to(node.download_path, output)
+                    os.replace(temporary, dest)
+                except BaseException:
+                    temporary.unlink(missing_ok=True)
+                    dest.unlink(missing_ok=True)
+                    raise
                 saved += 1
             except Exception as exc:
                 errors.append(f"{name}: {exc}")
@@ -990,17 +984,35 @@ def _unique_path(path: Path) -> Path:
     if not path.exists():
         return path
     stem, suffix = path.stem, path.suffix
-    for number in range(2, 100):
+    for number in __import__("itertools").count(2):
         candidate = path.with_name(f"{stem} ({number}){suffix}")
         if not candidate.exists():
             return candidate
-    return path
 
+
+def _reserve_path(path):
+    while True:
+        candidate = _unique_path(path)
+        try:
+            with candidate.open("xb"):
+                pass
+            return candidate
+        except FileExistsError:
+            continue
+
+
+_download_lock = threading.Lock()
+_download_cancel = threading.Event()
 
 def handle(path: str, body: dict | None = None) -> dict:
     """Answer one window request. Nothing listens on a network port."""
     payload = body if isinstance(body, dict) else {}
     route = str(path or "").split("?", 1)[0]
+    if route == "/api/download/cancel":
+        _download_cancel.set()
+        return {"ok": True}
+    if route in {"/api/login", "/api/refresh", "/api/logout"} and _download_lock.locked():
+        raise RuntimeError("Cancel the download or wait for it to finish first.")
     if route == "/api/content":
         result = build_state(include_content=True, course_id="")
         return {"content_nodes": result["content_nodes"], "content_loaded": True, "revision": result["revision"]}
@@ -1045,7 +1057,13 @@ def handle(path: str, body: dict | None = None) -> dict:
     if route == "/api/assignments":
         return _assignment_action(payload)
     if route == "/api/download":
-        return _download_files(payload)
+        if not _download_lock.acquire(blocking=False):
+            raise RuntimeError("A download is already running.")
+        _download_cancel.clear()
+        try:
+            return _download_files(payload)
+        finally:
+            _download_lock.release()
     raise RuntimeError("That action is not available.")
 
 

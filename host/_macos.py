@@ -326,10 +326,12 @@ def _apply_icon(window):
 
 def _app_icon():
     """Load the .icns once and reuse it for the Dock and every window."""
-    if not ICON_PATH.is_file():
+    bundled = Foundation.NSBundle.mainBundle().pathForResource_ofType_("AppIcon", "icns")
+    icon_path = Path(str(bundled)) if bundled else ICON_PATH
+    if not icon_path.is_file():
         return None
     try:
-        image = AppKit.NSImage.alloc().initWithContentsOfFile_(str(ICON_PATH))
+        image = AppKit.NSImage.alloc().initWithContentsOfFile_(str(icon_path))
         if image is None or not image.isValid():
             return None
         return image

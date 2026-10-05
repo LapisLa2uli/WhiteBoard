@@ -27,10 +27,11 @@ ICNS = os.environ.get("WHITEBOARD_ICNS", "")
 datas = [
     (str(ROOT / "static"), "static"),
     # Fallback for the static file server's /logo route.
-    (str(ROOT / "assets" / "logo.png"), "assets/logo.png"),
+    (str(ROOT / "assets" / "logo.png"), "assets"),
 ]
-if ICNS:
-    datas.append((ICNS, "assets"))
+_auth = ROOT / "authid.txt"
+if _auth.is_file():
+    datas.append((str(_auth), "."))
 
 hiddenimports = [
     "app",
@@ -38,14 +39,19 @@ hiddenimports = [
     "app.palette",
     "app.filters",
     "app.google_calendar",
+    "app.status",
     "blackboard",
     "blackboard.api",
     "blackboard.auth",
     "blackboard.models",
     "blackboard.store",
     "data",
+    "accounts",
+    "persistence",
+    "secure_storage",
     "host",
     "host._macos",
+    "host.trust",
     "server",
     "session",
     "crawl",

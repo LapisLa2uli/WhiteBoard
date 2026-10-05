@@ -7,7 +7,9 @@ ROOT = Path(SPECPATH).resolve().parent
 
 datas = [
     (str(ROOT / "static"), "static"),
-    (str(ROOT / "assets"), "assets"),
+    (str(ROOT / "assets" / "logo.ico"), "assets"),
+    (str(ROOT / "assets" / "logo.png"), "assets"),
+    (str(ROOT / "assets" / "webview2"), "assets/webview2"),
 ]
 _auth = ROOT / "authid.txt"
 if _auth.is_file():
@@ -18,13 +20,20 @@ hiddenimports = [
     "app.palette",
     "app.filters",
     "app.google_calendar",
+    "app.status",
     "blackboard",
     "blackboard.api",
     "blackboard.auth",
     "blackboard.models",
     "blackboard.store",
     "data",
+    "accounts",
+    "persistence",
+    "secure_storage",
     "host",
+    "host.trust",
+    "host._windows",
+    "host.windows_smoke",
     "server",
     "session",
     "crawl",

@@ -37,6 +37,7 @@ class Store:
                 quick=quick,
                 course_ids=course_ids,
                 include_files=include_files,
+                previous=self.snapshot,
             )
         finally:
             session.on_progress = previous

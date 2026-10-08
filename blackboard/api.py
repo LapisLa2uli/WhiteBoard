@@ -118,6 +118,8 @@ def fetch_snapshot(
     course_ids: set[str] | None = None,
     include_files: bool = False,
     on_stage=None,
+    previous: Snapshot | None = None,
+    full: bool = False,
 ) -> Snapshot:
     snapshot = Snapshot(fetched_at=datetime.now(timezone.utc))
     snapshot.sync_scope = ",".join(sorted(course_ids)) if course_ids else "all"
@@ -238,7 +240,7 @@ def fetch_snapshot(
     if on_stage:
         _apply_assignment_status(snapshot)
         on_stage(snapshot, "dashboard")
-    _enrich_assignment_links(session, snapshot, quick=quick, include_files=include_files)
+    _enrich_assignment_links(session, snapshot, quick=quick, include_files=include_files, previous=previous, full=full)
     _check_live_submissions(session, snapshot, quick=quick)
     snapshot.files_indexed = bool(include_files)
     _apply_assignment_status(snapshot)
@@ -2025,6 +2027,8 @@ def _enrich_assignment_links(
     *,
     quick: bool = False,
     include_files: bool = False,
+    previous: Snapshot | None = None,
+    full: bool = False,
 ) -> None:
     for assignment in snapshot.assignments:
         if assignment.content_id == assignment.id:
@@ -2032,7 +2036,7 @@ def _enrich_assignment_links(
         if not assignment.content_id:
             assignment.content_id = _content_id_from_grades(snapshot, assignment)
     if include_files:
-        catalog, nodes = crawl_course_catalog(session, snapshot, quick=quick, include_html=True)
+        catalog, nodes = crawl_course_catalog(session, snapshot, quick=quick, include_html=True, previous=previous, full=full)
         snapshot.content_nodes = nodes
         apply_content_catalog(snapshot, catalog)
         remaining = {
@@ -2065,6 +2069,8 @@ def crawl_course_catalog(
     *,
     quick: bool = False,
     include_html: bool = True,
+    previous: Snapshot | None = None,
+    full: bool = False,
 ) -> tuple[list[ContentEntry], list[ContentNode]]:
     courses = [course for course in snapshot.courses if _bb_pk(course.id)]
     session._course_names = {course.id: course.name for course in courses}
@@ -2073,9 +2079,8 @@ def crawl_course_catalog(
     if quick:
         courses = [course for course in courses if course.id in needed][:12]
     if hasattr(session, "get_json_many"):
-        return _crawl_courses_parallel(
-            session, courses, include_html=include_html
-        )
+        from blackboard.incremental import crawl
+        return crawl(session, snapshot, courses, previous=previous, full=full, include_html=include_html)
     catalog: list[ContentEntry] = []
     nodes: list[ContentNode] = []
     total = max(len(courses), 1)
@@ -2365,7 +2370,7 @@ def _enrich_attachments_parallel(
     session: BlackboardSession,
     groups: list[tuple[str, list[ContentNode]]],
     base_url: str,
-) -> None:
+) -> set[tuple[str, str]]:
     candidates: list[tuple[str, ContentNode]] = []
     for course_id, nodes in groups:
         candidates.extend(
@@ -2373,6 +2378,7 @@ def _enrich_attachments_parallel(
         )
     fetched: dict[tuple[str, str], list[dict[str, Any]]] = {}
     pending = list(candidates)
+    hard_failed = set()
     for template in COURSE_ATTACHMENT_PATHS:
         if not pending:
             break
@@ -2400,7 +2406,12 @@ def _enrich_attachments_parallel(
                 if filename and callable(hook):
                     course = str((getattr(session, "_course_names", None) or {}).get(course_id) or "")
                     hook(course, filename, "file", 0, len(attachments))
+            elif _json_ok(row) and isinstance(row.get("data"), (dict, list)):
+                # A successful empty attachment list needs no fallback request.
+                fetched[(course_id, node.id)] = []
             else:
+                if int(row.get("status") or 0) != 404:
+                    hard_failed.add((course_id, node.id))
                 still.append((course_id, node))
         pending = still
     by_course: dict[str, dict[str, list[dict[str, Any]]]] = {}
@@ -2408,7 +2419,9 @@ def _enrich_attachments_parallel(
         by_course.setdefault(course_id, {})[node_id] = attachments
     for course_id, nodes in groups:
         _apply_fetched_attachments(nodes, by_course.get(course_id) or {}, course_id, base_url)
-    _load_embedded_media(session, groups, base_url)
+    failed = hard_failed - set(fetched)
+    failed.update(_load_embedded_media(session, groups, base_url))
+    return failed
 
 
 def _merge_parallel_html(
@@ -3138,30 +3151,34 @@ def _load_embedded_media(
     session: BlackboardSession,
     groups: list[tuple[str, list[ContentNode]]],
     base_url: str,
-) -> None:
+) -> set[tuple[str, str]]:
     pending = [
         (course_id, node, nodes)
         for course_id, nodes in groups
         for node in nodes
         if node.id
+        and (course_id, node.id) not in getattr(session, "_content_bodies_loaded", set())
         and not node.download_path
         and node.kind == "link"
         and not any(item.id.startswith(f"{node.id}:file:") for item in nodes)
     ]
     if not pending:
-        return
+        return set()
     paths = [
         f"/learn/api/public/v1/courses/{quote(course_id, safe='')}/contents/{quote(node.id, safe='')}"
         for course_id, node, _nodes in pending
     ]
     rows = _json_rows_for(session, paths)
+    failed = set()
     for (course_id, node, nodes), row in zip(pending, rows):
         data = row.get("data") if _json_ok(row) and isinstance(row.get("data"), dict) else None
         if not isinstance(data, dict):
+            failed.add((course_id, node.id))
             continue
         if not node.handler:
             node.handler = _content_handler_id(data)
         nodes.extend(_nodes_from_embedded(node, data.get("body"), course_id, base_url))
+    return failed
 
 
 def _enrich_file_attachments(

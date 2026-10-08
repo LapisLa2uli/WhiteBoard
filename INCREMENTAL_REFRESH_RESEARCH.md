@@ -1,6 +1,6 @@
 # Incremental content refresh investigation
 
-Checked on 8 October 2026 against the configured school server using the supplied account, in disposable profiles. These findings describe tested capabilities; incremental refresh has not yet been implemented. Only aggregate results were saved. No course content, submission, grade, or calendar was changed. Temporary authenticated profiles were removed after testing.
+Checked on 8 October 2026 against the configured school server using the supplied account, in disposable profiles. These findings describe the original capability investigation. The subsequent implementation and validation are documented in [INCREMENTAL_REFRESH.md](INCREMENTAL_REFRESH.md). Only aggregate results were saved. No course content, submission, grade, or calendar was changed. Temporary authenticated profiles were removed after testing.
 
 ## Conclusion
 
@@ -76,4 +76,4 @@ No ETag was returned in the tested content responses. Cache-Control was `no-cach
 
 This recovers the current visible state and minimizes repeated detail loading. It does not reconstruct a historical audit trail: an item created and deleted between two observations may never be observed.
 
-Aggregate probe evidence and disposable scripts are ignored under `build/change-investigation/`. Production crawler behavior was not changed by this investigation.
+Aggregate probe evidence and disposable scripts are ignored under `build/change-investigation/`. The investigation itself did not change production behavior; the later implementation is documented separately.

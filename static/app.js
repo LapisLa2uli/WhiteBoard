@@ -402,6 +402,10 @@ function onClick(event) {
     revealContent(reveal.dataset.reveal);
     return;
   }
+  if (source.closest("#full-refresh")) {
+    refreshNow(true);
+    return;
+  }
   if (source.closest("#refresh")) {
     refreshNow();
     return;
@@ -849,10 +853,11 @@ async function pollGoogle() {
   paintChrome();
 }
 
-async function refreshNow() {
+async function refreshNow(full = false) {
+  if (busy || loading) return;
   busy = true;
   beginLoading("refresh", "Refreshing from Blackboard…");
-  api("/api/refresh", {}).then(() => pollJob()).catch(error => { loading = null; busy = false; showError(error); });
+  api("/api/refresh", { full }).then(() => pollJob()).catch(error => { loading = null; busy = false; showError(error); });
 }
 
 function render() {
@@ -1712,6 +1717,7 @@ function shiftCalendar(delta) {
 function contentsView() {
   return `<h2>Contents</h2>
     <p class="muted">Course files. Metadata loads with Refresh; files download only when you choose Download.</p>
+    ${state.content_notice ? `<p class="muted" role="status">${escapeHtml(state.content_notice)}</p>` : ""}
     <div class="row">
       ${["tree", "folder", "columns"].map((mode) => {
         const label = mode[0].toUpperCase() + mode.slice(1);
@@ -2367,7 +2373,7 @@ function settingsView() {
       <button class="text-btn" id="reset-deadline-colors">Reset deadline colors</button></div>
     <details class="card"><summary>Course colors (${state.courses.length})</summary><p class="muted">Choose a course color.</p>${courseColors}</details>
     ${state.courses.some((course) => course.custom) ? '<button class="text-btn" id="reset-course-colors">Reset course colors</button>' : ""}
-    <h3>Storage and refresh</h3><div class="card"><p>Saved data stays on this computer. Sign out to remove it or keep an offline copy.</p><p class="muted">Refresh loads deadlines first, then grades and files. A failed refresh preserves the previous saved copy.</p></div>
+    <h3>Storage and refresh</h3><div class="card"><p>Saved data stays on this computer. Sign out to remove it or keep an offline copy.</p><p class="muted">Refresh loads deadlines first, then grades and files. Unchanged files reuse saved details. File details are rechecked daily; Full refresh rechecks them now. A failed refresh preserves the previous saved copy.</p><button class="outline-btn" id="full-refresh" ${loading ? "disabled" : ""}>Full refresh</button></div>
     <label class="row"><input id="motion-effects" type="checkbox" ${state.motion_effects ? "checked" : ""}/>Enable decorative ripple effects</label>
     ${colorDialog ? colorModal() : ""}
 `;

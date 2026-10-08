@@ -7,7 +7,7 @@ headings below. Packaging and GitHub Releases copy this text.
 ## [Unreleased]
 
 ### Added features
-- None in this release.
+- Refresh reuses unchanged course files and checks for added, edited, moved, and removed content. Settings now includes **Full refresh**, and file details are rechecked daily.
 
 ### Bugfixes
 - Calendar items with a submission page are treated as assignments, even when Blackboard labels them as events or their titles mention tests or reviews. Saved entries are corrected from their known submission links and indexed course content.

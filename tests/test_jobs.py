@@ -27,7 +27,7 @@ class JobsTests(unittest.TestCase):
         with patch.object(crawl, 'WebSession', return_value=session), patch.object(crawl, 'fetch_snapshot', side_effect=fetch), patch.object(crawl, 'Store') as store, patch.object(crawl, '_sync_google') as sync:
             crawl._launch('refresh', '', '', 'https://example.com')
             self.assertTrue(crawl._done.wait(5))
-            store.assert_not_called()
+            store.return_value.save_cache.assert_not_called()
             sync.assert_not_called()
             self.assertTrue(crawl.progress['cancelled'])
 

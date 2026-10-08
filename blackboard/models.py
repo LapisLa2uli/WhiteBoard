@@ -216,6 +216,7 @@ class Snapshot:
     deadlines: list[Deadline] = field(default_factory=list)
     announcements: list[Announcement] = field(default_factory=list)
     content_nodes: list[ContentNode] = field(default_factory=list)
+    content_cache: dict[str, Any] = field(default_factory=dict)
     files_indexed: bool = False
     fetched_at: datetime | None = None
     errors: dict[str, str] = field(default_factory=dict)
@@ -243,6 +244,7 @@ class Snapshot:
             "deadlines": [d.to_dict() for d in self.deadlines],
             "announcements": [a.to_dict() for a in self.announcements],
             "content_nodes": [n.to_dict() for n in self.content_nodes],
+            "content_cache": self.content_cache,
             "files_indexed": self.files_indexed,
             "completeness": dict(self.completeness),
             "sync_scope": self.sync_scope,
@@ -261,6 +263,7 @@ class Snapshot:
             deadlines=[Deadline.from_dict(x) for x in data.get("deadlines", [])],
             announcements=[Announcement.from_dict(x) for x in data.get("announcements", [])],
             content_nodes=[ContentNode.from_dict(x) for x in data.get("content_nodes", [])],
+            content_cache=dict(data.get("content_cache") or {}),
             files_indexed=_stored_files_indexed(data),
             completeness=dict(data.get("completeness") or {}),
             sync_scope=str(data.get("sync_scope") or ""),

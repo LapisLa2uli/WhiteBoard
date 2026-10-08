@@ -108,16 +108,16 @@ def start_login(username: str, password: str, base_url: str, interactive=False) 
         return dict(progress)
 
 
-def start_refresh() -> dict:
+def start_refresh(*, full=False) -> dict:
     with _lock:
         if progress["busy"]:
             return dict(progress)
         settings = load_settings()
-        _launch("refresh", str(settings.get("username") or ""), "", str(settings.get("base_url") or ""))
+        _launch("refresh", str(settings.get("username") or ""), "", str(settings.get("base_url") or ""), full=full)
         return dict(progress)
 
 
-def _launch(kind: str, username: str, password: str, base_url: str) -> None:
+def _launch(kind: str, username: str, password: str, base_url: str, *, full=False) -> None:
     with _lock:
         if progress["busy"]:
             return
@@ -177,12 +177,16 @@ def _launch(kind: str, username: str, password: str, base_url: str) -> None:
                 progress["stage"] = stage
                 progress["revision"] += 1
                 progress["timings"][stage] = round(time.monotonic() - progress["started_at"], 3)
+            previous = Store()
+            previous.load_cache()
             snapshot = fetch_snapshot(
                 session,
                 quick=False,
                 include_files=True,
                 course_ids=_load_course_ids(),
                 on_stage=staged,
+                previous=previous.snapshot,
+                full=full,
             )
             _check_cancelled()
             progress["metrics"] = dict(session.metrics)

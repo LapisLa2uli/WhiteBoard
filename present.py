@@ -387,6 +387,8 @@ def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", i
         "calendar": calendar,
         "content_nodes": content_nodes,
         "content_count": len(snapshot.content_nodes),
+        "content_notice": ("Some course folders could not be checked. Previously saved files are kept; refresh again to retry."
+                           if snapshot.content_cache.get("stats", {}).get("incomplete_courses") else ""),
         "build": build_info(),
         "content_loaded": include_content and bool(snapshot.files_indexed),
         "revision": _live_revision,

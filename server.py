@@ -197,7 +197,7 @@ class Handler(BaseHTTPRequestHandler):
             ))
             return
         if parsed.path == "/api/refresh":
-            self._json(start_refresh())
+            self._json(start_refresh(full=body.get("full") is True))
             return
         self._json({"ok": False}, status=404)
 
@@ -1060,7 +1060,7 @@ def handle(path: str, body: dict | None = None) -> dict:
             interactive=bool(payload.get("interactive")),
         )
     if route == "/api/refresh":
-        return start_refresh()
+        return start_refresh(full=payload.get("full") is True)
     if route == "/api/open":
         return _open_page(payload)
     if route == "/api/assignments":

@@ -289,8 +289,13 @@ def crawl(session, snapshot, courses, *, previous=None, full=False, include_html
     if include_html:
         _merge_parallel_html(session, [b for b in built if states[b[0]]['dirty']])
     _check(session)
+    from blackboard.file_sizes import enrich_file_sizes
+    enrich_file_sizes(session, [n for _, _, nodes in built for n in nodes], now=now)
+    _check(session)
     for cid, entries, nodes in built:
         state = states[cid]
+        legacy_ids = {n['id'] for n in state['legacy_nodes']}
+        state['legacy_nodes'] = [n.to_dict() for n in nodes if n.id in legacy_ids]
         for iid, group in state['groups'].items():
             state['records'][iid]['nodes'] = [n.to_dict() for n in group]
         serialized = []

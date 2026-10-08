@@ -19,6 +19,7 @@ from blackboard.auth import (
     is_auth_error,
     resolve_url,
 )
+from blackboard.file_sizes import metadata_size
 from blackboard.models import (
     Announcement,
     Assignment,
@@ -2769,7 +2770,7 @@ def _node_from_content_item(
         or ""
     )
     mime = str(_pick(handler_blob, "mimeType", "contentType") or _pick(item, "mimeType") or "")
-    size = _as_int(_pick(item, "size", "fileSize") or _pick(handler_blob, "fileSize", "size"))
+    size = metadata_size(item, handler_blob)
     modified = parse_dt(
         _pick(item, "modified", "updated", "modifiedDate", "lastModified")
         or _pick(handler_blob, "modified")
@@ -2806,7 +2807,8 @@ def _node_from_content_item(
         handler=handler,
         mime=mime,
         extension=extension,
-        size_bytes=size,
+        size_bytes=size if size is not None else 0,
+        size_known=size is not None,
         modified_at=modified,
         created_at=created,
         open_url=open_url,
@@ -3237,12 +3239,14 @@ def _apply_attachment(
 ) -> None:
     filename = str(_pick(attachment, "fileName", "name", "title") or node.filename or node.title)
     mime = str(_pick(attachment, "mimeType", "contentType") or node.mime)
-    size = _as_int(_pick(attachment, "size", "fileSize") or node.size_bytes)
+    size = metadata_size(attachment)
     att_id = str(_pick(attachment, "id", "attachmentId") or "")
     node.kind = "file"
     node.filename = filename
     node.mime = mime or node.mime
-    node.size_bytes = size or node.size_bytes
+    if size is not None:
+        node.size_bytes = size
+        node.size_known = True
     node.extension = _extension_of(filename, mime) or node.extension
     if att_id:
         node.download_path = (
@@ -3258,7 +3262,7 @@ def _attachment_child(
 ) -> ContentNode:
     filename = str(_pick(attachment, "fileName", "name", "title") or "File")
     mime = str(_pick(attachment, "mimeType", "contentType") or "")
-    size = _as_int(_pick(attachment, "size", "fileSize"))
+    size = metadata_size(attachment)
     att_id = str(_pick(attachment, "id", "attachmentId") or filename)
     download_path = (
         f"/learn/api/public/v1/courses/{quote(course_id, safe='')}"
@@ -3274,7 +3278,8 @@ def _attachment_child(
         handler=parent.handler,
         mime=mime,
         extension=_extension_of(filename, mime),
-        size_bytes=size,
+        size_bytes=size if size is not None else 0,
+        size_known=size is not None,
         modified_at=parent.modified_at,
         created_at=parent.created_at,
         open_url=resolve_url(base_url, download_path),

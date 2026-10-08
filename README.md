@@ -36,3 +36,5 @@ Run `python tools/test.py` for isolated regressions (Python 3.12 and Node.js), a
 Refresh checks a compact list of course content and reuses saved file details when their revisions match. New or changed items are loaded again; grades, deadlines, and submission status still refresh independently. **Settings → Storage and refresh → Full refresh** rechecks file details immediately. They are also rechecked daily.
 
 Files missing from two complete course checks are removed locally. Inaccessible or failed listings preserve saved files and show a notice in Contents. This detects content no longer visible to your account; it cannot distinguish deletion from changed permissions. See [incremental refresh implementation and tests](INCREMENTAL_REFRESH.md).
+
+Contents also checks missing file sizes without reading file bodies. The first size check for a large account takes extra time; subsequent refreshes reuse those sizes. Hover over a displayed size for the exact byte count. A dash means Blackboard did not provide a verifiable size.

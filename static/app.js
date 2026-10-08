@@ -1889,7 +1889,7 @@ function contentsSearchView(courses, nodes, needle) {
         ${escapeHtml(item.name)} ${ext}
         <span class="path">${escapeHtml(item.path)}</span>
       </span>
-      <span class="muted">${item.node && item.node.kind !== "folder" ? escapeHtml(item.node.size_label) : "—"}</span>
+      <span class="muted" title="${escapeAttr(item.node ? item.node.size_title || "" : "")}">${item.node && item.node.kind !== "folder" ? escapeHtml(item.node.size_label) : "—"}</span>
       <span class="muted">${item.node ? escapeHtml(item.node.date) : "—"}</span>
       ${openBtn}
     </div>`;
@@ -2026,7 +2026,7 @@ function explorerRow(item, parentKey, showMeta, highlighted) {
     : `<label data-select="${escapeAttr(item.node ? item.node.id : "")}"><input type="checkbox" ${selected ? "checked" : ""} ${item.node ? "" : "disabled"} /></label>`;
   const icon = item.isFolder ? folderSvg(false) : fileSvg(item.node);
   const meta = showMeta
-    ? `<span class="muted">${item.isFolder ? "—" : escapeHtml(item.node ? item.node.size_label : "—")}</span>
+    ? `<span class="muted" title="${escapeAttr(item.node ? item.node.size_title || "" : "")}">${item.isFolder ? "—" : escapeHtml(item.node ? item.node.size_label : "—")}</span>
        <span class="muted">${item.node ? escapeHtml(item.node.date) : "—"}</span>`
     : "";
   const openBtn = item.node && !item.isFolder
@@ -2064,7 +2064,7 @@ function fileRow(node, depth) {
     <label data-select="${escapeAttr(node.id)}"><input type="checkbox" ${selected ? "checked" : ""} /></label>
     ${fileSvg(node)}
     <span class="name">${escapeHtml(node.name)}</span>
-    <span class="muted">${escapeHtml(node.size_label)}</span>
+    <span class="muted" title="${escapeAttr(node.size_title || "")}">${escapeHtml(node.size_label)}</span>
     <span class="muted">${escapeHtml(node.date)}</span>
     <button class="text-btn" data-open="${escapeAttr(node.url)}">${openSvg()}</button>
   </div>`;

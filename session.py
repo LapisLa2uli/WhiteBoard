@@ -81,6 +81,65 @@ _FETCH_JS = r"""
 """
 
 
+_METADATA_JS = r"""
+(() => {
+  const key = __KEY__, urls = __URLS__;
+  window[key] = null;
+  const found = new Array(urls.length);
+  let cursor = 0;
+  async function run() {
+    while (cursor < urls.length) {
+      const index = cursor++, url = urls[index];
+      const controller = new AbortController();
+      (window.__wbControllers ||= new Set()).add(controller);
+      const timer = setTimeout(() => controller.abort(), 20000);
+      let requests = 0;
+      try {
+        if (new URL(url).origin !== location.origin) throw new Error("External file metadata blocked");
+        // The Learn attachment API rejects HEAD with a redirect lacking Location.
+        // Its one-byte range response exposes the full length in Content-Range.
+        const apiDownload = /\/attachments\/[^/]+\/download(?:[?]|$)/.test(url);
+        const methods = apiDownload ? ["GET"] : ["HEAD", "GET"];
+        let row;
+        for (const method of methods) {
+          let res;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            requests++;
+            res = await fetch(url, {method, credentials:"same-origin", mode:"same-origin",
+              cache:"no-store", headers:method === "GET" ? {Range:"bytes=0-0"} : {},
+              signal:controller.signal});
+            // Never read file bodies, including when a server ignores Range.
+            if (res.body) await res.body.cancel();
+            if (![429, 503].includes(res.status) || attempt === 2) break;
+            const retry = Number(res.headers.get("retry-after")) || 2 ** attempt;
+            await new Promise(resolve => setTimeout(resolve, Math.min(retry, 8) * 1000));
+          }
+          const headers = {};
+          for (const h of ["content-type", "content-length", "content-range", "content-encoding", "content-disposition"])
+            headers[h] = res.headers.get(h);
+          row = {url, final_url:res.url, status:res.status, headers};
+          if (method === "GET" || (res.status === 200 && /^[0-9]+$/.test(headers["content-length"] || ""))
+              || [401, 403, 404].includes(res.status)) break;
+        }
+        found[index] = {...row, requests};
+      } catch (error) {
+        found[index] = {url, status:0, requests};
+      } finally {
+        clearTimeout(timer);
+        window.__wbControllers.delete(controller);
+      }
+    }
+  }
+  // Some Learn pages override Array.from with an older Prototype.js helper
+  // that ignores the map callback. Start workers explicitly on those pages.
+  const workers = [];
+  for (let n = 0; n < Math.min(__LIMIT__, urls.length); n++) workers.push(run());
+  Promise.all(workers).then(() => {window[key] = found;});
+  return "started";
+})()
+"""
+
+
 _STREAM_JS = r"""
 (() => {
   const key = __KEY__, url = __URL__;
@@ -407,6 +466,42 @@ class WebSession:
             )
         return parsed
 
+    def get_file_metadata_many(self, paths: list[str]) -> dict[str, int | None]:
+        """Metadata-only, same-origin requests. Return None for unknown lengths."""
+        import secrets
+        from blackboard.file_sizes import size_from_headers
+        origin = urlparse(self.base_url)
+        targets = {}
+        for path in paths:
+            url = resolve_url(self.base_url, path)
+            parsed = urlparse(url)
+            if (parsed.scheme == 'https' and parsed.netloc.lower() == origin.netloc.lower()
+                    and not parsed.username and not parsed.password):
+                targets[path] = url
+        urls = list(dict.fromkeys(targets.values()))
+        found = {}
+        for start in range(0, len(urls), self.concurrency):
+            self._check_cancelled()
+            chunk = urls[start:start + self.concurrency]
+            self._tell(f'Checking file sizes {start + 1}–{start + len(chunk)} of {len(urls)}…',
+                       .73 + .015 * (start + len(chunk)) / max(len(urls), 1))
+            key = 'wbmeta' + secrets.token_hex(4)
+            script = (_METADATA_JS.replace('__KEY__', json.dumps(key))
+                      .replace('__URLS__', json.dumps(chunk)).replace('__LIMIT__', str(self.concurrency)))
+            try:
+                rows = self._run_batch_script(script, key)
+            except SessionError:
+                self._check_cancelled()
+                rows = []
+            self._check_cancelled()
+            self.metrics['batches'] += 1
+            count = sum(int(r.get('requests') or 1) for r in rows)
+            self.metrics['requests'] += count
+            self.metrics['metadata_requests'] = self.metrics.get('metadata_requests', 0) + count
+            for row in rows:
+                found[row.get('url')] = size_from_headers(row, self.base_url)
+        return {path: found.get(url) for path, url in targets.items()}
+
     def get_html_documents(self, urls: list[str]) -> list[dict[str, Any]]:
         targets = [resolve_url(self.base_url, raw) for raw in urls if same_site(self.base_url, resolve_url(self.base_url, raw))]
         documents = []
@@ -510,6 +605,9 @@ class WebSession:
             .replace("__ACCEPT__", json.dumps(accept))
             .replace("__LIMIT__", str(self.concurrency))
         )
+        return self._run_batch_script(script, key)
+
+    def _run_batch_script(self, script: str, key: str) -> list[dict[str, Any]]:
         host.eval_js(script, timeout=20)
         deadline = time.time() + 45
         delay = .03

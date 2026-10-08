@@ -26,3 +26,15 @@ assert.equal(vm.runInContext('ensureContentIndex().trails.size',c),1);
 vm.runInContext(`state.content_nodes=[{id:'folder',name:'Week 2',course_id:'c',kind:'folder'},{id:'file',name:'Notes.pdf',course_id:'c',parent_id:'folder',kind:'file'}]`,c);
 assert.equal(vm.runInContext('folderTrail(state.content_nodes, state.content_nodes[1])',c),'Week 2');
 console.log('UI regression: folder path cache invalidates with content revisions.');
+
+vm.runInContext(`
+sizeNode={id:'size-file',name:'Example.pdf',course_id:'c',kind:'file',extension:'pdf',size_label:'3.2 MB',size_title:'3,328,388 bytes',date:'Today',url:'https://school.example/file'};
+`,c);
+for (const expression of ['fileRow(sizeNode,0)', 'explorerRow(nodeToItem(sizeNode),"course:c",true,false)']) {
+  const html=vm.runInContext(expression,c);
+  assert(html.includes('3.2 MB'));
+  assert(html.includes('title="3,328,388 bytes"'));
+}
+vm.runInContext(`sizeNode.size_label='0 B';sizeNode.size_title='0 bytes'`,c);
+assert(vm.runInContext('fileRow(sizeNode,0)',c).includes('0 B'));
+console.log('UI regression: file sizes and exact-byte tooltips render in Contents.');

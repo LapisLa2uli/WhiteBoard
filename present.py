@@ -128,8 +128,8 @@ def deadline_border(due_at: datetime | None) -> str:
     return deadline_color("later")
 
 
-def format_size(size_bytes: int) -> str:
-    if not size_bytes or size_bytes < 0:
+def format_size(size_bytes: int | None) -> str:
+    if size_bytes is None or size_bytes < 0:
         return "—"
     value = float(size_bytes)
     for unit in ("B", "KB", "MB", "GB"):
@@ -340,7 +340,8 @@ def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", i
                 "kind": node.kind,
                 "extension": node.extension,
                 "size": node.size_bytes,
-                "size_label": "—" if node.kind == "folder" else format_size(node.size_bytes),
+                "size_label": "—" if node.kind == "folder" else format_size(node.size_bytes if node.size_known or node.size_bytes > 0 else None),
+                "size_title": "" if node.kind == "folder" else (f"{node.size_bytes:,} bytes" if node.size_known or node.size_bytes > 0 else "Size unavailable from Blackboard"),
                 "date": format_dt(stamp, with_time=False) if stamp else "—",
                 "date_ts": int(_as_utc(stamp).timestamp()) if stamp else 0,
                 "url": node.open_url,

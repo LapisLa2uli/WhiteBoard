@@ -172,6 +172,8 @@ class ContentNode:
     mime: str = ""
     extension: str = ""
     size_bytes: int = 0
+    size_known: bool = False
+    size_checked_at: datetime | None = None
     modified_at: datetime | None = None
     created_at: datetime | None = None
     open_url: str = ""
@@ -182,6 +184,7 @@ class ContentNode:
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
+        data["size_checked_at"] = _iso(self.size_checked_at)
         data["modified_at"] = _iso(self.modified_at)
         data["created_at"] = _iso(self.created_at)
         return data
@@ -199,6 +202,8 @@ class ContentNode:
             mime=str(data.get("mime", "")),
             extension=str(data.get("extension", "")),
             size_bytes=int(data.get("size_bytes") or 0),
+            size_known=bool(data.get("size_known")) or int(data.get("size_bytes") or 0) > 0,
+            size_checked_at=_parse_stored_dt(data.get("size_checked_at")),
             modified_at=_parse_stored_dt(data.get("modified_at")),
             created_at=_parse_stored_dt(data.get("created_at")),
             open_url=str(data.get("open_url", "")),

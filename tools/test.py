@@ -13,5 +13,6 @@ with tempfile.TemporaryDirectory(prefix='whiteboard-tests-') as directory:
         ['node', '--check', 'static/app.js'],
         ['node', '--check', 'static/tabs.js'],
         ['node', 'tests/ui_state.cjs'],
+        ['node', 'tests/metadata_requests.cjs'],
     ):
         subprocess.run(command, cwd=ROOT, env=environment, check=True)

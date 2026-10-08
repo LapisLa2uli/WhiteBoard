@@ -4,6 +4,17 @@ Summarized major changes for each WhiteBoard release, compared with the version 
 Write for someone using the app, not for developers. Every version needs the three
 headings below. Packaging and GitHub Releases copy this text.
 
+## [Unreleased]
+
+### Added features
+- None in this release.
+
+### Bugfixes
+- Calendar items with a submission page are treated as assignments, even when Blackboard labels them as events or their titles mention tests or reviews. Saved entries are corrected from their known submission links and indexed course content.
+
+### Other changes
+- None in this release.
+
 ## [0.4.0] - 2026-10-05
 
 ### Added features

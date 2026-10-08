@@ -1042,6 +1042,8 @@ def work_launch_url(
         )
     if content_id and course_pk:
         return _launch_url_for_handler(base_url, course_pk, content_id, handler)
+    if _has_submission_page(explicit):
+        return resolve_url(base_url, explicit)
     if raw_course or course_pk:
         return resolve_url(base_url, f"/ultra/courses/{raw_course or course_pk}/outline")
     return resolve_url(base_url, "/ultra")
@@ -1535,6 +1537,9 @@ def _parse_calendar(
             handler=handler,
             title=title,
         )
+        if kind == "other":
+            # Generic content links are not proof of a submission page.
+            url = resolve_url(base_url, _calendar_explicit_url(raw))
         if not item_id:
             item_id = f"{course_id}:{title}:{when}"
 
@@ -2506,6 +2511,7 @@ def apply_content_catalog(snapshot: Snapshot, catalog: list[ContentEntry]) -> No
             or _handler_kind(picked.handler) in {"assignment", "assessment", "discussion"}
         ):
             assignment.blackboard_url = picked.url
+    normalize_calendar_assignments(snapshot, catalog)
 
 
 def parse_html_links(html: str) -> list[tuple[str, str]]:
@@ -3618,6 +3624,7 @@ def _walk_contents(data: Any, parent_id: str = "") -> list[dict[str, Any]]:
 
 
 def _apply_launch_urls(snapshot: Snapshot, base_url: str) -> None:
+    normalize_calendar_assignments(snapshot)
     for assignment in snapshot.assignments:
         assignment.blackboard_url = work_launch_url(
             base_url,
@@ -3629,6 +3636,8 @@ def _apply_launch_urls(snapshot: Snapshot, base_url: str) -> None:
             title=assignment.title,
         )
     for deadline in snapshot.deadlines:
+        if deadline.kind == "other":
+            continue
         match = snapshot.assignment_by_id(deadline.assignment_id or deadline.id)
         if match:
             if not deadline.content_id:
@@ -3687,6 +3696,8 @@ def hide_event_only_calendar_items(snapshot: Snapshot) -> None:
     """Drop calendar rows that never got a submission page."""
 
     def event_only(item) -> bool:
+        if _has_submission_page(item.blackboard_url, item.content_handler):
+            return False
         if _bb_pk(getattr(item, "content_id", "")):
             return False
         url = getattr(item, "blackboard_url", "") or ""
@@ -3699,6 +3710,88 @@ def hide_event_only_calendar_items(snapshot: Snapshot) -> None:
             deadline.kind = "other"
             deadline.assignment_id = ""
     snapshot.assignments = [item for item in snapshot.assignments if not event_only(item)]
+    normalize_calendar_assignments(snapshot)
+
+
+def _has_submission_page(url: str, handler: str = "") -> bool:
+    """Recognize coursework tools, not arbitrary deep links or title keywords."""
+    if _handler_kind(handler) in {"assignment", "assessment", "discussion"}:
+        return True
+    path = urlparse(url or "").path.lower()
+    return (
+        path.startswith("/webapps/assignment/uploadassignment")
+        or path.startswith("/webapps/assessment/take/")
+        or path.startswith("/webapps/calendar/launch/attempt/")
+        or path.startswith("/webapps/discussionboard/do/forum")
+        or (path.startswith("/ultra/courses/") and "/assessment/" in path)
+    )
+
+
+def normalize_calendar_assignments(
+    snapshot: Snapshot, catalog: list[ContentEntry] | None = None
+) -> None:
+    """Submission evidence wins over event labels, including in old snapshots."""
+    if catalog is None:
+        catalog = [
+            ContentEntry(node.course_id, node.id, node.title, node.handler, node.open_url)
+            for node in snapshot.content_nodes
+            if node.kind != "folder" and _has_submission_page(node.open_url, node.handler)
+        ]
+    else:
+        catalog = [entry for entry in catalog
+                   if not entry.is_folder and _has_submission_page(entry.url, entry.handler)]
+    by_id = {(item.course_id, item.id): item for item in snapshot.assignments}
+    by_title: dict[tuple[str, str], list[Assignment]] = {}
+    for item in snapshot.assignments:
+        by_title.setdefault((item.course_id, _norm_title(item.title)), []).append(item)
+    for deadline in snapshot.deadlines:
+        match = by_id.get((deadline.course_id, deadline.assignment_id or deadline.id))
+        if match is None:
+            candidates = by_title.get((deadline.course_id, _norm_title(deadline.title)), [])
+            content_id = deadline.content_id or _ids_from_launch_url(deadline.blackboard_url)[0]
+            compatible = []
+            for candidate in candidates:
+                candidate_id = candidate.content_id or _ids_from_launch_url(candidate.blackboard_url)[0]
+                if content_id and candidate_id and content_id != candidate_id:
+                    continue
+                if deadline.when and candidate.due_at and _as_utc(deadline.when) != _as_utc(candidate.due_at):
+                    continue
+                compatible.append(candidate)
+            if len(compatible) == 1:
+                match = compatible[0]
+        has_page = _has_submission_page(deadline.blackboard_url, deadline.content_handler)
+        if not has_page and match and _has_submission_page(match.blackboard_url, match.content_handler):
+            deadline.blackboard_url = match.blackboard_url
+            deadline.content_id = match.content_id
+            deadline.content_handler = match.content_handler
+            has_page = True
+        if not has_page and catalog:
+            probe = Assignment(deadline.id, deadline.course_id, deadline.title,
+                               due_at=deadline.when, content_id=deadline.content_id,
+                               content_handler=deadline.content_handler)
+            candidates = catalog
+            if deadline.content_id:
+                candidates = [entry for entry in catalog if entry.content_id == deadline.content_id]
+            picked = _match_catalog_entry(probe, candidates)
+            if picked:
+                deadline.blackboard_url = picked.url
+                deadline.content_id = picked.content_id
+                deadline.content_handler = picked.handler
+                has_page = True
+        if not has_page:
+            continue
+        deadline.kind = "assignment"
+        if match is None:
+            match = Assignment(deadline.assignment_id or deadline.id, deadline.course_id,
+                               deadline.title, due_at=deadline.when)
+            snapshot.assignments.append(match)
+            by_id[(match.course_id, match.id)] = match
+            by_title.setdefault((match.course_id, _norm_title(match.title)), []).append(match)
+        deadline.assignment_id = match.id
+        match.blackboard_url = deadline.blackboard_url
+        match.content_id = deadline.content_id or match.content_id
+        match.content_handler = deadline.content_handler or match.content_handler
+        match.status = _resolve_assignment_status(snapshot, match)
 
 
 def _deadline_kind(raw: dict[str, Any]) -> DeadlineKind:
@@ -3707,14 +3800,11 @@ def _deadline_kind(raw: dict[str, Any]) -> DeadlineKind:
     if isinstance(handler_value, dict):
         handler_value = _pick(handler_value, "id", "name")
     handler = str(handler_value or "")
+    if _has_submission_page(_calendar_explicit_url(raw), handler):
+        return "assignment"
     title = str(_pick(raw, "title", "name", "subject") or "")
     type_key = item_type.lower().replace("_", "").replace(" ", "")
     text = f"{item_type} {title}".lower()
-    handler_kind = _handler_kind(handler)
-    if handler_kind == "assessment":
-        return "test"
-    if handler_kind in {"assignment", "discussion"}:
-        return "assignment"
     if re.search(r"\bhw\b", title.lower()) or any(
         word in title.lower() for word in ("homework", "assignment", "essay", "submission")
     ):

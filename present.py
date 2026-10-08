@@ -28,6 +28,7 @@ from blackboard.api import (
     grade_note,
     grade_page_groups,
     local_event_date,
+    normalize_calendar_assignments,
     recent_grades,
     upcoming,
 )
@@ -69,6 +70,7 @@ def load_snapshot() -> Snapshot:
     payload, recovery = read_json(path, {}, validate=validate_snapshot)
     try:
         snapshot = Snapshot.from_dict(payload)
+        normalize_calendar_assignments(snapshot)
     except (TypeError, ValueError, AttributeError):
         snapshot = Snapshot()
         recovery = "Saved data could not be read. Sign in to refresh it."

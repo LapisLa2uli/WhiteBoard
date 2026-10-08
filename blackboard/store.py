@@ -4,7 +4,7 @@ import json
 import threading
 from pathlib import Path
 
-from blackboard.api import fetch_snapshot, index_course_files
+from blackboard.api import fetch_snapshot, index_course_files, normalize_calendar_assignments
 from blackboard.auth import BlackboardSession
 from blackboard.models import Snapshot
 from persistence import read_json, write_json, remove_json, validate_snapshot
@@ -60,6 +60,7 @@ class Store:
             if data is None:
                 return False
             self.snapshot = Snapshot.from_dict(data)
+            normalize_calendar_assignments(self.snapshot)
             self.signed_in = True
             return True
         except (OSError, json.JSONDecodeError, TypeError, ValueError):

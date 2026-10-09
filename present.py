@@ -331,7 +331,7 @@ def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", i
     account = load_account()
     content_nodes = []
     for node in (snapshot.content_nodes if include_content else []):
-        stamp = node.modified_at or node.created_at
+        stamp = node.created_at or node.modified_at
         content_nodes.append(
             {
                 "id": node.id,

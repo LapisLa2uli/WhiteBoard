@@ -382,3 +382,17 @@ summary { cursor:pointer; padding:8px 0; font-weight:600; }
 
 .file-icon.type-assignment { color: #7c3aed; }
 .content-type-label { display:block; font-size:11px; color:var(--muted); font-weight:400; }
+
+.contents-search-line { display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap; margin:12px 0; }
+.contents-search-box { position:relative; width:min(420px,100%); }
+.contents-search-box .search { width:100%; margin:0; padding-right:38px; box-sizing:border-box; }
+.search-clear { position:absolute; right:5px; top:50%; transform:translateY(-50%); border:0; background:transparent; color:var(--muted); font-size:23px; width:30px; height:30px; border-radius:5px; cursor:pointer; }
+.search-clear:hover { background:#e2e8f0; color:var(--text); }
+#contents-search-controls { display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap; }
+.search-course-filter { border:1px solid var(--border); border-radius:8px; padding:8px; min-width:190px; max-width:340px; }
+.search-course-filter summary { cursor:pointer; }
+.search-course-filter[open] summary { margin-bottom:10px; }
+.search-course-filter select { max-width:100%; }
+.search-course-options { max-height:190px; overflow:auto; display:grid; gap:6px; margin:8px 0; }
+.search-course-options label { display:flex; align-items:flex-start; gap:6px; font-size:12px; }
+.file-header [data-sort="course"] { margin-left:8px; }

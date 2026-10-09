@@ -23,6 +23,8 @@ let contentsAnchor = "";
 let contentsSort = { key: "name", dir: 1 };
 let contentsOnlySelected = false;
 let contentsSearchHere = false;
+let contentsCourseMode = "all";
+let contentsCourseIds = new Set();
 let contentsDrag = null;
 let loading = null;
 let colorDialog = null;
@@ -506,6 +508,7 @@ function onClick(event) {
     const key = sortBtn.dataset.sort;
     if (contentsSort.key === key) contentsSort.dir = -contentsSort.dir;
     else contentsSort = { key, dir: 1 };
+    pages["contents-search"] = 0;
     paintContentsRoot();
     return;
   }
@@ -514,8 +517,17 @@ function onClick(event) {
     paintPage();
     return;
   }
+  if (source.closest("#contents-search-clear")) {
+    clearContentsSearch();
+    return;
+  }
+  if (source.closest("#contents-courses-reset")) {
+    contentsCourseMode = "all"; contentsCourseIds.clear(); pages["contents-search"] = 0;
+    paintContentsSearchControls(); paintContentsRoot(); return;
+  }
   if (source.closest("#contents-search-here")) {
     contentsSearchHere = !contentsSearchHere;
+    paintContentsSearchControls();
     pages["contents-search"] = 0;
     paintContentsRoot();
     return;
@@ -625,6 +637,9 @@ function onInput(event) {
   }
   if (event.target.id === "contents-search") {
     query.contents = event.target.value;
+    if (!query.contents.trim()) contentsSearchHere = false;
+    contentsOnlySelected = false;
+    paintContentsSearchControls();
     pages["contents-search"] = 0;
     clearTimeout(searchTimer); searchTimer = setTimeout(paintContentsRoot, 120);
     return;
@@ -642,6 +657,17 @@ function onInput(event) {
 }
 
 function onChange(event) {
+  if (event.target.id === "contents-course-mode") {
+    contentsCourseMode = event.target.value;
+    pages["contents-search"] = 0;
+    paintContentsSearchControls(); paintContentsRoot(); return;
+  }
+  if (event.target.matches("[data-search-course]")) {
+    const id = event.target.dataset.searchCourse;
+    if (event.target.checked) contentsCourseIds.add(id); else contentsCourseIds.delete(id);
+    pages["contents-search"] = 0;
+    paintContentsRoot(); return;
+  }
   if (event.target.id === "motion-effects") { persistSettings({motion_effects:event.target.checked}).catch(showError); return; }
   if (event.target.id === "history-mode") {
     const mode = event.target.value;
@@ -1730,11 +1756,49 @@ function contentsView() {
       <button class="outline-btn ${contentsOnlySelected ? "fill-btn" : ""}" id="contents-view-selected" type="button">View currently selected</button>
       <span class="muted" id="contents-note">${escapeHtml(contentsNote || (contentsSelected.size ? `${contentsSelected.size} selected` : "Select files to download or open. Shift-click or drag to select a section."))}</span>
     </div>
-    <div class="row">
-      <input class="search" id="contents-search" placeholder="Search folder, file name, or extension" value="${escapeAttr(query.contents || "")}" />
-      <button class="outline-btn ${contentsSearchHere ? "fill-btn" : ""}" id="contents-search-here" type="button">Only this folder</button>
+    <div class="contents-search-line">
+      <div class="contents-search-box">
+        <input class="search" id="contents-search" aria-label="Search course contents" placeholder="Search folder, file name, or extension" value="${escapeAttr(query.contents || "")}" />
+        <button class="search-clear" id="contents-search-clear" type="button" aria-label="Clear search" title="Clear search" ${query.contents ? "" : "hidden"}>×</button>
+      </div>
+      <div id="contents-search-controls">${contentsSearchControls()}</div>
     </div>
     <div id="contents-root">${contentsBody()}</div>`;
+}
+
+function contentsSearchControls() {
+  if (!query.contents.trim()) return "";
+  const courses = shownCourses();
+  return `<button class="outline-btn ${contentsSearchHere ? "fill-btn" : ""}" id="contents-search-here" type="button" aria-pressed="${contentsSearchHere}">Only this folder</button>
+    <details class="search-course-filter" ${contentsCourseMode !== "all" ? "open" : ""}><summary>Course filter</summary>
+      <label for="contents-course-mode">Search courses</label>
+      <select id="contents-course-mode">
+        ${[["all","All courses"],["include","Only selected courses"],["exclude","Exclude selected courses"]].map(([value,label]) => `<option value="${value}" ${contentsCourseMode === value ? "selected" : ""}>${label}</option>`).join("")}
+      </select>
+      ${contentsCourseMode !== "all" ? `<div class="search-course-options">${courses.map(course => `<label><input type="checkbox" data-search-course="${escapeAttr(course.id)}" ${contentsCourseIds.has(course.id) ? "checked" : ""}/> ${escapeHtml(course.name)}</label>`).join("")}</div>` : ""}
+      ${contentsCourseMode === "include" && !courses.some(course => contentsCourseIds.has(course.id)) ? '<p class="muted">Select at least one course to show results.</p>' : ""}
+      ${contentsCourseMode !== "all" ? '<button class="text-btn" id="contents-courses-reset">Reset course filter</button>' : ""}
+    </details>`;
+}
+
+function paintContentsSearchControls() {
+  const controls = document.getElementById("contents-search-controls");
+  if (controls) controls.innerHTML = contentsSearchControls();
+  const clear = document.getElementById("contents-search-clear");
+  if (clear) clear.hidden = !query.contents;
+}
+
+function clearContentsSearch() {
+  clearTimeout(searchTimer);
+  query.contents = ""; contentsSearchHere = false; pages["contents-search"] = 0;
+  const input = document.getElementById("contents-search");
+  if (input) { input.value = ""; input.focus(); }
+  paintContentsSearchControls(); paintContentsRoot();
+}
+
+function searchCourseAllowed(id) {
+  return contentsCourseMode === "include" ? contentsCourseIds.has(id)
+    : contentsCourseMode === "exclude" ? !contentsCourseIds.has(id) : true;
 }
 
 function ensureContentIndex() {
@@ -1839,12 +1903,16 @@ function folderTrail(nodes, node) {
 }
 
 function contentsSearchView(courses, nodes, needle) {
+  courses = courses.filter(course => searchCourseAllowed(course.id));
+  nodes = nodes.filter(node => searchCourseAllowed(node.course_id));
   const scoped = currentFolderNodes(nodes);
   const courseHits = contentsSearchHere ? [] : courses
     .filter((course) => course.name.toLowerCase().includes(needle.toLowerCase()))
     .map((course) => ({
       key: `course:${course.id}`,
       name: course.name,
+      course: course.name,
+      course_id: course.id,
       kind: "folder",
       path: "Courses",
       node: null,
@@ -1856,13 +1924,15 @@ function contentsSearchView(courses, nodes, needle) {
     return {
       key: node.id,
       name: node.name,
+      course: course ? course.name : "",
+      course_id: node.course_id,
       kind: node.kind === "folder" ? "folder" : node.kind === "assignment" ? "assignment" : (node.extension || node.kind || "file"),
       path: where || "Courses",
       node,
     };
   });
   const items = sortSearchHits(courseHits.concat(fileHits));
-  if (!items.length) return `<p class="empty">No folders or files match that search.</p>`;
+  if (!items.length) return `<p class="empty">No contents match this search and course filter.</p>`;
   const key = "contents-search";
   const size = pageSize;
   const page = Math.min(pages[key] || 0, Math.max(0, Math.ceil(items.length / size) - 1));
@@ -1894,7 +1964,7 @@ function contentsSearchView(courses, nodes, needle) {
       ${openBtn}
     </div>`;
   }).join("");
-  return `${fileHeader()}${rows}${pager(key, items.length, page, size)}`;
+  return `${fileHeader(true)}${rows}${pager(key, items.length, page, size)}`;
 }
 
 function revealContent(key) {
@@ -2070,13 +2140,13 @@ function fileRow(node, depth) {
   </div>`;
 }
 
-function fileHeader() {
+function fileHeader(search = false) {
   const mark = (key, label) => {
     const active = contentsSort.key === key;
     const arrow = active ? (contentsSort.dir > 0 ? " ↑" : " ↓") : "";
-    return `<button type="button" data-sort="${key}">${label}${arrow}</button>`;
+    return `<button type="button" data-sort="${key}" aria-label="Sort by ${label}${active ? (contentsSort.dir > 0 ? ", ascending" : ", descending") : ""}">${label}${arrow}</button>`;
   };
-  return `<div class="file-header"><span></span><span></span>${mark("type", "Type")}${mark("name", "Name")}<span>Size</span>${mark("date", "Date uploaded")}<span></span></div>`;
+  return `<div class="file-header"><span></span><span></span>${mark("type", "Type")}<span>${mark("name", "Name")}${search ? mark("course", "Course") : ""}</span><span>Size</span>${mark("date", "Date uploaded")}<span></span></div>`;
 }
 
 function breadcrumb(courses, nodes) {
@@ -2150,9 +2220,11 @@ function sortSearchHits(list) {
   const dir = contentsSort.dir || 1;
   return list.slice().sort((a, b) => {
     const folder = (a.kind === "folder" ? 0 : 1) - (b.kind === "folder" ? 0 : 1);
-    if (folder) return folder;
+    if (folder && !["course", "date"].includes(contentsSort.key)) return folder;
     let cmp = 0;
-    if (contentsSort.key === "type") {
+    if (contentsSort.key === "course") {
+      cmp = (a.course || "").localeCompare(b.course || "");
+    } else if (contentsSort.key === "type") {
       cmp = String(a.kind || "").localeCompare(String(b.kind || ""));
     } else if (contentsSort.key === "date") {
       cmp = ((a.node && a.node.date_ts) || 0) - ((b.node && b.node.date_ts) || 0);
@@ -2831,6 +2903,7 @@ async function finishSignOut(keep) {
     await api("/api/logout", { keep_offline: keep });
     manualMarks.clear(); contentsSelected.clear(); selectedAssignments.clear();
     query = {assignments:"", grades:"", courses:"", contents:""}; pages = {};
+    contentsCourseMode = "all"; contentsCourseIds.clear(); contentsSearchHere = false;
     await loadState(); go("/login"); render();
   } catch (error) { showError(error); }
 }

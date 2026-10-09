@@ -198,6 +198,7 @@ def fetch_snapshot(
     )
 
     _classify_calendar_early(session, snapshot, previous)
+    hide_event_only_calendar_items(snapshot)
     if on_stage:
         on_stage(snapshot, "deadlines")
 

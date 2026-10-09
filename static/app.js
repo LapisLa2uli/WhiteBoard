@@ -1582,7 +1582,7 @@ function calendarBody() {
 function visibleEvents(items) {
   return items.filter((item) => {
     if (!keptByHistory(item)) return false;
-    if (hideEvents && item.kind === "other") return false;
+    if (hideEvents && item.kind === "other" && !item.classification_pending) return false;
     if (!item.course_id) return true;
     return inActiveFilter(item.course_id);
   });
@@ -1681,7 +1681,7 @@ function eventChip(item, showTime) {
   const dest = calendarDest(item);
   const fill = item.kind === "other" ? "var(--event-bg)" : (item.finished ? "#e2e8f0" : item.fill);
   const ink = item.kind === "other" ? "var(--event)" : (item.finished ? "var(--muted)" : item.ink || "var(--text)");
-  const label = showTime && item.time ? `${item.time} ${item.title}` : item.title;
+  const label = (showTime && item.time ? `${item.time} ${item.title}` : item.title) + (item.classification_pending ? " · Checking type" : "");
   return `<button class="event-chip" style="background:${fill};color:${ink}" data-go="${dest}">${escapeHtml(label)}</button>`;
 }
 
@@ -2388,7 +2388,7 @@ function assignCard(item, withActions) {
   const dest = item.assignment_id || item.id;
   const submitted = item.status === "submitted" || !!item.finished;
   const extra = [item.kind === "other" ? "event" : "", submitted || item.finished ? "dimmed" : ""].filter(Boolean).join(" ");
-  const kind = item.manual ? "Done locally" : submitted ? "Submitted on Blackboard" : item.kind || item.status || "";
+  const kind = item.classification_pending ? "Checking type" : item.manual ? "Done locally" : submitted ? "Submitted on Blackboard" : item.kind || item.status || "";
   const background = submitted ? "#e2e8f0" : (item.kind === "other" ? "" : item.fill);
   const check = withActions && selectMode
     ? `<input class="assign-check" type="checkbox" data-assign-select="${escapeAttr(item.id)}" ${selectedAssignments.has(item.id) ? "checked" : ""} />`
@@ -2399,7 +2399,7 @@ function assignCard(item, withActions) {
   let actions = "";
   if (withActions && route === "/ignored") {
     actions = `${open}${actionButton(`data-assign-restore="${escapeAttr(item.id)}"`, "Restore", "restore")}`;
-  } else if (withActions && item.kind !== "other") {
+  } else if (withActions && item.kind !== "other" && !item.classification_pending) {
     const mark = submitted
       ? (item.manual ? actionButton(`data-assign-undo="${escapeAttr(item.id)}"`, "Undo", "undo") : "")
       : actionButton(`data-assign-mark="${escapeAttr(item.id)}"`, "Mark done in WhiteBoard", "submitted", "mark-btn");

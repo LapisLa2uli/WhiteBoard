@@ -206,6 +206,7 @@ def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", i
             "all_day": all_day,
             "time": "" if (not local or all_day) else local.strftime("%H:%M"),
             "kind": item.kind,
+            "classification_pending": item.classification_pending,
             "countdown": format_countdown(item.when),
             "border": deadline_border(item.when),
             "fill": subject_fill(item.course_id),

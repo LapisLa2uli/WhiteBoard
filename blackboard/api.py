@@ -197,6 +197,7 @@ def fetch_snapshot(
         0.20,
     )
 
+    _classify_calendar_early(session, snapshot, previous)
     if on_stage:
         on_stage(snapshot, "deadlines")
 
@@ -2022,6 +2023,45 @@ def _merge_deadlines_from_assignments(snapshot: Snapshot) -> None:
             deadline.content_handler = match.content_handler
 
 
+def _classify_calendar_early(session, snapshot, previous=None):
+    """Resolve submission metadata before publishing the first dashboard stage.
+
+    Cached evidence supplies known assignment links immediately. For unresolved
+    course entries, fetch only titles/handlers/links, never attachments or sizes.
+    """
+    normalize_calendar_assignments(snapshot)
+    cache = previous.content_cache if previous else {}
+    if (cache.get("origin") == session.base_url.rstrip("/").lower()
+            and snapshot.user_id and cache.get("user_id") == snapshot.user_id):
+        entries = []
+        for course in snapshot.courses:
+            for value in cache.get("courses", {}).get(course.id, {}).get("entries", []):
+                row = dict(value)
+                row["due_at"] = parse_dt(row.get("due_at"))
+                entries.append(ContentEntry(**row))
+        normalize_calendar_assignments(snapshot, entries)
+    courses = {c.id for c in snapshot.courses}
+    pending = [d for d in snapshot.deadlines if d.course_id in courses
+               and not _has_submission_page(d.blackboard_url, d.content_handler)]
+    for deadline in pending:
+        deadline.classification_pending = True
+    if not pending or not hasattr(session, "get_json_many"):
+        return
+    session._tell("Checking calendar assignment links…", .19)
+    from blackboard.incremental import _inventory, _check
+    ids = sorted({d.course_id for d in pending})
+    inventory = _inventory(session, ids, dict.fromkeys(ids, True),
+                           fields="id,parentId,title,hasChildren,contentHandler,links")
+    _check(session)
+    entries = [_entry_from_content_item(item, cid, session.base_url)
+               for cid, scope in inventory.items() for item in scope['items']]
+    normalize_calendar_assignments(snapshot, entries)
+    for deadline in pending:
+        if inventory[deadline.course_id]['complete']:
+            deadline.classification_pending = False
+    snapshot.completeness['calendar_types'] = not any(d.classification_pending for d in snapshot.deadlines)
+
+
 def _enrich_assignment_links(
     session: BlackboardSession,
     snapshot: Snapshot,
@@ -3819,6 +3859,7 @@ def normalize_calendar_assignments(
         if not has_page:
             continue
         deadline.kind = "assignment"
+        deadline.classification_pending = False
         if match is None:
             match = Assignment(deadline.assignment_id or deadline.id, deadline.course_id,
                                deadline.title, due_at=deadline.when)

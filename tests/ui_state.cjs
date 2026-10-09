@@ -45,3 +45,8 @@ assert(vm.runInContext('fileRow(sizeNode,0)',c).includes('content-type-label'));
 vm.runInContext(`state.content_nodes=[sizeNode];contentsSelected=new Set([sizeNode.id]);contentsFolders.clear();`,c);
 assert.equal(vm.runInContext('hasDownloadSelection()',c),false);
 console.log('UI regression: assignment links have distinct icons and cannot download as files.');
+
+vm.runInContext(`pendingEvent={id:'pending',title:'Review',kind:'other',classification_pending:true,course_id:'c',fill:'#fff',ink:'#000'};`,c);
+assert(vm.runInContext('eventChip(pendingEvent,false)',c).includes('Checking type'));
+assert(vm.runInContext('assignCard(pendingEvent,false)',c).includes('Checking type'));
+console.log('UI regression: unresolved calendar classification is disclosed during loading.');

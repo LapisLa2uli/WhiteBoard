@@ -134,3 +134,39 @@ class CalendarClassificationTests(unittest.TestCase):
                     store = storage.Store()
                     self.assertTrue(store.load_cache())
                     self.assertEqual(store.snapshot.deadlines[0].kind, 'assignment')
+
+    def test_early_classification_uses_metadata_before_files(self):
+        from test_incremental import Session, item
+        session=Session([item(2)])
+        session.items[0].update(title='Final Exam Review',contentHandler={'id':'resource/x-bb-assignment'})
+        snapshot=Snapshot(user_id='_5_1',courses=[Course(COURSE,'Course')],
+                          deadlines=[Deadline('event','Final Exam Review',DUE,COURSE)])
+        api._classify_calendar_early(session,snapshot)
+        self.assertEqual(snapshot.deadlines[0].kind,'assignment')
+        self.assertFalse(snapshot.deadlines[0].classification_pending)
+        self.assertEqual(len(snapshot.assignments),1)
+        self.assertFalse(any('/attachments' in p for p in session.calls))
+        self.assertTrue(all('fields=' in p for p in session.calls))
+
+    def test_early_failed_listing_marks_type_pending_and_keeps_it_visible(self):
+        from test_incremental import Session
+        session=Session([]);session.fail=True
+        snapshot=Snapshot(courses=[Course(COURSE,'Course')],deadlines=[Deadline('e','Review',DUE,COURSE)])
+        api._classify_calendar_early(session,snapshot)
+        self.assertTrue(snapshot.deadlines[0].classification_pending)
+        restored=Snapshot.from_dict(snapshot.to_dict())
+        self.assertTrue(restored.deadlines[0].classification_pending)
+        api.normalize_calendar_assignments(restored,[api.ContentEntry(COURSE,'_2_1','Review',url=PAGE)])
+        self.assertFalse(restored.deadlines[0].classification_pending)
+
+    def test_early_cached_submission_evidence_is_account_bound(self):
+        from test_incremental import Session
+        session=Session([])
+        def snap(): return Snapshot(user_id='me',courses=[Course(COURSE,'Course')],deadlines=[Deadline('e','Review',DUE,COURSE)])
+        old=Snapshot(content_cache={'origin':session.base_url,'user_id':'me','courses':{COURSE:{'entries':[dict(course_id=COURSE,content_id='_2_1',title='Review',handler='resource/x-bb-assignment',url=PAGE)]}}})
+        target=snap();api._classify_calendar_early(session,target,old)
+        self.assertEqual(target.deadlines[0].kind,'assignment')
+        self.assertEqual(session.calls,[])
+        old.content_cache['user_id']='someone-else'
+        target=snap();api._classify_calendar_early(session,target,old)
+        self.assertEqual(target.deadlines[0].kind,'other')

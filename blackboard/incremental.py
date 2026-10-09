@@ -98,7 +98,7 @@ def _listings(session, requests):
     return result
 
 
-def _inventory(session, course_ids, compact):
+def _inventory(session, course_ids, compact, *, fields=FIELDS):
     """Prefer recursive listing; traverse accessible folders on fallback."""
     from blackboard.api import _is_folder_item
 
@@ -111,7 +111,7 @@ def _inventory(session, course_ids, compact):
         if recursive:
             p += '&recursive=true'
         if compact[cid]:
-            p += '&fields=' + FIELDS
+            p += '&fields=' + fields
         return p
 
     roots = _listings(session, {c: path(c, recursive=True) for c in course_ids})

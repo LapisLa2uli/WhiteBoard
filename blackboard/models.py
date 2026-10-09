@@ -115,6 +115,7 @@ class Deadline:
     blackboard_url: str = ""
     content_id: str = ""
     content_handler: str = ""
+    classification_pending: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -133,6 +134,7 @@ class Deadline:
             blackboard_url=str(data.get("blackboard_url", "")),
             content_id=str(data.get("content_id", "")),
             content_handler=str(data.get("content_handler", "")),
+            classification_pending=bool(data.get("classification_pending")),
         )
 
 

@@ -7,6 +7,7 @@ headings below. Packaging and GitHub Releases copy this text.
 ## [Unreleased]
 
 ### Added features
+- Course colors and deadline color codes now have a gradient picker with a live preview, hue/saturation/brightness sliders, and synchronized HEX input.
 - Contents search has an inline clear button, course include/exclude filters, and sorting by course or upload date. **Only this folder** appears while a search is active.
 - Refresh reuses unchanged course files and checks for added, edited, moved, and removed content. Settings now includes **Full refresh**, and file details are rechecked daily.
 

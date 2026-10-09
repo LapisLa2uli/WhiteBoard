@@ -1,0 +1,30 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const elements=new Map();
+function element(id){if(!elements.has(id))elements.set(id,{value:'',style:{setProperty(k,v){this[k]=v;}},setAttribute(k,v){this[k]=v;},classList:{toggle(){}},focus(){},getBoundingClientRect(){return {left:10,top:20,width:200,height:100};}});return elements.get(id);}
+const c=vm.createContext({window:{},document:{getElementById:element,querySelectorAll:()=>[]},location:{hash:''},console,setTimeout,clearTimeout,Date});
+vm.runInContext(fs.readFileSync('static/app.js','utf8').replace(/boot\(\);/,''),c);
+for(const hex of ['#000000','#ffffff','#ff0000','#00ff00','#0000ff','#123456','#2563eb'])assert.equal(vm.runInContext(`hsvToHex(hexToHsv('${hex}'))`,c),hex);
+assert.equal(vm.runInContext("normalizePickerHex('  ABCDEF ')",c),'#abcdef');
+assert.equal(vm.runInContext("normalizePickerHex('red')",c),'');
+vm.runInContext(`colorDialog={title:'Course color',current:'#ff0000',hsv:hexToHsv('#ff0000'),onPick:()=>{}};syncColorPicker();`,c);
+assert.equal(element('color-hex').value,'#ff0000');
+vm.runInContext(`colorDialog.hsv.h=120;syncColorPicker();`,c);
+assert.equal(element('color-hex').value,'#00ff00');
+vm.runInContext(`pickGradientPoint({clientX:110,clientY:70},document.getElementById('color-plane'));`,c);
+assert.equal(vm.runInContext('colorDialog.hsv.s',c),50);
+assert.equal(vm.runInContext('colorDialog.hsv.v',c),50);
+element('color-hex').value='invalid';
+vm.runInContext(`onInput({target:document.getElementById('color-hex')});`,c);
+// Stub element identity for the actual input handler.
+element('color-hex').id='color-hex';
+vm.runInContext(`onInput({target:document.getElementById('color-hex')});`,c);
+assert.equal(element('color-apply').disabled,true);
+element('color-hex').value='abcdef';
+vm.runInContext(`onInput({target:document.getElementById('color-hex')});`,c);
+assert.equal(element('color-apply').disabled,false);
+assert.equal(vm.runInContext('colorDialog.current',c),'#abcdef');
+vm.runInContext(`onKeyDown({target:{id:'color-plane'},key:'ArrowRight',shiftKey:true,preventDefault(){}});`,c);
+assert.equal(element('color-hex')['aria-invalid'],'false');
+const html=vm.runInContext('colorModal()',c);
+assert(html.includes('id="color-plane"')&&html.includes('id="color-hue"')&&html.includes('id="color-hex"'));
+console.log('Color picker: HEX/HSV roundtrip, synchronized gradient, validation and keyboard input passed.');

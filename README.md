@@ -40,3 +40,5 @@ Files missing from two complete course checks are removed locally. Inaccessible 
 Contents also checks missing file sizes without reading file bodies. The first size check for a large account takes extra time; subsequent refreshes reuse those sizes. Hover over a displayed size for the exact byte count. A dash means Blackboard did not provide a verifiable size.
 
 In Contents, type a search to reveal **Only this folder** and **Course filter**. Choose **Only selected courses** to whitelist results, or **Exclude selected courses** to hide courses from results. Click **Course** or **Date uploaded** in the results header to switch sort direction; × clears the search and keeps your browsing location. Upload dates use the creation timestamp when available.
+
+Use **Settings → Colors → Change** for the gradient picker. Choose a hue, click or drag on the gradient, or enter a six-digit HEX code. The preview and sliders stay synchronized. Arrow keys adjust the gradient; Shift uses larger steps. Changes are saved only when you choose **Use this color**.

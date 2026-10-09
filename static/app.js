@@ -28,6 +28,7 @@ let contentsCourseIds = new Set();
 let contentsDrag = null;
 let loading = null;
 let colorDialog = null;
+let colorDrag = null;
 let jobError = "";
 const SWATCHES = [
   "#9f1239", "#ea580c", "#eab308", "#22c55e", "#2563eb", "#1d4ed8",
@@ -176,6 +177,10 @@ function bindOnce() {
   document.addEventListener("scroll", onScrollRipple, true);
   document.addEventListener("click", onClick);
   document.addEventListener("pointerdown", onContentsPointerDown);
+  document.addEventListener("pointerdown", onColorPointerDown);
+  document.addEventListener("pointermove", onColorPointerMove);
+  document.addEventListener("pointerup", () => { colorDrag = null; });
+  document.addEventListener("pointercancel", () => { colorDrag = null; });
   document.addEventListener("pointermove", onContentsPointerMove);
   document.addEventListener("pointerup", onContentsPointerUp);
   document.addEventListener("input", onInput);
@@ -607,9 +612,7 @@ function onClick(event) {
   }
   const swatch = source.closest("[data-swatch]");
   if (swatch && colorDialog) {
-    colorDialog.current = swatch.dataset.swatch;
-    const field = document.getElementById("color-hex");
-    if (field) field.value = colorDialog.current;
+    setPickerHex(swatch.dataset.swatch);
     return;
   }
   if ((source.closest("[id]") || source).id === "color-cancel") {
@@ -629,6 +632,19 @@ function onClick(event) {
 }
 
 function onInput(event) {
+  if (colorDialog && event.target.id === "color-hex") {
+    const value = normalizePickerHex(event.target.value);
+    event.target.setAttribute("aria-invalid", String(!value));
+    document.getElementById("color-apply").disabled = !value;
+    document.getElementById("color-error").textContent = value ? "" : "Enter six hexadecimal digits, for example #2563EB.";
+    if (value) setPickerHex(value, false);
+    return;
+  }
+  if (colorDialog && ["color-hue", "color-saturation", "color-value"].includes(event.target.id)) {
+    const key = {"color-hue":"h", "color-saturation":"s", "color-value":"v"}[event.target.id];
+    colorDialog.hsv[key] = Number(event.target.value);
+    syncColorPicker(); return;
+  }
   if (event.target.id === "course-q") {
     query.courses = event.target.value;
     paintCourses();
@@ -2752,8 +2768,75 @@ function openSvg() {
   return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 5h5v5M19 5l-8 8"/><path d="M11 6H6a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-5"/></svg>`;
 }
 
+function normalizePickerHex(value) {
+  const text = String(value || "").trim();
+  return /^#?[0-9a-f]{6}$/i.test(text) ? ("#" + text.replace(/^#/, "")).toLowerCase() : "";
+}
+
+function hexToHsv(hex) {
+  const [r,g,b] = [1,3,5].map(index => parseInt(hex.slice(index,index+2),16)/255);
+  const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
+  let h = d === 0 ? 0 : max === r ? ((g-b)/d)%6 : max === g ? (b-r)/d+2 : (r-g)/d+4;
+  return {h:(h*60+360)%360, s:max ? d/max*100 : 0, v:max*100};
+}
+
+function hsvToHex({h,s,v}) {
+  s/=100; v/=100;
+  const channel = n => {
+    const k=(n+h/60)%6;
+    return Math.round(255*(v-v*s*Math.max(0,Math.min(k,4-k,1)))).toString(16).padStart(2,"0");
+  };
+  return "#"+channel(5)+channel(3)+channel(1);
+}
+
+function setPickerHex(hex, updateInput = true) {
+  if (!colorDialog) return;
+  colorDialog.current = normalizePickerHex(hex);
+  colorDialog.hsv = hexToHsv(colorDialog.current);
+  syncColorPicker(updateInput);
+}
+
+function syncColorPicker(updateInput = true) {
+  const {h,s,v} = colorDialog.hsv;
+  const hex = colorDialog.current = hsvToHex(colorDialog.hsv);
+  const plane = document.getElementById("color-plane");
+  plane.style.setProperty("--picker-hue", h);
+  plane.setAttribute("aria-label", `Saturation ${Math.round(s)}%, brightness ${Math.round(v)}%`);
+  const cursor = document.getElementById("color-cursor");
+  cursor.style.left = `${s}%`; cursor.style.top = `${100-v}%`;
+  for (const [id,value] of [["color-hue",h],["color-saturation",s],["color-value",v]]) document.getElementById(id).value = value;
+  const field = document.getElementById("color-hex");
+  if (updateInput) field.value = hex;
+  field.setAttribute("aria-invalid", "false");
+  document.getElementById("color-preview").style.background = hex;
+  document.getElementById("color-value-label").textContent = hex.toUpperCase();
+  document.getElementById("color-error").textContent = "";
+  document.getElementById("color-apply").disabled = false;
+  document.querySelectorAll("[data-swatch]").forEach(button => button.classList.toggle("current", button.dataset.swatch === hex));
+}
+
+function pickGradientPoint(event, plane) {
+  const rect = plane.getBoundingClientRect();
+  colorDialog.hsv.s = Math.max(0,Math.min(100,(event.clientX-rect.left)/rect.width*100));
+  colorDialog.hsv.v = 100-Math.max(0,Math.min(100,(event.clientY-rect.top)/rect.height*100));
+  syncColorPicker();
+}
+
+function onColorPointerDown(event) {
+  if (!colorDialog || event.button !== 0) return;
+  const plane = event.target.closest && event.target.closest("#color-plane");
+  if (!plane) return;
+  event.preventDefault(); plane.focus(); plane.setPointerCapture(event.pointerId);
+  colorDrag = {plane, pointerId:event.pointerId}; pickGradientPoint(event,plane);
+}
+
+function onColorPointerMove(event) {
+  if (colorDialog && colorDrag && event.pointerId === colorDrag.pointerId) pickGradientPoint(event,colorDrag.plane);
+}
+
 function openColorDialog(title, current, onPick) {
-  colorDialog = { title, current: current || "#2563eb", onPick };
+  current = normalizePickerHex(current) || "#2563eb";
+  colorDialog = { title, current, hsv: hexToHsv(current), onPick };
   paintPage();
 }
 
@@ -2762,12 +2845,20 @@ function colorModal() {
   const picks = SWATCHES.map((color) =>
     `<button class="swatch-pick ${color === current ? "current" : ""}" data-swatch="${color}" style="background:${color}" title="${color}"></button>`
   ).join("");
-  return `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true">
-    <h3>${escapeHtml(colorDialog.title)}</h3>
-    <p class="muted">Choose a swatch, or type a hex color.</p>
+  return `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="color-title">
+    <h3 id="color-title">${escapeHtml(colorDialog.title)}</h3>
+    <p class="muted" id="color-help">Choose on the gradient, adjust the sliders, or enter a HEX color. Arrow keys adjust the gradient; Shift makes larger steps.</p>
+    <button type="button" id="color-plane" class="color-plane" aria-label="Saturation and brightness" aria-describedby="color-help" style="--picker-hue:${colorDialog.hsv.h}"><span id="color-cursor" style="left:${colorDialog.hsv.s}%;top:${100-colorDialog.hsv.v}%"></span></button>
+    <div class="color-sliders">
+      <label for="color-hue">Hue</label><input id="color-hue" class="hue-slider" type="range" min="0" max="360" value="${colorDialog.hsv.h}"/>
+      <label for="color-saturation">Saturation</label><input id="color-saturation" type="range" min="0" max="100" value="${colorDialog.hsv.s}"/>
+      <label for="color-value">Brightness</label><input id="color-value" type="range" min="0" max="100" value="${colorDialog.hsv.v}"/>
+    </div>
+    <div class="row"><span id="color-preview" class="color-preview" style="background:${current}"></span><output id="color-value-label">${current.toUpperCase()}</output></div>
     <div class="row">${picks}</div>
-    <label>Hex color</label>
-    <input id="color-hex" type="text" value="${escapeAttr(current)}" />
+    <label for="color-hex">HEX color</label>
+    <input id="color-hex" type="text" value="${escapeAttr(current)}" maxlength="7" spellcheck="false" aria-describedby="color-error" />
+    <p id="color-error" class="color-error" aria-live="polite"></p>
     <div class="row" style="margin-top:12px">
       <button class="text-btn" id="color-cancel">Cancel</button>
       <button class="fill-btn" id="color-apply">Use this color</button>
@@ -2962,6 +3053,20 @@ function enhanceAccessibility() {
   }
 }
 function onKeyDown(event) {
+  if (colorDialog && event.target.id === "color-plane" && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)) {
+    event.preventDefault();
+    const step = event.shiftKey ? 10 : 1;
+    if (event.key === "ArrowLeft") colorDialog.hsv.s -= step;
+    if (event.key === "ArrowRight") colorDialog.hsv.s += step;
+    if (event.key === "ArrowDown") colorDialog.hsv.v -= step;
+    if (event.key === "ArrowUp") colorDialog.hsv.v += step;
+    colorDialog.hsv.s = Math.max(0, Math.min(100, colorDialog.hsv.s));
+    colorDialog.hsv.v = Math.max(0, Math.min(100, colorDialog.hsv.v));
+    syncColorPicker(); return;
+  }
+  if (event.target.id === "contents-search" && event.key === "Escape") {
+    event.preventDefault(); clearContentsSearch(); return;
+  }
   const modal=document.querySelector('.modal');
   if (event.key==='Escape' && modal) {
     event.preventDefault(); feedback=null; colorDialog=null; filterDialog=null; logoutDialog=false; render(); return;

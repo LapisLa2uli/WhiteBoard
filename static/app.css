@@ -288,7 +288,7 @@ input[type="password"], input[type="text"], textarea {
 }
 .week-stack.timed { min-height: 280px; }
 .file-header, .file-row {
-  display: grid; grid-template-columns: 32px 32px 24px 1fr 88px 150px 36px;
+  display: grid; grid-template-columns: 32px 32px 46px minmax(100px,1fr) 88px 150px 36px;
   align-items: center; gap: 0; padding: 4px 8px;
   border-bottom: 1px solid var(--border); background: white;
 }
@@ -405,3 +405,8 @@ summary { cursor:pointer; padding:8px 0; font-weight:600; }
 .hue-slider::-webkit-slider-thumb { appearance:none; width:18px; height:18px; border:2px solid white; border-radius:50%; background:#334155; box-shadow:0 0 0 1px #334155; }
 .color-preview { display:inline-block; width:38px; height:28px; border:1px solid var(--border); border-radius:6px; }
 .color-error { min-height:1.2em; margin:4px 0; color:#b91c1c; font-size:12px; }
+
+@media (max-width: 720px) {
+  .file-header, .file-row { grid-template-columns:24px 24px 38px minmax(100px,1fr) 65px 100px 28px; }
+  #contents-root { overflow-x:auto; }
+}

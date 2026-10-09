@@ -1725,7 +1725,7 @@ function contentsView() {
       }).join("")}
     </div>
     <div class="row" style="margin-top:8px">
-      <button class="fill-btn" id="contents-download" type="button" ${contentsSelected.size || contentsFolders.size ? "" : "disabled"}>Download</button>
+      <button class="fill-btn" id="contents-download" type="button" ${hasDownloadSelection() ? "" : "disabled"}>Download</button>
       <button class="outline-btn" id="contents-open-selected" type="button" ${contentsSelected.size ? "" : "disabled"}>Open</button>
       <button class="outline-btn ${contentsOnlySelected ? "fill-btn" : ""}" id="contents-view-selected" type="button">View currently selected</button>
       <span class="muted" id="contents-note">${escapeHtml(contentsNote || (contentsSelected.size ? `${contentsSelected.size} selected` : "Select files to download or open. Shift-click or drag to select a section."))}</span>
@@ -1856,7 +1856,7 @@ function contentsSearchView(courses, nodes, needle) {
     return {
       key: node.id,
       name: node.name,
-      kind: node.kind === "folder" ? "folder" : (node.extension || "file"),
+      kind: node.kind === "folder" ? "folder" : node.kind === "assignment" ? "assignment" : (node.extension || node.kind || "file"),
       path: where || "Courses",
       node,
     };
@@ -1886,7 +1886,7 @@ function contentsSearchView(courses, nodes, needle) {
     return `<div class="file-row ${selected ? "selected" : ""}" ${item.node ? `data-row-id="${escapeAttr(item.node.id)}"` : ""}>
       <span></span>${check}<span ${reveal}>${icon}</span>
       <span class="name stack ${item.kind === "folder" ? "folder" : ""}" ${reveal}>
-        ${escapeHtml(item.name)} ${ext}
+        ${escapeHtml(item.name)} ${ext}${item.node && item.node.type_label ? `<span class="content-type-label">${escapeHtml(item.node.type_label)}</span>` : ""}
         <span class="path">${escapeHtml(item.path)}</span>
       </span>
       <span class="muted" title="${escapeAttr(item.node ? item.node.size_title || "" : "")}">${item.node && item.node.kind !== "folder" ? escapeHtml(item.node.size_label) : "—"}</span>
@@ -2034,7 +2034,7 @@ function explorerRow(item, parentKey, showMeta, highlighted) {
     : `<span></span>`;
   return `<div class="file-row ${cls}" ${item.node ? `data-row-id="${escapeAttr(item.node.id)}"` : ""}>
     <span></span>${check}<span ${open}>${icon}</span>
-    <span class="name ${item.isFolder ? "folder" : ""}" ${open}>${escapeHtml(item.name)}</span>
+    <span class="name ${item.isFolder ? "folder" : ""}" ${open}>${escapeHtml(item.name)}${item.node && item.node.type_label ? `<span class="content-type-label">${escapeHtml(item.node.type_label)}</span>` : ""}</span>
     ${meta}${openBtn}
   </div>`;
 }
@@ -2063,7 +2063,7 @@ function fileRow(node, depth) {
     <span></span>
     <label data-select="${escapeAttr(node.id)}"><input type="checkbox" ${selected ? "checked" : ""} /></label>
     ${fileSvg(node)}
-    <span class="name">${escapeHtml(node.name)}</span>
+    <span class="name">${escapeHtml(node.name)}${node.type_label ? `<span class="content-type-label">${escapeHtml(node.type_label)}</span>` : ""}</span>
     <span class="muted" title="${escapeAttr(node.size_title || "")}">${escapeHtml(node.size_label)}</span>
     <span class="muted">${escapeHtml(node.date)}</span>
     <button class="text-btn" data-open="${escapeAttr(node.url)}">${openSvg()}</button>
@@ -2127,6 +2127,7 @@ function contentChildren(_nodes, courseId, parentId) {
 }
 
 function fileTypeKey(node) {
+  if (node && node.kind === "assignment") return "assignment";
   if (!node || node.kind === "folder") return "folder";
   return String(node.extension || node.kind || "file").replace(/^\./, "").toLowerCase();
 }
@@ -2178,7 +2179,7 @@ function descendantFiles(folder) {
   const walk = (parentId) => {
     contentChildren(nodes, folder.course_id, parentId).forEach((node) => {
       if (node.kind === "folder") walk(node.id);
-      else found.push(node);
+      else if (node.kind !== "assignment") found.push(node);
     });
   };
   walk(folder.id);
@@ -2225,6 +2226,10 @@ function selectContentsRange(fromId, toId) {
   refreshContentsSelection();
 }
 
+function hasDownloadSelection() {
+  return contentsFolders.size > 0 || ((state && state.content_nodes) || []).some(node => contentsSelected.has(node.id) && node.kind !== "assignment");
+}
+
 function refreshContentsSelection() {
   paintContentsRoot();
   const note = document.getElementById("contents-note");
@@ -2236,7 +2241,7 @@ function refreshContentsSelection() {
   ["contents-download", "contents-open-selected"].forEach((id) => {
     const button = document.getElementById(id);
     if (button) button.disabled = id === "contents-download"
-      ? contentsSelected.size === 0 && contentsFolders.size === 0
+      ? !hasDownloadSelection()
       : contentsSelected.size === 0;
   });
 }
@@ -2646,6 +2651,8 @@ function fileTypeClass(node) {
 }
 
 function fileSvg(node) {
+  if (node && node.kind === "assignment") return `<svg class="file-icon type-assignment" role="img" aria-label="Assignment link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M8 10l2 2 4-4M8 16h8"/></svg>`;
+  if (node && node.kind === "link") return `<svg class="file-icon type-other" role="img" aria-label="Page link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m10 13 4-4M8 15l-2 2a3 3 0 0 1-4-4l4-4a3 3 0 0 1 4 0M14 9l2-2a3 3 0 0 1 4 4l-4 4a3 3 0 0 1-4 0"/></svg>`;
   const type = fileTypeClass(node);
   const common = `class="file-icon ${type}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"`;
   if (type === "type-ppt") {

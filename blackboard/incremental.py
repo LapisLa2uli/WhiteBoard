@@ -13,7 +13,7 @@ from urllib.parse import quote, urlparse
 from blackboard.models import ContentNode
 
 VERSION = 1
-PARSER_VERSION = 2
+PARSER_VERSION = 3
 REVALIDATE_AFTER = timedelta(days=1)
 FIELDS = 'id,parentId,created,modified,hasChildren'
 MAX_ITEMS = 5000

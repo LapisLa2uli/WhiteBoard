@@ -2761,7 +2761,7 @@ def _node_from_content_item(
     handler = _content_handler_id(item)
     kind = _handler_kind(handler) or ("folder" if _is_folder_item(item) else "link")
     if kind in {"assignment", "assessment", "discussion"}:
-        kind = "link"
+        kind = "assignment"
     title = str(_pick(item, "title", "name") or "")
     handler_blob = item.get("contentHandler") if isinstance(item.get("contentHandler"), dict) else {}
     filename = str(
@@ -2798,7 +2798,9 @@ def _node_from_content_item(
             query = urlencode({"course_id": course_id, "content_id": parent_id or content_id, "mode": "reset"})
             open_url = resolve_url(base_url, f"/webapps/blackboard/content/listContent.jsp?{query}#contentListItem:{content_id}")
     extension = _extension_of(filename or title, mime)
-    if _is_folder_item(item) or kind == "folder":
+    if kind == "assignment" or _has_submission_page(open_url, handler):
+        kind = "assignment"
+    elif _is_folder_item(item) or kind == "folder":
         kind = "folder"
     elif kind == "file" or filename or extension:
         kind = "file"
@@ -2810,7 +2812,7 @@ def _node_from_content_item(
         parent_id=parent_id,
         title=title,
         filename=filename,
-        kind=kind if kind in {"folder", "file", "link"} else "link",
+        kind=kind if kind in {"folder", "file", "link", "assignment"} else "link",
         handler=handler,
         mime=mime,
         extension=extension,
@@ -3157,7 +3159,7 @@ def _attachment_candidates(nodes: list[ContentNode]) -> list[ContentNode]:
         handler = (node.handler or "").lower()
         if node.kind == "file" or "file" in handler or "document" in handler:
             primary.append(node)
-        elif node.kind == "link" and not node.filename and not node.extension:
+        elif node.kind in {"link", "assignment"} and not node.filename:
             embedded.append(node)
     return primary + embedded
 
@@ -3220,10 +3222,11 @@ def _apply_fetched_attachments(
         attachments = fetched.get(node.id) or []
         if not attachments:
             continue
-        if len(attachments) == 1 and node.kind != "folder":
+        if len(attachments) == 1 and node.kind not in {"folder", "assignment"}:
             _apply_attachment(node, attachments[0], course_id, base_url)
         else:
-            node.kind = "folder"
+            if node.kind != "assignment":
+                node.kind = "folder"
             for attachment in attachments:
                 extra.append(_attachment_child(node, attachment, course_id, base_url))
     nodes.extend(extra)
@@ -3284,7 +3287,7 @@ def _attachment_child(
     return ContentNode(
         id=f"{parent.id}:{att_id}",
         course_id=course_id,
-        parent_id=parent.id,
+        parent_id=parent.parent_id if parent.kind == "assignment" else parent.id,
         title=filename,
         filename=filename,
         kind="file",

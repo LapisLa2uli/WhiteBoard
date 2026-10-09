@@ -38,3 +38,10 @@ for (const expression of ['fileRow(sizeNode,0)', 'explorerRow(nodeToItem(sizeNod
 vm.runInContext(`sizeNode.size_label='0 B';sizeNode.size_title='0 bytes'`,c);
 assert(vm.runInContext('fileRow(sizeNode,0)',c).includes('0 B'));
 console.log('UI regression: file sizes and exact-byte tooltips render in Contents.');
+
+vm.runInContext(`sizeNode.kind='assignment';sizeNode.type_label='Assignment link';`,c);
+assert(vm.runInContext('fileRow(sizeNode,0)',c).includes('aria-label="Assignment link"'));
+assert(vm.runInContext('fileRow(sizeNode,0)',c).includes('content-type-label'));
+vm.runInContext(`state.content_nodes=[sizeNode];contentsSelected=new Set([sizeNode.id]);contentsFolders.clear();`,c);
+assert.equal(vm.runInContext('hasDownloadSelection()',c),false);
+console.log('UI regression: assignment links have distinct icons and cannot download as files.');

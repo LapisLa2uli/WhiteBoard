@@ -10,6 +10,7 @@ headings below. Packaging and GitHub Releases copy this text.
 - Refresh reuses unchanged course files and checks for added, edited, moved, and removed content. Settings now includes **Full refresh**, and file details are rechecked daily.
 
 ### Bugfixes
+- Coursework in Contents is labeled **Assignment link** with a distinct icon and opens its submission/discussion page. Attached resources remain downloadable separately.
 - Embedded course media and documents are grouped under their source page with usable file names. Content pages and discussions open their proper Blackboard pages instead of broken file links.
 - Contents shows file sizes even when Blackboard omits them from its file list. Sizes are saved for unchanged files, empty files show **0 B**, and hovering over a size shows its exact byte count.
 - Calendar items with a submission page are treated as assignments, even when Blackboard labels them as events or their titles mention tests or reviews. Saved entries are corrected from their known submission links and indexed course content.

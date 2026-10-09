@@ -732,7 +732,7 @@ def _descendant_nodes(folder, nodes: list) -> list:
     for child in children:
         if child.kind == "folder":
             found.extend(_descendant_nodes(child, nodes))
-        else:
+        elif child.kind != "assignment":
             found.append(child)
     return found
 
@@ -831,7 +831,7 @@ def _download_files(body: dict) -> dict:
         covered.update(node.id for node in packed)
     for node_id in wanted:
         node = by_id.get(node_id)
-        if node is None or node.id in seen or node.id in covered:
+        if node is None or node.kind == "assignment" or node.id in seen or node.id in covered:
             continue
         if node.kind == "folder":
             packed = _descendant_nodes(node, nodes)

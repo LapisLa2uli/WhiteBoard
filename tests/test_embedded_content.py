@@ -43,3 +43,22 @@ class EmbeddedContentTests(unittest.TestCase):
         api._apply_fetched_attachments(nodes,{'_2_1':[{'id':'_8_1','fileName':'extra.pdf'}]},'_9_1',BASE)
         self.assertEqual(node.kind,'folder')
         self.assertEqual(nodes[1].parent_id,node.id)
+
+    def test_assignment_keeps_submission_link_and_separate_attachment(self):
+        raw={'id':'_2_1','parentId':'_1_1','title':'Upload essay.docx','contentHandler':{'id':'resource/x-bb-assignment'}}
+        node=api._node_from_content_item(raw,'_9_1',BASE)
+        self.assertEqual(node.kind,'assignment')
+        self.assertIn('/assignment/uploadAssignment',node.open_url)
+        nodes=[node]
+        api._apply_fetched_attachments(nodes,{'_2_1':[{'id':'_3_1','fileName':'rubric.pdf'}]},'_9_1',BASE)
+        self.assertEqual(node.kind,'assignment')
+        self.assertFalse(node.download_path)
+        self.assertEqual(nodes[1].kind,'file')
+        self.assertEqual(nodes[1].parent_id,'_1_1')
+
+    def test_folder_download_skips_assignment_links(self):
+        from server import _descendant_nodes
+        folder=ContentNode('_1_1','_9_1',kind='folder')
+        work=ContentNode('_2_1','_9_1',parent_id=folder.id,kind='assignment')
+        file=ContentNode('_3_1','_9_1',parent_id=folder.id,kind='file')
+        self.assertEqual(_descendant_nodes(folder,[folder,work,file]),[file])

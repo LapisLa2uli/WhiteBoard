@@ -379,3 +379,6 @@ summary { cursor:pointer; padding:8px 0; font-weight:600; }
 .sidebar summary { font-size:12px; color:#cbd5e1; }
 @media(max-width:1050px) { .nav-btn .label { display:none; } .nav-btn { padding:10px; } .nav-btn svg { width:20px;height:20px; } }
 @media(max-width:700px) { .sidebar { width:200px; flex-basis:200px; } .content { padding:14px; } .topbar { padding:6px; gap:2px; } }
+
+.file-icon.type-assignment { color: #7c3aed; }
+.content-type-label { display:block; font-size:11px; color:var(--muted); font-weight:400; }

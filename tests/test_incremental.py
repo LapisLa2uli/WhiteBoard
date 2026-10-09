@@ -251,3 +251,18 @@ class IncrementalTests(unittest.TestCase):
         result = _listings(s, {'course': '/first'})['course']
         self.assertTrue(result['complete'])
         self.assertEqual(len(result['items']), 2)
+
+    def test_parser_upgrade_repairs_cached_assignment_when_attachments_fail(self):
+        from unittest.mock import patch
+        s=Session([item(1)])
+        s.items[0]['contentHandler']={'id':'resource/x-bb-forumlink','discussionId':'_3_1'}
+        first=run(s)
+        course=first.content_cache['courses'][CID]
+        course['parser_version']=1
+        course['records']['_1_1']['nodes'][0].update(kind='link',open_url=s.base_url+'/wrong')
+        with patch('blackboard.api._enrich_attachments_parallel',return_value={(CID,'_1_1')}):
+            second=run(s,first)
+        main=next(n for n in second.content_nodes if n.id=='_1_1')
+        self.assertEqual(main.kind,'assignment')
+        self.assertIn('/discussionboard/do/forum?',main.open_url)
+        self.assertEqual(second.content_cache['courses'][CID]['records']['_1_1']['checked'],'')

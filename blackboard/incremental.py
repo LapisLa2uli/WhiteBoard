@@ -166,6 +166,42 @@ def _inventory(session, course_ids, compact, *, fields=FIELDS):
     return roots
 
 
+def _upgrade_cached_nodes(record, course_id, base_url):
+    """Apply parser fixes even when optional attachment discovery is denied."""
+    from blackboard.api import content_nodes_from_items
+    fresh = content_nodes_from_items([record['raw']], course_id, base_url)
+    saved = [ContentNode.from_dict(n) for n in record.get('nodes', [])]
+    if not fresh:
+        return saved
+    primary = fresh[0]
+    known_paths = {n.download_path for n in fresh if n.download_path}
+    old_by_path = {n.download_path: n for n in saved if n.download_path}
+    for node in fresh:
+        old = old_by_path.get(node.download_path)
+        if old:
+            node.size_bytes, node.size_known = old.size_bytes, old.size_known
+            node.size_checked_at = old.size_checked_at
+    for node in saved:
+        if node.id == primary.id:
+            if node.download_path and node.download_path not in known_paths:
+                if primary.kind == 'assignment':
+                    node.id += ':cached-attachment'
+                    node.parent_id = primary.parent_id
+                    node.handler = ''
+                    fresh.append(node)
+                elif primary.kind != 'folder':
+                    fresh[0] = node
+            elif node.kind == 'folder' and primary.kind != 'assignment':
+                primary.kind = 'folder'
+            continue
+        if any(n.id == node.id for n in fresh) or (node.download_path and node.download_path in known_paths):
+            continue
+        if primary.kind == 'assignment' and node.parent_id == primary.id:
+            node.parent_id = primary.parent_id
+        fresh.append(node)
+    return fresh
+
+
 def crawl(session, snapshot, courses, *, previous=None, full=False, include_html=True, now=None):
     from blackboard.api import (
         ContentEntry, _entry_from_content_item, content_nodes_from_items,
@@ -258,7 +294,10 @@ def crawl(session, snapshot, courses, *, previous=None, full=False, include_html
         old = (old_courses.get(cid) or {}).get('records', {}).get(iid)
         if old:
             state['records'][iid] = deepcopy(old)
-            state['groups'][iid] = [ContentNode.from_dict(n) for n in old.get('nodes', [])]
+            state['groups'][iid] = (_upgrade_cached_nodes(old, cid, session.base_url)
+                if old_courses[cid].get('parser_version') != PARSER_VERSION
+                else [ContentNode.from_dict(n) for n in old.get('nodes', [])])
+            state['records'][iid]['checked'] = ''
         else:
             state['records'][iid]['checked'] = ''
     _check(session)

@@ -12,6 +12,7 @@ headings below. Packaging and GitHub Releases copy this text.
 - Refresh reuses unchanged course files and checks for added, edited, moved, and removed content. Settings now includes **Full refresh**, and file details are rechecked daily.
 
 ### Bugfixes
+- Saved coursework links receive the corrected icons and URLs even when Blackboard refuses optional attachment checks during an upgrade.
 - Calendar submission links are classified before the dashboard first appears, while file downloads and sizes load later. Unverified entries show **Checking type** and stay visible when events are hidden.
 - Coursework in Contents is labeled **Assignment link** with a distinct icon and opens its submission/discussion page. Attached resources remain downloadable separately.
 - Embedded course media and documents are grouped under their source page with usable file names. Content pages and discussions open their proper Blackboard pages instead of broken file links.

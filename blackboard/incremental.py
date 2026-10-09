@@ -13,6 +13,7 @@ from urllib.parse import quote, urlparse
 from blackboard.models import ContentNode
 
 VERSION = 1
+PARSER_VERSION = 2
 REVALIDATE_AFTER = timedelta(days=1)
 FIELDS = 'id,parentId,created,modified,hasChildren'
 MAX_ITEMS = 5000
@@ -187,7 +188,7 @@ def crawl(session, snapshot, courses, *, previous=None, full=False, include_html
     # Preserve unselected courses when the user changes a load filter.
     cache = {'version': VERSION, 'origin': origin, 'user_id': snapshot.user_id,
              'courses': deepcopy(old_courses)}
-    compact = {c.id: not full and bool(old_courses.get(c.id)) and
+    compact = {c.id: not full and old_courses.get(c.id, {}).get('parser_version') == PARSER_VERSION and bool(old_courses.get(c.id)) and
                _fresh(old_courses[c.id].get('checked'), now) for c in courses}
     session._tell('Checking course content for changes…', .34)
     inventories = _inventory(session, [c.id for c in courses], compact)
@@ -305,7 +306,8 @@ def crawl(session, snapshot, courses, *, previous=None, full=False, include_html
             serialized.append(obj)
         cache['courses'][cid] = {'records': state['records'], 'entries': serialized,
                                   'checked': (old_courses[cid].get('checked') if compact[cid] else now.isoformat()), 'html': include_html,
-                                  'legacy_nodes': state['legacy_nodes'], 'legacy_missing': state['legacy_missing']}
+                                  'legacy_nodes': state['legacy_nodes'], 'legacy_missing': state['legacy_missing'],
+                                  'parser_version': PARSER_VERSION}
         if not state['complete']:
             stats['incomplete_courses'] += 1
     cache['stats'] = stats

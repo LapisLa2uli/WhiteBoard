@@ -2778,6 +2778,8 @@ def _node_from_content_item(
     created = parse_dt(_pick(item, "created", "createdDate", "createdOn"))
     parent_id = _bb_pk(_pick(item, "parentId", "parent_id", "_parentId"))
     open_url = _content_api_url(item, base_url, course_id)
+    if not open_url and content_id and _handler_kind(handler) in {"assignment", "assessment", "discussion"}:
+        open_url = _entry_from_content_item(item, course_id, base_url).url
     if not open_url and content_id:
         if kind == "folder":
             open_url = resolve_url(
@@ -2785,11 +2787,16 @@ def _node_from_content_item(
                 "/webapps/blackboard/content/listContent.jsp"
                 f"?course_id={course_id}&content_id={content_id}&mode=reset",
             )
-        else:
+        elif kind == "file":
             open_url = resolve_url(
                 base_url,
                 f"/webapps/blackboard/execute/content/file?cmd=view&content_id={content_id}&course_id={course_id}",
             )
+        else:
+            # Documents are entries on a content page, not files. Open their
+            # containing page and scroll to the source item.
+            query = urlencode({"course_id": course_id, "content_id": parent_id or content_id, "mode": "reset"})
+            open_url = resolve_url(base_url, f"/webapps/blackboard/content/listContent.jsp?{query}#contentListItem:{content_id}")
     extension = _extension_of(filename or title, mime)
     if _is_folder_item(item) or kind == "folder":
         kind = "folder"
@@ -2892,7 +2899,7 @@ _ATTR_RE = re.compile(
 )
 _ANCHOR_RE = re.compile(r"<a\b([^>]*)>(.*?)</a>", re.IGNORECASE | re.DOTALL)
 _MEDIA_TAG_RE = re.compile(
-    r"<(embed|audio|video|source|object|img)\b([^>]*)/?>",
+    r"<(embed|audio|video|source|object|img|iframe|param)\b([^>]*)/?>",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -2994,11 +3001,14 @@ def embedded_files_in_html(html: str) -> list[tuple[str, str, str, str]]:
 
     for match in _MEDIA_TAG_RE.finditer(page):
         attrs = _tag_attrs(match.group(2))
+        tag = match.group(1).lower()
         src = attrs.get("src") or attrs.get("data") or ""
+        if tag == "param" and attrs.get("name", "").lower() in {"src", "movie", "url"}:
+            src = attrs.get("value") or ""
         if not src:
             continue
         default = "png" if match.group(1).lower() == "img" else ""
-        consider(src, attrs.get("alt") or "", attrs.get("type") or "", prefer_name=False, default_ext=default)
+        consider(src, attrs.get("title") or attrs.get("alt") or "", attrs.get("type") or "", prefer_name=False, default_ext=default)
     for match in _ANCHOR_RE.finditer(page):
         attrs = _tag_attrs(match.group(1))
         href = attrs.get("href") or ""
@@ -3058,13 +3068,14 @@ def _embedded_sibling(
     parent_id: str,
 ) -> ContentNode:
     url, name, ext, mime = file_info
-    title = name or node.title or "File"
+    generic = not name or name == "file" or name == f"file.{ext}"
+    title = (f"{node.title} — embedded {ext.upper() or 'file'} {index + 1}" if generic else name)
     return ContentNode(
         id=f"{node.id}:file:{index}",
         course_id=course_id or node.course_id,
         parent_id=parent_id,
         title=title,
-        filename=title,
+        filename=(f"{title}.{ext}" if generic and ext else title),
         kind="file",
         handler="",
         mime=mime,
@@ -3092,6 +3103,8 @@ def _nodes_from_embedded(
     if media_only:
         _apply_embedded_file(node, files[0], base_url)
         return []
+    if _handler_kind(node.handler) == "document" and node.kind != "folder":
+        node.kind = "folder"
     parent_id = node.id if node.kind == "folder" else (node.parent_id or "")
     return [
         _embedded_sibling(node, info, course_id, base_url, index, parent_id)
@@ -3139,7 +3152,7 @@ def _attachment_candidates(nodes: list[ContentNode]) -> list[ContentNode]:
     primary = []
     embedded = []
     for node in nodes:
-        if not node.id or node.kind == "folder" or node.download_path:
+        if not node.id or (node.kind == "folder" and _handler_kind(node.handler) != "document") or node.download_path:
             continue
         handler = (node.handler or "").lower()
         if node.kind == "file" or "file" in handler or "document" in handler:
@@ -3207,7 +3220,7 @@ def _apply_fetched_attachments(
         attachments = fetched.get(node.id) or []
         if not attachments:
             continue
-        if len(attachments) == 1:
+        if len(attachments) == 1 and node.kind != "folder":
             _apply_attachment(node, attachments[0], course_id, base_url)
         else:
             node.kind = "folder"
@@ -3293,7 +3306,7 @@ def _apply_open_urls_from_catalog(
     by_id = {entry.content_id: entry for entry in entries if entry.content_id}
     for node in nodes:
         entry = by_id.get(node.id)
-        if entry and entry.url and not node.open_url:
+        if entry and entry.url and not node.download_path:
             node.open_url = entry.url
 
 

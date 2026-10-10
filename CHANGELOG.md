@@ -13,6 +13,7 @@ headings below. Packaging and GitHub Releases copy this text.
 - Refresh reuses unchanged course files and checks for added, edited, moved, and removed content. Settings now includes **Full refresh**, and file details are rechecked daily.
 
 ### Bugfixes
+- Dashboard events disappear at their planned start time without a refresh. Past events remain in Calendar, and overdue assignments remain visible.
 - Confirmed school session expiry automatically returns to sign-in, including while refreshing or checking an open dashboard. Connection failures keep the dashboard available.
 - Home shows upcoming events separately from assignments, with unverified entries in their own **Checking type** list.
 - Saved coursework links receive the corrected icons and URLs even when Blackboard refuses optional attachment checks during an upgrade.

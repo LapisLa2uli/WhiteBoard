@@ -340,6 +340,7 @@ def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", i
             if not deadline_is_finished(snapshot, item) and not _item_flagged(item, ignored_keys)
         )
         if _kept_history(row["ts"], row.get("kind") or "", history_cutoff)
+        and (row["kind"] != "other" or row["classification_pending"] or not row["ts"] or row["ts"] > time.time())
     ]
     home_grades = [pack_grade(grade) for grade in recent_grades(snapshot, 8)[:5]]
     calendar = [

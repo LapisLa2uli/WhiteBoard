@@ -80,3 +80,30 @@ assert(home.includes('No assignments this week.'));
 assert(home.includes('No events this week.'));
 assert(!home.includes('home-checking'));
 console.log('UI regression: dashboard separates coursework, events, and unresolved entries with filters intact.');
+
+vm.runInContext(`
+state.home_due=[
+ {id:'past',title:'Past meeting',kind:'other',ts:1},
+ {id:'future',title:'Future meeting',kind:'other',ts:Date.now()/1000+100},
+ {id:'overdue',title:'Overdue essay',kind:'assignment',ts:1},
+ {...pendingEvent,ts:1}
+];
+`,c);
+home=vm.runInContext('homeView()',c);
+assert(!home.includes('Past meeting'));
+assert(home.includes('Future meeting')&&home.includes('Overdue essay')&&home.includes('Review'));
+vm.runInContext(`
+route='/home';
+clock=1000; Date.now=()=>clock*1000;
+eventNode={dataset:{homeEventAt:1001},removed:false,remove(){this.removed=true}};
+emptyNode={hidden:true};
+document.querySelectorAll=(selector)=>selector==='[data-home-event-at]'&&!eventNode.removed?[eventNode]:[];
+document.getElementById=()=>emptyNode;
+tickCountdowns();
+`,c);
+assert.equal(vm.runInContext('eventNode.removed',c),false);
+vm.runInContext('clock=1001;tickCountdowns()',c);
+assert.equal(vm.runInContext('eventNode.removed',c),true);
+assert.equal(vm.runInContext('emptyNode.hidden',c),false);
+assert.equal(vm.runInContext('state.home_due.length',c),4);
+console.log('UI regression: events disappear at their planned time without deleting calendar data or overdue assignments.');

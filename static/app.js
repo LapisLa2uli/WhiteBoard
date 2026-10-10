@@ -1298,10 +1298,11 @@ function homeView() {
   );
   const gradeItems = (state.home_grades || []).filter((grade) => inActiveFilter(grade.course_id));
   const assignments = dueItems.filter((item) => !item.classification_pending && item.kind !== "other");
-  const events = dueItems.filter((item) => !item.classification_pending && item.kind === "other");
+  const events = dueItems.filter((item) => !item.classification_pending && item.kind === "other" && (!item.ts || item.ts > Date.now() / 1000));
   const checking = dueItems.filter((item) => item.classification_pending);
   const due = assignments.map((item) => assignCard(item, true)).join("") || `<p class="empty">No assignments this week.</p>`;
-  const eventList = events.map((item) => assignCard(item, false)).join("") || `<p class="empty">No events this week.</p>`;
+  const eventList = events.map((item) => `<div data-home-event-at="${Number(item.ts) || 0}">${assignCard(item, false)}</div>`).join("")
+    + `<p class="empty" id="home-events-empty" ${events.length ? "hidden" : ""}>No events this week.</p>`;
   const checkingList = checking.length ? `<section aria-labelledby="home-checking"><h3 id="home-checking">Checking type</h3><p class="muted">These entries are still being checked for a submission page.</p>${checking.map((item) => assignCard(item, false)).join("")}</section>` : "";
   const grades = gradeItems.map((grade) => `<div class="card row grade-card" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}" style="background:${grade.fill};border-color:${grade.ink}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong style="color:${grade.ink}">${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="empty">No new grades.</p>`;
   const banners = errorBanners();
@@ -2970,6 +2971,16 @@ function colorForDue(ts) {
 
 function tickCountdowns() {
   if (document.hidden) return;
+  if (route === "/home") {
+    const events = document.querySelectorAll("[data-home-event-at]");
+    let remaining = events.length;
+    events.forEach((node) => {
+      const ts = Number(node.dataset.homeEventAt);
+      if (ts && ts <= Date.now() / 1000) { node.remove(); remaining--; }
+    });
+    const empty = document.getElementById("home-events-empty");
+    if (empty) empty.hidden = remaining > 0;
+  }
   const nodes = document.querySelectorAll(".countdown[data-due]");
   if (!nodes.length) return;
   nodes.forEach((node) => {

@@ -1266,11 +1266,17 @@ function homeView() {
     !item.ignored && !item.finished && keptByHistory(item) && (!item.course_id || inActiveFilter(item.course_id))
   );
   const gradeItems = (state.home_grades || []).filter((grade) => inActiveFilter(grade.course_id));
-  const due = dueItems.map((item) => assignCard(item, item.kind !== "other")).join("") || `<p class="empty">No deadlines this week.</p>`;
+  const assignments = dueItems.filter((item) => !item.classification_pending && item.kind !== "other");
+  const events = dueItems.filter((item) => !item.classification_pending && item.kind === "other");
+  const checking = dueItems.filter((item) => item.classification_pending);
+  const due = assignments.map((item) => assignCard(item, true)).join("") || `<p class="empty">No assignments this week.</p>`;
+  const eventList = events.map((item) => assignCard(item, false)).join("") || `<p class="empty">No events this week.</p>`;
+  const checkingList = checking.length ? `<section aria-labelledby="home-checking"><h3 id="home-checking">Checking type</h3><p class="muted">These entries are still being checked for a submission page.</p>${checking.map((item) => assignCard(item, false)).join("")}</section>` : "";
   const grades = gradeItems.map((grade) => `<div class="card row grade-card" data-go="${grade.assignment_id ? "/assignments/" + encodeURIComponent(grade.assignment_id) : "/courses/" + encodeURIComponent(grade.course_id)}" style="background:${grade.fill};border-color:${grade.ink}"><div><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)}</div></div><span class="spacer"></span><strong style="color:${grade.ink}">${escapeHtml(grade.label)}</strong></div>`).join("") || `<p class="empty">No new grades.</p>`;
   const banners = errorBanners();
   return `<h2>Home</h2><p class="muted">This week at a glance.</p>${banners}
-    <h3>Upcoming this week</h3>${legend()}${due}
+    ${legend()}<section aria-labelledby="home-assignments"><h3 id="home-assignments">Assignments this week</h3>${due}</section>
+    <section aria-labelledby="home-events"><h3 id="home-events">Events this week</h3>${eventList}</section>${checkingList}
     <h3>Grades</h3><p class="muted">Posted dates may be unavailable; this is not necessarily chronological.</p>${grades}`;
 }
 

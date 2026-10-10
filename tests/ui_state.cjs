@@ -50,3 +50,33 @@ vm.runInContext(`pendingEvent={id:'pending',title:'Review',kind:'other',classifi
 assert(vm.runInContext('eventChip(pendingEvent,false)',c).includes('Checking type'));
 assert(vm.runInContext('assignCard(pendingEvent,false)',c).includes('Checking type'));
 console.log('UI regression: unresolved calendar classification is disclosed during loading.');
+
+vm.runInContext(`
+state.home_due=[
+  {id:'work',title:'Essay',kind:'assignment',course_id:'c'},
+  {id:'test',title:'Quiz',kind:'test',course_id:'c'},
+  {id:'meeting',title:'Office hours',kind:'other',course_id:'c'},
+  pendingEvent,
+  {id:'hidden',title:'Excluded course',kind:'other',course_id:'hidden'},
+  {id:'done',title:'Finished work',kind:'assignment',finished:true},
+  {id:'ignored',title:'Ignored work',kind:'assignment',ignored:true}
+];
+inActiveFilter=(id)=>id!=='hidden';
+`,c);
+let home=vm.runInContext('homeView()',c);
+const section=(html,id)=>html.match(new RegExp('<section aria-labelledby="'+id+'">([\\s\\S]*?)</section>'))[1];
+assert(section(home,'home-assignments').includes('Essay'));
+assert(section(home,'home-assignments').includes('Quiz'));
+assert(!section(home,'home-assignments').includes('Office hours'));
+assert(section(home,'home-events').includes('Office hours'));
+assert(!section(home,'home-events').includes('Essay'));
+assert(!section(home,'home-events').includes('Review'));
+assert(section(home,'home-checking').includes('Review'));
+assert(!section(home,'home-checking').includes('data-assign-mark'));
+for (const title of ['Excluded course','Finished work','Ignored work']) assert(!home.includes(title));
+vm.runInContext('state.home_due=[]',c);
+home=vm.runInContext('homeView()',c);
+assert(home.includes('No assignments this week.'));
+assert(home.includes('No events this week.'));
+assert(!home.includes('home-checking'));
+console.log('UI regression: dashboard separates coursework, events, and unresolved entries with filters intact.');

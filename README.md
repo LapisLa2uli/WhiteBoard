@@ -31,6 +31,10 @@ Accounts keep separate saved data. Use **Account → Sign out** to clear the ses
 
 Run `python tools/test.py` for isolated regressions (Python 3.12 and Node.js), and `python tools/benchmark_loading.py` to compare loading strategies with synthetic data. Build instructions and signing requirements are in [packaging/README.md](packaging/README.md). Implementation results and remaining platform acceptance checks are in [IMPLEMENTATION_0.4.0.md](IMPLEMENTATION_0.4.0.md).
 
+## Dashboard
+
+Home separates this week's assignments and events into their own lists. Entries whose submission type is still being verified appear under **Checking type** until refresh confirms their type. Course filters apply to all three lists.
+
 ## Refreshing course content
 
 Refresh checks a compact list of course content and reuses saved file details when their revisions match. New or changed items are loaded again; grades, deadlines, and submission status still refresh independently. **Settings → Storage and refresh → Full refresh** rechecks file details immediately. They are also rechecked daily.

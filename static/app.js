@@ -277,7 +277,7 @@ function onClick(event) {
   const favorite=source.closest("[data-favorite]");
   if (favorite) { const ids=new Set(state.favorite_courses || []); const id=favorite.dataset.favorite; if(ids.has(id))ids.delete(id);else ids.add(id);persistSettings({favorite_courses:[...ids]}).then(paintCourses).catch(showError);return; }
   if (source.closest("#logout-cancel")) { logoutDialog=false;paintPage();return; }
-  if (source.closest("#logout-confirm")) { finishSignOut(document.getElementById("keep-offline").checked);return; }
+  if (source.closest("#logout-confirm")) { finishSignOut(document.getElementById("keep-offline").checked, document.getElementById("keep-crawl-cache").checked);return; }
   const moreDay = source.closest("[data-cal-day]");
   if (moreDay) { calendarReturn = {mode:calendarMode,anchor:calendarAnchor,scroll:document.getElementById("page-body").scrollTop}; calendarDay=moreDay.dataset.calDay; paintCalendarRoot(); return; }
   if (source.closest("#cal-day-back")) { calendarDay=""; calendarMode=calendarReturn.mode; calendarAnchor=calendarReturn.anchor; paintCalendarRoot(); document.getElementById("page-body").scrollTop=calendarReturn.scroll; return; }
@@ -1250,7 +1250,7 @@ function paintPage() {
   const body = document.getElementById("page-body");
   if (!body) return;
   const banner = jobError ? `<div class="banner">${escapeHtml(jobError)}</div>` : "";
-  body.innerHTML = banner + viewFor(route) + (logoutDialog ? `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true"><h3>Sign out of WhiteBoard</h3><p>Your school session and saved Google credentials will be removed.</p><label class="row"><input id="keep-offline" type="checkbox" />Keep an offline dashboard on this computer</label><p class="muted">Anyone using this computer account can open an offline copy.</p><div class="row"><button class="text-btn" id="logout-cancel">Cancel</button><button class="fill-btn" id="logout-confirm">Sign out</button></div></div></div>` : "");
+  body.innerHTML = banner + viewFor(route) + (logoutDialog ? `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true"><h3>Sign out of WhiteBoard</h3><p>Your school session and saved Google credentials will be removed.</p><label class="row"><input id="keep-offline" type="checkbox" />Keep an offline dashboard on this computer</label><p class="muted">Anyone using this computer account can open an offline copy.</p><label class="row"><input id="keep-crawl-cache" type="checkbox" checked />Keep file index for faster next sign-in</label><p class="muted">Keeps file names, course-page content, links, and sizes locally for this school account. Used after signing in to the same account; grades and login credentials are not included. Clear both choices to remove saved dashboard and file data.</p><div class="row"><button class="text-btn" id="logout-cancel">Cancel</button><button class="fill-btn" id="logout-confirm">Sign out</button></div></div></div>` : "");
   animateMeters();
 }
 
@@ -2529,7 +2529,7 @@ function settingsView() {
       <button class="text-btn" id="reset-deadline-colors">Reset deadline colors</button></div>
     <details class="card"><summary>Course colors (${state.courses.length})</summary><p class="muted">Choose a course color.</p>${courseColors}</details>
     ${state.courses.some((course) => course.custom) ? '<button class="text-btn" id="reset-course-colors">Reset course colors</button>' : ""}
-    <h3>Storage and refresh</h3><div class="card"><p>Saved data stays on this computer. Sign out to remove it or keep an offline copy.</p><p class="muted">Refresh loads deadlines first, then grades and files. Unchanged files reuse saved details. File details are rechecked daily; Full refresh rechecks them now. A failed refresh preserves the previous saved copy.</p><button class="outline-btn" id="full-refresh" ${loading ? "disabled" : ""}>Full refresh</button></div>
+    <h3>Storage and refresh</h3><div class="card"><p>Saved data stays on this computer. Sign out to choose whether to keep an offline dashboard and a file index for faster next sign-in. Clear both choices to remove both copies.</p><p class="muted">Refresh loads deadlines first, then grades and files. Unchanged files reuse saved details. File details are rechecked daily; Full refresh rechecks them now. A failed refresh preserves the previous saved copy.</p><button class="outline-btn" id="full-refresh" ${loading ? "disabled" : ""}>Full refresh</button></div>
     <label class="row"><input id="motion-effects" type="checkbox" ${state.motion_effects ? "checked" : ""}/>Enable decorative ripple effects</label>
     ${colorDialog ? colorModal() : ""}
 `;
@@ -3061,11 +3061,11 @@ boot();
 function showError(error) { jobError = error.message || String(error); render(); }
 
 function signOut() { logoutDialog=true;paintPage(); }
-async function finishSignOut(keep) {
+async function finishSignOut(keep, keepCrawlCache = true) {
   logoutDialog=false;
   pollGen += 1;
   try {
-    await api("/api/logout", { keep_offline: keep });
+    await api("/api/logout", { keep_offline: keep, keep_crawl_cache: keepCrawlCache });
     loading = null; busy = false; jobError = "";
     feedback = null; colorDialog = null; filterDialog = null;
     manualMarks.clear(); contentsSelected.clear(); selectedAssignments.clear();

@@ -7,6 +7,7 @@ headings below. Packaging and GitHub Releases copy this text.
 ## [Unreleased]
 
 ### Added features
+- Sign-out can keep a local file index for faster next sign-in. After verifying the same school account, WhiteBoard checks for changes and reuses unchanged file details. Clear this option to remove the retained index.
 - Grades can be sorted by name, course, or assignment deadline in either direction. Cards distinguish deadlines from posted dates; missing deadlines stay at the end.
 - Course colors and deadline color codes now have a gradient picker with a live preview, hue/saturation/brightness sliders, and synchronized HEX input.
 - Contents search has an inline clear button, course include/exclude filters, and sorting by course or upload date. **Only this folder** appears while a search is active.

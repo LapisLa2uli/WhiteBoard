@@ -73,6 +73,37 @@ class Store:
         write_json(SNAPSHOT_PATH, self.snapshot.to_dict())
         remove_json(SNAPSHOT_PATH.with_name("dashboard.json"))
 
+    def save_crawl_cache(self) -> None:
+        """Retain file indexing only; no grades, session cookies or credentials."""
+        from accounts import school_origin
+        cache = self.snapshot.content_cache
+        origin = school_origin(load_settings().get('base_url') or '')
+        if not self.snapshot.user_id or not cache or cache.get('user_id') != self.snapshot.user_id or cache.get('origin') != origin:
+            return
+        payload = Snapshot(user_id=self.snapshot.user_id, courses=self.snapshot.courses,
+                           content_nodes=self.snapshot.content_nodes, content_cache=cache).to_dict()
+        write_json(SNAPSHOT_PATH.with_name('crawl-cache.json'),
+                   {'version': 1, 'origin': origin, 'user_id': self.snapshot.user_id, 'snapshot': payload})
+
+    def load_crawl_cache(self, origin: str, user_id: str) -> bool:
+        """Called only after school authentication selects the account profile."""
+        from accounts import school_origin
+        record, _ = read_json(SNAPSHOT_PATH.with_name('crawl-cache.json'), {})
+        try:
+            if (record.get('version') != 1 or not user_id or record.get('user_id') != user_id
+                    or record.get('origin') != school_origin(origin)):
+                return False
+            payload = record['snapshot']
+            validate_snapshot(payload)
+            snapshot = Snapshot.from_dict(payload)
+            if (snapshot.user_id != user_id or snapshot.content_cache.get('user_id') != user_id
+                    or snapshot.content_cache.get('origin') != school_origin(origin)):
+                return False
+            self.snapshot = snapshot
+            return True
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return False
+
     def save_dashboard(self) -> None:
         """Keep a first-run checkpoint without replacing the last complete cache."""
         if SNAPSHOT_PATH.exists() or self.snapshot.errors:
@@ -85,6 +116,7 @@ class Store:
     def clear_disk_cache(self) -> None:
         remove_json(SNAPSHOT_PATH)
         remove_json(SNAPSHOT_PATH.with_name("dashboard.json"))
+        remove_json(SNAPSHOT_PATH.with_name("crawl-cache.json"))
 
     def clear_cache(self) -> None:
         self.clear_disk_cache()

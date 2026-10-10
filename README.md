@@ -47,6 +47,8 @@ In Grades, **Sort grades by** orders each graded/pending list by name, course, o
 
 Refresh checks a compact list of course content and reuses saved file details when their revisions match. New or changed items are loaded again; grades, deadlines, and submission status still refresh independently. **Settings → Storage and refresh → Full refresh** rechecks file details immediately. They are also rechecked daily.
 
+Sign-out defaults to **Keep file index for faster next sign-in**. This retains file names, course-page content, links, sizes, and revision records in an account-scoped `crawl-cache.json` on this computer. It contains no saved grades, cookies, or login credentials, and the app only uses it after verifying the same school and user. It is separate from an offline dashboard and is not displayed while signed out. Clear both sign-out options to remove the saved dashboard and file index, including backups. A cache from before daily revalidation is due can reuse unchanged details on the next sign-in; daily/full refresh still rechecks them.
+
 Files missing from two complete course checks are removed locally. Inaccessible or failed listings preserve saved files and show a notice in Contents. This detects content no longer visible to your account; it cannot distinguish deletion from changed permissions. See [incremental refresh implementation and tests](INCREMENTAL_REFRESH.md).
 
 Contents also checks missing file sizes without reading file bodies. The first size check for a large account takes extra time; subsequent refreshes reuse those sizes. Hover over a displayed size for the exact byte count. A dash means Blackboard did not provide a verifiable size.

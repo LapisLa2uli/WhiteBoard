@@ -8,6 +8,7 @@ class JobsTests(unittest.TestCase):
     def tearDown(self):
         crawl.progress['busy'] = False
         crawl._cancel.clear()
+        crawl._done.set()
 
     def test_only_one_worker_starts(self):
         crawl.progress['busy'] = False

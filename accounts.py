@@ -55,7 +55,7 @@ def activate(origin, user, username):
     return key
 
 
-def logout(keep_offline=False):
+def logout(keep_offline=False, keep_crawl_cache=True):
     import data
     import host
     import crawl
@@ -63,6 +63,13 @@ def logout(keep_offline=False):
     crawl.cancel_job(wait=True)
     host.clear_cookies()
     delete_secret(data.GOOGLE_PATH)
+    if keep_crawl_cache:
+        from blackboard.store import Store
+        saved = Store()
+        if saved.load_cache():
+            saved.save_crawl_cache()
+    else:
+        remove_json(data.SNAPSHOT_PATH.with_name('crawl-cache.json'))
     if keep_offline:
         record, _ = read_json(data.APP_DIR / 'active.json', {})
         record['offline'] = True

@@ -1081,7 +1081,7 @@ def handle(path: str, body: dict | None = None) -> dict:
         if _google.get("busy"):
             raise RuntimeError("Wait for Google sync to finish before signing out.")
         from accounts import logout
-        logout(bool(payload.get("keep_offline")))
+        logout(bool(payload.get("keep_offline")), payload.get("keep_crawl_cache") is not False)
         _google['status'] = ''
         return _state()
     if route == "/api/state":

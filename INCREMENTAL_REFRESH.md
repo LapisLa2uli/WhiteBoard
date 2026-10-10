@@ -17,6 +17,14 @@ Revision records, raw content, enriched nodes, and course catalogs are saved ins
 
 Old snapshots without revision records receive a full first scan. Previously saved nodes not observed during that scan are retained until complete listings confirm their absence, after matching the school and user. Existing backup/recovery and cancelled-job persistence rules still apply.
 
+### Sign-out and next sign-in — 10 October 2026
+
+Sign-out now offers a separate, default-on **Keep file index for faster next sign-in** choice. It writes the last saved content index to the account's atomic `crawl-cache.json`: revision manifest, enriched nodes (including sizes), course catalogs, and course identifiers. Grades, the user display name, session cookies, and login credentials are excluded. Course-page bodies and links remain local content data. The ordinary dashboard/checkpoint is still removed unless an offline copy is requested.
+
+The sign-in worker verifies the school account, selects its profile, then loads this crawl-only cache if there is no complete dashboard snapshot. Both the wrapper and inner content manifest must match school origin and authenticated user ID. The retained index is never a signed-out dashboard and never serves as a successful authentication result. Daily/full revalidation and two-complete-inventory removal confirmation still apply across sign-outs. Clearing both logout choices removes the snapshot, checkpoint, retained index, and their backups.
+
+Deterministic logout/restart/login tests verify that two unchanged source items need just one compact inventory request, with zero detail/attachment requests. Additional tests cover changed/new content, removal confirmation across a second logout, account/school isolation, corruption, and explicit removal. These are synthetic request-count tests, not new live-school timings.
+
 ## Validation
 
 `python tools/test.py`: 50 Python regressions plus JavaScript syntax/UI checks. Incremental cases cover persisted-cache reuse, attachment groups, additions/edits/moves, newly visible old content, two-pass removals, incomplete and forbidden scopes, failed attachment recovery, malformed timestamps, pagination failure/cycles/duplicates/foreign URLs, full/daily refresh, account and school isolation, filtered-course cache retention, old-cache migration, cancellation, and the Full refresh API flag.

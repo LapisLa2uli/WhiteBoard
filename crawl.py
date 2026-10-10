@@ -179,7 +179,8 @@ def _launch(kind: str, username: str, password: str, base_url: str, *, full=Fals
                 progress["revision"] += 1
                 progress["timings"][stage] = round(time.monotonic() - progress["started_at"], 3)
             previous = Store()
-            previous.load_cache()
+            if not previous.load_cache():
+                previous.load_crawl_cache(session.base_url, str(session.user.get('id') or session.user.get('uuid') or ''))
             snapshot = fetch_snapshot(
                 session,
                 quick=False,

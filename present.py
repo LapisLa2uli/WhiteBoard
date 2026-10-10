@@ -249,7 +249,24 @@ def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", i
         )
 
     graded, pending = grade_page_groups(snapshot)
+    # Scope IDs and title fallbacks to a course; repeated titles are ambiguous.
+    grade_assignments = {}
+    grade_titles = {}
+    for assignment in snapshot.assignments:
+        for identifier in (assignment.id, assignment.content_id):
+            if identifier:
+                grade_assignments[(assignment.course_id, identifier)] = assignment
+        key = (assignment.course_id, " ".join(assignment.title.casefold().split()))
+        grade_titles.setdefault(key, []).append(assignment)
+
     def pack_grade(grade) -> dict:
+        assignment = grade_assignments.get((grade.course_id, grade.assignment_id))
+        if assignment is None:
+            assignment = grade_assignments.get((grade.course_id, grade.id))
+        if assignment is None:
+            matches = grade_titles.get((grade.course_id, " ".join(grade.title.casefold().split())), [])
+            assignment = matches[0] if len(matches) == 1 else None
+        deadline = assignment.due_at if assignment else None
         return {
             "id": grade.id,
             "title": grade.title,
@@ -260,7 +277,9 @@ def _build_state(snapshot: Snapshot | None = None, *, google_status: str = "", i
             "fill": subject_fill(grade.course_id),
             "ink": subject_ink(grade.course_id),
             "assignment_id": grade.assignment_id,
-            "due": format_dt(grade.posted_at, with_time=False) if grade.posted_at else "Posted date unavailable",
+            "due": "Posted " + format_dt(grade.posted_at, with_time=False) if grade.posted_at else "Posted date unavailable",
+            "deadline": "Due " + format_dt(deadline, with_time=False) if deadline else "Deadline unavailable",
+            "deadline_ts": int(_as_utc(deadline).timestamp()) if deadline else 0,
         }
 
     score_lines = []

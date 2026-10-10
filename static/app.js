@@ -2,6 +2,7 @@ let state = null;
 let route = "/login";
 let pageSize = 10;
 let pages = {};
+let gradesSort = "deadline-desc";
 let query = { assignments: "", grades: "", courses: "", contents: "" };
 let openFolders = { todo: true, now:true, upcoming:true, overdue:true, archived:false, submitted: false, graded: true, pending: true };
 let hideEvents = false;
@@ -673,6 +674,11 @@ function onInput(event) {
 }
 
 function onChange(event) {
+  if (event.target.id === "grades-sort") {
+    gradesSort = event.target.value;
+    pages.graded = 0; pages.pending = 0;
+    paintListRoot(); return;
+  }
   if (event.target.id === "contents-course-mode") {
     contentsCourseMode = event.target.value;
     pages["contents-search"] = 0;
@@ -1563,16 +1569,37 @@ function gradesView() {
     </div>`).join("");
   return `<h2>Grades</h2><p class="muted">Posted scores and submitted work waiting for a grade. Percentages are unweighted points estimates; Blackboard may use a different weighting.</p>
     ${searchBox("grades", "Search grades")}
+    <div class="row"><label for="grades-sort">Sort grades by</label><select id="grades-sort">${[
+      ["name-asc", "Name: A–Z"], ["name-desc", "Name: Z–A"],
+      ["course-asc", "Course: A–Z"], ["course-desc", "Course: Z–A"],
+      ["deadline-desc", "Deadline: newest first"], ["deadline-asc", "Deadline: oldest first"],
+    ].map(([value, label]) => `<option value="${value}" ${gradesSort === value ? "selected" : ""}>${label}</option>`).join("")}</select></div>
+    <p class="muted">Sort applies within each list. Missing deadlines appear last.</p>
     ${lines}
     <div id="list-root">${gradesLists()}</div>
     ${feedback ? feedbackModal() : ""}`;
 }
 
+function sortGrades(items) {
+  const [key, direction] = gradesSort.split("-");
+  const dir = direction === "desc" ? -1 : 1;
+  const text = (a, b) => String(a || "").localeCompare(String(b || ""), undefined, {numeric:true, sensitivity:"base"});
+  return [...items].sort((a, b) => {
+    let order = 0;
+    if (key === "deadline") {
+      const left = a.deadline_ts || 0, right = b.deadline_ts || 0;
+      if (!left !== !right) return left ? -1 : 1;
+      order = left - right;
+    } else order = text(key === "course" ? a.course : a.title, key === "course" ? b.course : b.title);
+    return dir * order || text(a.course, b.course) || text(a.title, b.title) || text(a.id, b.id);
+  });
+}
+
 function gradesLists() {
   const needle = query.grades.toLowerCase();
   const match = (grade) => inActiveFilter(grade.course_id) && `${grade.title} ${grade.course} ${grade.label} ${grade.note}`.toLowerCase().includes(needle);
-  return `${folder("graded", "Graded", state.graded.filter(match), gradeCard)}
-    ${folder("pending", "Submitted, not graded", state.pending.filter(match), gradeCard)}`;
+  return `${folder("graded", "Graded", sortGrades(state.graded.filter(match)), gradeCard)}
+    ${folder("pending", "Submitted, not graded", sortGrades(state.pending.filter(match)), gradeCard)}`;
 }
 
 function courseView(id) {
@@ -2518,7 +2545,7 @@ function assignCard(item, withActions) {
 function gradeCard(grade) {
   const button = grade.note ? `<button class="text-btn" data-feedback="${escapeAttr(grade.id)}">View feedback</button>` : "";
   return `<article class="card row" style="background:${grade.fill}">
-    <div data-go="/courses/${encodeURIComponent(grade.course_id)}"><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)} · ${escapeHtml(grade.due)}</div></div>
+    <div data-go="/courses/${encodeURIComponent(grade.course_id)}"><strong>${escapeHtml(grade.title)}</strong><div class="muted">${escapeHtml(grade.course)} · ${escapeHtml(grade.due)}</div><div class="muted">${escapeHtml(grade.deadline || "Deadline unavailable")}</div></div>
     <span class="spacer"></span><div><strong>${escapeHtml(grade.label)}</strong>${button}</div>
   </article>`;
 }
@@ -3000,6 +3027,7 @@ async function finishSignOut(keep) {
     await api("/api/logout", { keep_offline: keep });
     manualMarks.clear(); contentsSelected.clear(); selectedAssignments.clear();
     query = {assignments:"", grades:"", courses:"", contents:""}; pages = {};
+    gradesSort = "deadline-desc";
     contentsCourseMode = "all"; contentsCourseIds.clear(); contentsSearchHere = false;
     await loadState(); go("/login"); render();
   } catch (error) { showError(error); }

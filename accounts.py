@@ -72,6 +72,7 @@ def logout(keep_offline=False):
         remove_json(data.SNAPSHOT_PATH.with_name('dashboard.json'))
         remove_json(data.APP_DIR / 'active.json')
         data.use_profile('signed-out')
+    crawl.reset_progress()
 
 
 def is_offline():

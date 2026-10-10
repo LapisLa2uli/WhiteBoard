@@ -35,6 +35,8 @@ Run `python tools/test.py` for isolated regressions (Python 3.12 and Node.js), a
 
 WhiteBoard returns to sign-in when Blackboard confirms that your session has expired. While the dashboard is open, it checks the school session once a minute and when you return to the window. Offline copies are exempt; network failures alone do not sign you out.
 
+Signing out stops the current refresh and clears its progress, partial dashboard, and error messages. A new sign-in starts with fresh status; late responses from the previous session are ignored.
+
 Home separates this week's assignments and events into their own lists. Entries whose submission type is still being verified appear under **Checking type** until refresh confirms their type. Course filters apply to all three lists.
 
 Events leave Home at their scheduled start time (midnight for all-day events). The open dashboard updates automatically; event history remains in Calendar and overdue assignments stay visible.

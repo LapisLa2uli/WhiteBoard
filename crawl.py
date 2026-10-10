@@ -259,6 +259,22 @@ def cancel_job(job_id="", *, wait=False):
     return dict(progress)
 
 
+def reset_progress():
+    """Discard the previous account's job only after its worker has stopped."""
+    with _lock:
+        if progress.get('busy'):
+            raise SessionError('Wait for refresh to stop before clearing its state.')
+        progress.clear()
+        progress.update(busy=False, kind='', message='', percent=0.0, error='',
+                        auth_required=False, google='', detail='', log=[],
+                        counts={'courses': 0, 'folders': 0, 'files': 0},
+                        id='', stage='', revision=0, timings={}, cancelled=False)
+        _seen_courses.clear()
+        _cancel.clear()
+        from present import publish_stage
+        publish_stage(None)
+
+
 def _load_course_ids() -> set[str] | None:
     settings = load_settings()
     if not settings.get("load_filter_courses_only"):

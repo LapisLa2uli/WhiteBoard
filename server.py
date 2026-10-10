@@ -1082,6 +1082,7 @@ def handle(path: str, body: dict | None = None) -> dict:
             raise RuntimeError("Wait for Google sync to finish before signing out.")
         from accounts import logout
         logout(bool(payload.get("keep_offline")))
+        _google['status'] = ''
         return _state()
     if route == "/api/state":
         return _state()

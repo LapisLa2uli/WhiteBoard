@@ -67,11 +67,34 @@ class SessionExpiryTests(unittest.TestCase):
             data.APP_DIR = old_root
             data.use_profile(old_key)
 
-    def test_background_check_skips_offline_and_active_refresh(self):
+    def test_background_check_skips_offline(self):
         with patch.object(accounts, 'auth_required', return_value=False), \
                 patch.object(accounts, 'is_offline', return_value=True), patch('session.WebSession') as session:
             self.assertFalse(server._session_status()['auth_required'])
             session.assert_not_called()
+
+    def test_logout_resets_old_job_and_partial_stage(self):
+        import present
+        from blackboard.models import Snapshot, Course
+        old_root, old_key = data.APP_DIR, data.DATA_DIR.name
+        try:
+            with tempfile.TemporaryDirectory() as directory, patch('host.clear_cookies'), \
+                    patch.dict(crawl.progress, busy=False, error='Session expired', auth_required=True, revision=3):
+                data.APP_DIR = Path(directory)
+                accounts.activate('https://school.example', {'id': 'student'}, 'student')
+                present.publish_stage(Snapshot(courses=[Course('c', 'Old partial')]))
+                accounts.logout()
+                self.assertEqual(crawl.progress['error'], '')
+                self.assertFalse(crawl.progress['auth_required'])
+                self.assertEqual(crawl.progress['revision'], 0)
+                self.assertIsNone(present._live_snapshot)
+                self.assertFalse(present.build_state()['has_snapshot'])
+        finally:
+            data.APP_DIR = old_root
+            data.use_profile(old_key)
+            present.publish_stage(None)
+
+    def test_background_check_skips_active_refresh(self):
         with patch.object(accounts, 'auth_required', return_value=False), \
                 patch.object(accounts, 'is_offline', return_value=False), \
                 patch.object(data, 'DATA_DIR', Path('profile')), patch.dict(crawl.progress, busy=True), \

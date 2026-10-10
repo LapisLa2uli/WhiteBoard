@@ -16,5 +16,20 @@ vm.runInContext(fs.readFileSync('static/app.js','utf8').replace(/boot\(\);/,''),
   vm.runInContext(`state.offline=true;api=async()=>{throw Error('Offline must not check')}`,c);
   await vm.runInContext('checkSchoolSession()',c);
   assert.equal(vm.runInContext('route',c),'/home');
+  vm.runInContext(`
+    jobError='Your Blackboard session expired';
+    api=async()=>({has_snapshot:true,job:{error:''},assignments:[]});
+  `,c);
+  await vm.runInContext('loadState()',c);
+  assert.equal(vm.runInContext('jobError',c),'');
+  vm.runInContext(`jobError='Old error';beginLoading('login','Signing in')`,c);
+  assert.equal(vm.runInContext('jobError',c),'');
+  vm.runInContext(`
+    loading=null;state={has_snapshot:true,marker:'new'};
+    api=async()=>{pollGen++;return {has_snapshot:true,marker:'old',job:{error:'Old error'}}};
+  `,c);
+  await vm.runInContext('loadState()',c);
+  assert.equal(vm.runInContext('state.marker',c),'new');
+  assert.equal(vm.runInContext('jobError',c),'');
   console.log('Session UI: expiry routing, network failures, offline mode and stale responses passed.');
 })().catch(error=>{console.error(error);process.exitCode=1});

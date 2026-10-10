@@ -122,11 +122,14 @@ const NAV = [
 ];
 
 async function loadState() {
-  state = await api("/api/state");
+  const generation = pollGen;
+  const next = await api("/api/state");
+  if (generation !== pollGen) return;
+  state = next;
   pageSize = state.page_size || 10;
   hideEvents = !!state.hide_calendar_events;
   contentsMode = state.contents_view_mode || contentsMode;
-  if (state.job && state.job.error) jobError = state.job.error;
+  jobError = (state.job && state.job.error) || "";
   if (needsLogin() && route !== "/login") { route = "/login"; location.hash = route; }
   contentIndex = null;
   courseFilterCache = null;
@@ -770,6 +773,7 @@ function onChange(event) {
 
 function beginLoading(kind, message) {
   pollGen += 1;
+  jobError = "";
   loading = {
     kind,
     percent: 0.02,
@@ -3059,8 +3063,11 @@ function showError(error) { jobError = error.message || String(error); render();
 function signOut() { logoutDialog=true;paintPage(); }
 async function finishSignOut(keep) {
   logoutDialog=false;
+  pollGen += 1;
   try {
     await api("/api/logout", { keep_offline: keep });
+    loading = null; busy = false; jobError = "";
+    feedback = null; colorDialog = null; filterDialog = null;
     manualMarks.clear(); contentsSelected.clear(); selectedAssignments.clear();
     query = {assignments:"", grades:"", courses:"", contents:""}; pages = {};
     gradesSort = "deadline-desc";

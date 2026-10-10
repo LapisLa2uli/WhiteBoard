@@ -78,3 +78,17 @@ def is_offline():
     import data
     record, _ = read_json(data.APP_DIR / 'active.json', {})
     return bool(record.get('offline', False))
+
+
+def require_login():
+    """Keep the saved snapshot, but require school sign-in before displaying it."""
+    import data
+    record, _ = read_json(data.APP_DIR / 'active.json', {})
+    record['auth_required'] = True
+    write_json(data.APP_DIR / 'active.json', record, backup=False)
+
+
+def auth_required():
+    import data
+    record, _ = read_json(data.APP_DIR / 'active.json', {})
+    return bool(record.get('auth_required', False)) and not record.get('offline', False)

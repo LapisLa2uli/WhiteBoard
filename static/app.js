@@ -127,29 +127,53 @@ async function loadState() {
   hideEvents = !!state.hide_calendar_events;
   contentsMode = state.contents_view_mode || contentsMode;
   if (state.job && state.job.error) jobError = state.job.error;
-  if (!state.has_snapshot && route !== "/login") route = "/login";
+  if (needsLogin() && route !== "/login") { route = "/login"; location.hash = route; }
   contentIndex = null;
   courseFilterCache = null;
   manualMarks = new Set((state.assignments || []).filter((item) => item.manual).map((item) => item.id));
   reapplyManualMarks();
 }
 
+function needsLogin() {
+  return !state || !state.has_snapshot || !!state.auth_required;
+}
+
+let sessionCheckPending = false;
+async function checkSchoolSession() {
+  if (sessionCheckPending || document.hidden || !state || state.offline || route === "/login" || loading || busy) return;
+  sessionCheckPending = true;
+  const generation = pollGen;
+  try {
+    const result = await api("/api/session");
+    if (generation !== pollGen) return;
+    if (result.auth_required) {
+      state.auth_required = true;
+      jobError = result.message || "Your Blackboard session expired. Sign in again.";
+      route = "/login"; location.hash = route; render();
+    }
+  } catch (_) { /* Connection failures do not imply an expired session. */ }
+  finally { sessionCheckPending = false; }
+}
+
 async function boot() {
   bindOnce();
   setInterval(tickCountdowns, 1000);
+  setInterval(checkSchoolSession, 60000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) checkSchoolSession(); });
   try { await loadState(); } catch (error) {
     state = { has_snapshot: false };
     jobError = error.message;
   }
-  route = state.has_snapshot ? "/home" : "/login";
+  route = needsLogin() ? "/login" : "/home";
   window.addEventListener("hashchange", () => {
     route = location.hash.slice(1) || "/login";
     if (route === "/submitted") route = "/assignments";
-    if (!state.has_snapshot && route !== "/login") route = "/login";
+    if (needsLogin() && route !== "/login") route = "/login";
     render();
   });
   if (location.hash !== "#" + route) location.hash = route;
   else render();
+  checkSchoolSession();
 }
 
 function go(path) {
@@ -809,7 +833,7 @@ async function pollJob() {
     const changedStage = job.revision > shownRevision;
     if (changedStage) {
       shownRevision = job.revision; await loadState();
-      if (state.has_snapshot && route === "/login") { route = "/home"; location.hash = route; }
+      if (!needsLogin() && route === "/login") { route = "/home"; location.hash = route; }
     }
     document.title = `WhiteBoard — ${loading.message}`;
     if (state.has_snapshot && document.getElementById("shell") && !changedStage) paintChrome(); else render();
@@ -819,10 +843,11 @@ async function pollJob() {
       busy = false;
       if (job.error) {
         jobError = job.error;
-        if (!state.has_snapshot) route = "/login";
+        if (job.auth_required) state.auth_required = true;
+        if (needsLogin()) { route = "/login"; location.hash = route; }
       } else {
         jobError = "";
-        if (state.has_snapshot && (route === "/login" || !route)) {
+        if (!needsLogin() && (route === "/login" || !route)) {
           route = "/home";
           if (location.hash !== "#/home") location.hash = "/home";
         }
@@ -915,7 +940,7 @@ function render() {
     app.innerHTML = loadingView();
     return;
   }
-  if (!state || route === "/login" || !state.has_snapshot) {
+  if (needsLogin() || route === "/login") {
     app.innerHTML = loginView();
     return;
   }

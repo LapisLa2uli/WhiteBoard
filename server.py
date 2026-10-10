@@ -43,15 +43,18 @@ _google_lock = threading.Lock()
 
 
 def _state() -> dict:
+    from accounts import auth_required
     status = str(progress.get("google") or _google.get("status") or "")
     payload = build_state(google_status=status, include_content=False, course_id="")
     payload["google_busy"] = bool(_google.get("busy"))
+    payload["auth_required"] = auth_required()
     payload["job"] = {
         "busy": bool(progress.get("busy")),
         "kind": progress.get("kind") or "",
         "message": progress.get("message") or "",
         "percent": progress.get("percent") or 0,
         "error": progress.get("error") or "",
+        "auth_required": bool(progress.get("auth_required")),
     }
     return payload
 
@@ -387,6 +390,7 @@ def _progress_payload() -> dict:
         "revision": progress.get("revision", 0),
         "timings": dict(progress.get("timings") or {}),
         "cancelled": progress.get("cancelled", False),
+        "auth_required": bool(progress.get("auth_required")),
         "busy": bool(progress.get("busy")),
         "kind": progress.get("kind") or "",
         "message": progress.get("message") or "",
@@ -1011,10 +1015,52 @@ def _reserve_path(path):
 _download_lock = threading.Lock()
 _download_cancel = threading.Event()
 
+
+def _session_status():
+    """A lightweight identity check, serialized with sign-in and downloads."""
+    import accounts
+    import crawl
+    from session import WebSession
+    from blackboard.auth import AuthExpiredError, SessionError
+    if accounts.auth_required():
+        return {"auth_required": True}
+    if accounts.is_offline() or data.DATA_DIR.name == 'signed-out':
+        return {"auth_required": False}
+    if not _download_lock.acquire(blocking=False):
+        return {"skipped": True}
+    try:
+        if not crawl._lock.acquire(blocking=False):
+            return {"skipped": True}
+        try:
+            if progress.get('busy'):
+                return {"skipped": True}
+            settings = load_settings()
+            session = WebSession(settings['base_url'])
+            try:
+                import host
+                # A restarted app initially has a blank school web view.
+                if host.eval_js('location.href', timeout=5) == 'about:blank':
+                    session.prepare()
+                session.require_authenticated()
+                session._verify_user(str(settings.get('username') or ''))
+            except AuthExpiredError as exc:
+                accounts.require_login()
+                progress.update(auth_required=True, error=str(exc))
+                return {"auth_required": True, "message": str(exc)}
+            except (SessionError, RuntimeError):
+                return {"unavailable": True}
+            return {"auth_required": False}
+        finally:
+            crawl._lock.release()
+    finally:
+        _download_lock.release()
+
 def handle(path: str, body: dict | None = None) -> dict:
     """Answer one window request. Nothing listens on a network port."""
     payload = body if isinstance(body, dict) else {}
     route = str(path or "").split("?", 1)[0]
+    if route == "/api/session":
+        return _session_status()
     if route == "/api/download/cancel":
         _download_cancel.set()
         return {"ok": True}

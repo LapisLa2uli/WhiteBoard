@@ -22,6 +22,7 @@ progress = {
     "message": "",
     "percent": 0.0,
     "error": "",
+    "auth_required": False,
     "google": "",
     "detail": "",
     "log": [],
@@ -134,6 +135,7 @@ def _launch(kind: str, username: str, password: str, base_url: str, *, full=Fals
         message="Starting…",
         percent=0.02,
         error="",
+        auth_required=False,
         detail="",
         log=["Starting…"],
         counts={"courses": 0, "folders": 0, "files": 0},
@@ -159,8 +161,7 @@ def _launch(kind: str, username: str, password: str, base_url: str, *, full=Fals
                 activate(base_url, session.user, username)
             else:
                 session.prepare()
-                if not session._me_ok():
-                    raise AuthExpiredError("Your Blackboard session expired. Sign in again to refresh.")
+                session.require_authenticated()
                 session._verify_user(username)
                 session.logged_in = True
             _set("Loading your dashboard…", 0.08)
@@ -190,6 +191,7 @@ def _launch(kind: str, username: str, password: str, base_url: str, *, full=Fals
             )
             _check_cancelled()
             progress["metrics"] = dict(session.metrics)
+            session.require_authenticated()
             if snapshot.errors:
                 keep_partial = True
                 publish_stage(snapshot)
@@ -208,6 +210,10 @@ def _launch(kind: str, username: str, password: str, base_url: str, *, full=Fals
             _check_cancelled()
             _sync_google()
         except AuthExpiredError as exc:
+            from accounts import require_login
+            require_login()
+            progress["auth_required"] = True
+            keep_partial = False
             _set(str(exc), error=str(exc))
         except SessionError as exc:
             _set(str(exc), error=str(exc))

@@ -33,6 +33,8 @@ Run `python tools/test.py` for isolated regressions (Python 3.12 and Node.js), a
 
 ## Dashboard
 
+WhiteBoard returns to sign-in when Blackboard confirms that your session has expired. While the dashboard is open, it checks the school session once a minute and when you return to the window. Offline copies are exempt; network failures alone do not sign you out.
+
 Home separates this week's assignments and events into their own lists. Entries whose submission type is still being verified appear under **Checking type** until refresh confirms their type. Course filters apply to all three lists.
 
 In Grades, **Sort grades by** orders each graded/pending list by name, course, or deadline in either direction. The default is newest deadline first. Missing deadlines stay last; posted dates are shown separately and are never used as substitute deadlines. Your selection lasts for the current session and works with search, course filters, and pagination.

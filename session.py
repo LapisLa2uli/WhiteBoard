@@ -11,7 +11,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
-from blackboard.auth import ApiRequestError, SessionError, resolve_url, same_site
+from blackboard.auth import ApiRequestError, AuthExpiredError, SessionError, SESSION_EXPIRED_MESSAGE, resolve_url, same_site
 
 import host
 
@@ -62,7 +62,7 @@ _FETCH_JS = r"""
           text = await res.text();
           if (text.length > 16000000) throw new Error("Response exceeds 16 MB; request a smaller page.");
         }
-        found[index] = { url, status: res.status, text };
+        found[index] = { url, final_url: res.url, status: res.status, text };
       } catch (err) {
         found[index] = { url, status: 0, text: "", error: String(err) };
       } finally {
@@ -183,6 +183,7 @@ class WebSession:
         self.user = {}
         self.on_progress = on_progress
         self.logged_in = False
+        self.auth_expired = False
         self.cancel_event = None
         # Real-account comparison: 24 completed in 45s versus 52s at 12.
         # _fetch halves this bound if the service reports throttling.
@@ -194,6 +195,8 @@ class WebSession:
         self.metrics = {"requests": 0, "cache_hits": 0, "batches": 0}
 
     def _check_cancelled(self):
+        if self.auth_expired:
+            raise AuthExpiredError(SESSION_EXPIRED_MESSAGE)
         if self.cancel_event is not None and self.cancel_event.is_set():
             raise SessionError("Refresh cancelled.")
 
@@ -387,6 +390,30 @@ class WebSession:
             return True
         return False
 
+    @staticmethod
+    def _login_response(row):
+        final = str(row.get('final_url') or '').lower()
+        text = str(row.get('text') or '').lower()
+        return ('/webapps/login' in final or '/auth-provider' in final
+                or bool(re.search(r'id\s*=\s*[\"\']loginform[\"\']', text)))
+
+    def require_authenticated(self):
+        """Verify identity without interpreting outages or course denial as logout."""
+        url = resolve_url(self.base_url, '/learn/api/v1/users/me')
+        row = self._fetch_batch([url], 'application/json')[0]
+        status = int(row.get('status') or 0)
+        if status in (401, 403) or self._login_response(row):
+            self.auth_expired = True
+            raise AuthExpiredError(SESSION_EXPIRED_MESSAGE)
+        try:
+            user = json.loads(row.get('text') or '')
+        except (ValueError, TypeError):
+            user = None
+        if status != 200 or not isinstance(user, dict) or not (user.get('id') or user.get('uuid')):
+            raise SessionError('Could not verify the school session. Check your connection and try again.')
+        self.user = user
+        self.logged_in = True
+
     def _verify_user(self, username):
         actual = str(self.user.get("userName") or self.user.get("username") or "")
         if not actual or actual.casefold() != username.strip().casefold():
@@ -579,6 +606,8 @@ class WebSession:
             batch = pending[offset:offset+self.concurrency]
             offset += len(batch)
             rows = self._fetch_batch(batch, accept)
+            if self.logged_in and any(int(row.get('status') or 0) == 401 or self._login_response(row) for row in rows):
+                self.require_authenticated()
             self.metrics['batches'] += 1
             self.metrics['requests'] += len(rows)
             for row in rows:

@@ -940,7 +940,7 @@ async function refreshNow(full = false) {
 function render() {
   applyUiFont(state && state.ui_font);
   const app = document.getElementById("app");
-  if (loading && !(state && state.has_snapshot)) {
+  if (loading && (needsLogin() || route === "/login")) {
     app.innerHTML = loadingView();
     return;
   }

@@ -37,6 +37,8 @@ WhiteBoard returns to sign-in when Blackboard confirms that your session has exp
 
 Signing out stops the current refresh and clears its progress, partial dashboard, and error messages. A new sign-in starts with fresh status; late responses from the previous session are ignored.
 
+Sign-in displays progress and a Cancel button even when a previous dashboard is saved. Once the first dashboard stage is ready, it opens while the remaining content loads in the background.
+
 Home separates this week's assignments and events into their own lists. Entries whose submission type is still being verified appear under **Checking type** until refresh confirms their type. Course filters apply to all three lists.
 
 Events leave Home at their scheduled start time (midnight for all-day events). The open dashboard updates automatically; event history remains in Calendar and overdue assignments stay visible.

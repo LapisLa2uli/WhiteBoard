@@ -15,6 +15,7 @@ with tempfile.TemporaryDirectory(prefix='whiteboard-tests-') as directory:
         ['node', 'tests/ui_state.cjs'],
         ['node', 'tests/grades_sort.cjs'],
         ['node', 'tests/session_lifecycle.cjs'],
+        ['node', 'tests/login_progress.cjs'],
         ['node', 'tests/contents_search.cjs'],
         ['node', 'tests/color_picker.cjs'],
         ['node', 'tests/metadata_requests.cjs'],

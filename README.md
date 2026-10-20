@@ -33,6 +33,8 @@ Run `python tools/test.py` for isolated regressions (Python 3.12 and Node.js), a
 
 ## Dashboard
 
+When opening Blackboard links in your default browser, Chrome, or Edge, WhiteBoard reminds you that the browser needs its own school sign-in. Choose **Open Blackboard sign-in**, sign in there, then return to WhiteBoard and choose **Open page**. If already signed in, choose **Open page** immediately. Your saved username appears in the notice for copying; WhiteBoard does not fill the browser form, read its password, detect login completion, or close its tab. The notice appears on each external Blackboard open because WhiteBoard cannot verify that browser's session. **Settings → Opening pages → Built-in display** uses WhiteBoard's shared session and opens directly.
+
 WhiteBoard returns to sign-in when Blackboard confirms that your session has expired. While the dashboard is open, it checks the school session once a minute and when you return to the window. Offline copies are exempt; network failures alone do not sign you out.
 
 Signing out stops the current refresh and clears its progress, partial dashboard, and error messages. A new sign-in starts with fresh status; late responses from the previous session are ignored.

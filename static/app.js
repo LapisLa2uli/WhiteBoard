@@ -10,6 +10,7 @@ let busy = false;
 let feedback = null;
 let viewer = null;
 let logoutDialog = false;
+let browserOpenDialog = null;
 let calendarMode = "list";
 let calendarDays = 7;
 let calendarDay = "";
@@ -273,6 +274,9 @@ function controlOf(event) {
 
 function onClick(event) {
   const source = controlOf(event);
+  if (source.closest("#browser-open-cancel")) { browserOpenDialog=null;paintPage();return; }
+  if (source.closest("#browser-signin")) { continueBrowserOpen("signin");return; }
+  if (source.closest("#browser-open-page")) { continueBrowserOpen("page");return; }
   if (source.closest("#sidebar-toggle")) { persistSettings({sidebar_collapsed:!state.sidebar_collapsed}).then(render).catch(showError); return; }
   const favorite=source.closest("[data-favorite]");
   if (favorite) { const ids=new Set(state.favorite_courses || []); const id=favorite.dataset.favorite; if(ids.has(id))ids.delete(id);else ids.add(id);persistSettings({favorite_courses:[...ids]}).then(paintCourses).catch(showError);return; }
@@ -1250,7 +1254,7 @@ function paintPage() {
   const body = document.getElementById("page-body");
   if (!body) return;
   const banner = jobError ? `<div class="banner">${escapeHtml(jobError)}</div>` : "";
-  body.innerHTML = banner + viewFor(route) + (logoutDialog ? `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true"><h3>Sign out of WhiteBoard</h3><p>Your school session and saved Google credentials will be removed.</p><label class="row"><input id="keep-offline" type="checkbox" />Keep an offline dashboard on this computer</label><p class="muted">Anyone using this computer account can open an offline copy.</p><label class="row"><input id="keep-crawl-cache" type="checkbox" checked />Keep file index for faster next sign-in</label><p class="muted">Keeps file names, course-page content, links, and sizes locally for this school account. Used after signing in to the same account; grades and login credentials are not included. Clear both choices to remove saved dashboard and file data.</p><div class="row"><button class="text-btn" id="logout-cancel">Cancel</button><button class="fill-btn" id="logout-confirm">Sign out</button></div></div></div>` : "");
+  body.innerHTML = banner + viewFor(route) + browserOpenModal() + (logoutDialog ? `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true"><h3>Sign out of WhiteBoard</h3><p>Your school session and saved Google credentials will be removed.</p><label class="row"><input id="keep-offline" type="checkbox" />Keep an offline dashboard on this computer</label><p class="muted">Anyone using this computer account can open an offline copy.</p><label class="row"><input id="keep-crawl-cache" type="checkbox" checked />Keep file index for faster next sign-in</label><p class="muted">Keeps file names, course-page content, links, and sizes locally for this school account. Used after signing in to the same account; grades and login credentials are not included. Clear both choices to remove saved dashboard and file data.</p><div class="row"><button class="text-btn" id="logout-cancel">Cancel</button><button class="fill-btn" id="logout-confirm">Sign out</button></div></div></div>` : "");
   animateMeters();
 }
 
@@ -2683,8 +2687,16 @@ function viewerView() {
 
 async function openUrl(url, title, id) {
   if (!url && !id) return;
+  const request = { url: url || "", title: title || "", id: id || "" };
+  const generation = pollGen;
   try {
-    const result = await api("/api/open", { url: url || "", title: title || "", id: id || "" });
+    const result = await api("/api/open", request);
+    if (generation !== pollGen) return;
+    if (result && result.browser_notice) {
+      browserOpenDialog = { ...result, request, busy:false, message:"" };
+      paintPage(); return;
+    }
+    if (result && result.ok === false) throw new Error(result.message || "Could not open that page.");
     if (result && result.fallback && result.message) {
       contentsNote = result.message;
       showToast(result.message);
@@ -2696,6 +2708,51 @@ async function openUrl(url, title, id) {
     showToast(contentsNote);
     const note = document.getElementById("contents-note");
     if (note) note.textContent = contentsNote;
+  }
+}
+
+function browserOpenModal() {
+  const dialog = browserOpenDialog;
+  if (!dialog) return "";
+  const name = {system:"your default browser", edge:"Microsoft Edge", chrome:"Google Chrome"}[dialog.browser] || "your browser";
+  return `<div class="modal-back"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="browser-open-title">
+    <h3 id="browser-open-title">Sign in to Blackboard in your browser</h3>
+    <p>WhiteBoard and ${escapeHtml(name)} have separate sign-ins. If you are not already signed in there, choose <strong>Open Blackboard sign-in</strong> first.</p>
+    <p class="muted">${escapeHtml(dialog.school)}</p>
+    ${dialog.username ? `<label for="browser-saved-username">Saved username (select to copy)</label><input id="browser-saved-username" value="${escapeAttr(dialog.username)}" readonly /><p class="muted">Enter this username on Blackboard. Your browser may also offer autofill.</p>` : ""}
+    <p>After signing in, return to WhiteBoard and choose <strong>Open page</strong>. If you are already signed in, you can open the page now.</p>
+    <p class="muted">Opening: ${escapeHtml(dialog.title || "Blackboard page")}</p>
+    <p role="status">${escapeHtml(dialog.message || "")}</p>
+    <div class="row"><button class="text-btn" id="browser-open-cancel">Cancel</button>
+      <button class="outline-btn" id="browser-signin" ${dialog.busy ? "disabled" : ""}>Open Blackboard sign-in</button>
+      <button class="fill-btn" id="browser-open-page" ${dialog.busy ? "disabled" : ""}>Open page</button></div>
+  </div></div>`;
+}
+
+async function continueBrowserOpen(action) {
+  const dialog = browserOpenDialog;
+  if (!dialog || dialog.busy) return;
+  const generation = pollGen;
+  dialog.busy = true; dialog.message = ""; paintPage();
+  try {
+    const result = await api("/api/open", {...dialog.request, browser:dialog.browser, browser_action:action});
+    if (generation !== pollGen || browserOpenDialog !== dialog) return;
+    if (result.browser_notice) {
+      browserOpenDialog = {...result, request:dialog.request, busy:false, message:"Browser preference changed. Continue with the selected browser."};
+    } else if (result.ok === false) {
+      dialog.message = result.message || "Could not open the browser. Try again.";
+    } else if (action === "signin") {
+      dialog.message = result.message;
+    } else {
+      browserOpenDialog = null;
+      if (result.fallback && result.message) showToast(result.message);
+    }
+  } catch (error) {
+    if (generation !== pollGen || browserOpenDialog !== dialog) return;
+    dialog.message = error.message || "Could not open the browser. Try again.";
+  } finally {
+    dialog.busy = false;
+    if (generation === pollGen) paintPage();
   }
 }
 
@@ -3063,6 +3120,7 @@ function showError(error) { jobError = error.message || String(error); render();
 function signOut() { logoutDialog=true;paintPage(); }
 async function finishSignOut(keep, keepCrawlCache = true) {
   logoutDialog=false;
+  browserOpenDialog=null;
   pollGen += 1;
   try {
     await api("/api/logout", { keep_offline: keep, keep_crawl_cache: keepCrawlCache });
@@ -3146,7 +3204,7 @@ function onKeyDown(event) {
   }
   const modal=document.querySelector('.modal');
   if (event.key==='Escape' && modal) {
-    event.preventDefault(); feedback=null; colorDialog=null; filterDialog=null; logoutDialog=false; render(); return;
+    event.preventDefault(); feedback=null; colorDialog=null; filterDialog=null; logoutDialog=false; browserOpenDialog=null; render(); return;
   }
   if (event.key==='Tab' && modal) {
     const controls=[...modal.querySelectorAll('button:not(:disabled),input:not(:disabled),select,[tabindex="0"]')];

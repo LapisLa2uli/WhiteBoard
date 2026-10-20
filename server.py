@@ -412,7 +412,29 @@ def _open_page(body: dict) -> dict:
     target, title = _launch_target(body)
     if not target:
         return {"ok": False, "message": "This assignment has no Blackboard page."}
-    choice = _page_opener(load_settings().get("page_opener"))
+    settings = load_settings()
+    choice = _page_opener(settings.get("page_opener"))
+    from accounts import school_origin
+    try:
+        school = school_origin(settings.get('base_url') or '')
+        parsed = urlparse(target)
+        school_link = not parsed.username and not parsed.password and school_origin(f'{parsed.scheme}://{parsed.netloc}') == school
+    except ValueError:
+        school_link = False
+    if choice in {'system', 'edge', 'chrome'} and school_link:
+        action = body.get('browser_action')
+        if body.get('browser') != choice or action not in {'signin', 'page'}:
+            return {'ok': True, 'browser_notice': True, 'browser': choice,
+                    'school': school, 'username': str(settings.get('username') or ''), 'title': title}
+        if action == 'signin':
+            try:
+                opened = _start_browser(choice, school + '/webapps/login/')
+            except (OSError, RuntimeError):
+                opened = False
+            # A built-in login would not authenticate the external browser.
+            return {'ok': bool(opened), 'message': (
+                'Sign in to Blackboard in that browser. Then return here and choose Open page.' if opened
+                else 'Could not open the selected browser. Open Blackboard there manually, or choose Built-in display in Settings.')}
     return _dispatch_open(choice, target, title, start=_start_browser, builtin=host.open_document)
 
 

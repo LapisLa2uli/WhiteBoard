@@ -7,6 +7,7 @@ headings below. Packaging and GitHub Releases copy this text.
 ## [Unreleased]
 
 ### Added features
+- Opening Blackboard in an external browser now shows a sign-in reminder with your saved username. Open Blackboard sign-in, then return to WhiteBoard and choose **Open page**; already signed-in users can open the page directly.
 - Sign-out can keep a local file index for faster next sign-in. After verifying the same school account, WhiteBoard checks for changes and reuses unchanged file details. Clear this option to remove the retained index.
 - Grades can be sorted by name, course, or assignment deadline in either direction. Cards distinguish deadlines from posted dates; missing deadlines stay at the end.
 - Course colors and deadline color codes now have a gradient picker with a live preview, hue/saturation/brightness sliders, and synchronized HEX input.

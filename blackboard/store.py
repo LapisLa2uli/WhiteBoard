@@ -221,6 +221,8 @@ def load_settings() -> dict:
         mode = str(merged.get("contents_view_mode") or "tree")
         merged["contents_view_mode"] = mode if mode in {"tree", "folder", "columns"} else "tree"
         merged["username"] = str(merged.get("username") or "")
+        if not isinstance(merged.get("browser_notice_until"), dict):
+            merged["browser_notice_until"] = {}
         merged.pop("password", None)
         return merged
     except (OSError, json.JSONDecodeError):
@@ -284,6 +286,7 @@ def save_settings(settings: dict) -> None:
         "google_sync_enabled": bool(settings.get("google_sync_enabled")),
         "ui_font": _ui_font(settings.get("ui_font")),
         "page_opener": _page_opener(settings.get("page_opener")),
+        "browser_notice_until": settings.get("browser_notice_until") or {},
     }
     write_json(SETTINGS_PATH, payload)
 

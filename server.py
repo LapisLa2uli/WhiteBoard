@@ -7,6 +7,7 @@ import mimetypes
 import os
 import sys
 import threading
+import time
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -423,7 +424,11 @@ def _open_page(body: dict) -> dict:
         school_link = False
     if choice in {'system', 'edge', 'chrome'} and school_link:
         action = body.get('browser_action')
-        if body.get('browser') != choice or action not in {'signin', 'page'}:
+        snoozes = settings.get('browser_notice_until', {})
+        until = snoozes.get(choice) if isinstance(snoozes, dict) else None
+        snoozed = isinstance(until, (int, float)) and 0 < until - time.time() <= 1800
+        confirmed = body.get('browser') == choice and action in ('signin', 'page')
+        if not confirmed and not (action is None and snoozed):
             return {'ok': True, 'browser_notice': True, 'browser': choice,
                     'school': school, 'username': str(settings.get('username') or ''), 'title': title}
         if action == 'signin':
@@ -435,6 +440,12 @@ def _open_page(body: dict) -> dict:
             return {'ok': bool(opened), 'message': (
                 'Sign in to Blackboard in that browser. Then return here and choose Open page.' if opened
                 else 'Could not open the selected browser. Open Blackboard there manually, or choose Built-in display in Settings.')}
+        if confirmed and action == 'page' and body.get('snooze_notice') is True:
+            profile = data.SETTINGS_PATH
+            result = _dispatch_open(choice, target, title, start=_start_browser, builtin=host.open_document)
+            if result.get('opened_with') == choice and data.SETTINGS_PATH == profile:
+                update_settings(lambda prefs: prefs.setdefault('browser_notice_until', {}).update({choice: time.time() + 1800}))
+            return result
     return _dispatch_open(choice, target, title, start=_start_browser, builtin=host.open_document)
 
 

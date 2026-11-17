@@ -1,9 +1,40 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch, Mock
 import server
 
 
 class BrowserOpenTests(unittest.TestCase):
+    def test_snooze_persists_for_one_profile_and_browser_and_expires_at_30_minutes(self):
+        from blackboard import store
+        with TemporaryDirectory() as folder, patch.object(store, 'DATA_DIR', Path(folder)), \
+                patch.object(store, 'SETTINGS_PATH', Path(folder) / 'first.json'), \
+                patch.object(server.data, 'SETTINGS_PATH', store.SETTINGS_PATH), \
+                patch.object(server, '_launch_target', return_value=('https://school.example/file', 'File')), \
+                patch.object(server, '_start_browser', return_value=True) as start, \
+                patch('host.open_document'), patch.object(server.time, 'time', return_value=10000) as clock:
+            settings = dict(base_url='https://school.example', page_opener='chrome')
+            store.save_settings(settings)
+            request = dict(browser='chrome', browser_action='page', snooze_notice=True)
+            # Opening sign-in, an ordinary open, and a built-in fallback never snooze.
+            for change, opened in [({'browser_action':'signin'}, True), ({'snooze_notice':False}, True), ({}, False)]:
+                start.return_value = opened
+                server._open_page({**request, **change})
+                self.assertTrue(server._open_page({})['browser_notice'])
+            start.return_value = True
+            self.assertEqual(server._open_page(request)['opened_with'], 'chrome')
+            clock.return_value = 11799
+            self.assertEqual(server._open_page({})['opened_with'], 'chrome')
+            with patch.object(store, 'SETTINGS_PATH', Path(folder) / 'second.json'):
+                store.save_settings(settings)
+                self.assertTrue(server._open_page({})['browser_notice'])
+            store.update_settings(lambda prefs: prefs.update(page_opener='edge'))
+            self.assertTrue(server._open_page({})['browser_notice'])
+            store.update_settings(lambda prefs: prefs.update(page_opener='chrome'))
+            clock.return_value = 11800
+            self.assertTrue(server._open_page({})['browser_notice'])
+
     def open_page(self, settings, target, body=None, opened=True):
         with patch.object(server, 'load_settings', return_value=settings), \
                 patch.object(server, '_launch_target', return_value=(target, 'Essay')), \

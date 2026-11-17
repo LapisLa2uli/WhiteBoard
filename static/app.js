@@ -701,6 +701,10 @@ function onInput(event) {
 }
 
 function onChange(event) {
+  if (event.target.id === "browser-notice-snooze" && browserOpenDialog) {
+    browserOpenDialog.snooze = event.target.checked;
+    return;
+  }
   if (event.target.id === "grades-sort") {
     gradesSort = event.target.value;
     pages.graded = 0; pages.pending = 0;
@@ -2718,6 +2722,7 @@ function browserOpenModal() {
     ${dialog.username ? `<label for="browser-saved-username">Saved username (select to copy)</label><input id="browser-saved-username" value="${escapeAttr(dialog.username)}" readonly /><p class="muted">Enter this username on Blackboard. Your browser may also offer autofill.</p>` : ""}
     <p>After signing in, return to WhiteBoard and choose <strong>Open page</strong>. If you are already signed in, you can open the page now.</p>
     <p class="muted">Opening: ${escapeHtml(dialog.title || "Blackboard page")}</p>
+    <label class="row"><input type="checkbox" id="browser-notice-snooze" ${dialog.snooze ? "checked" : ""} ${dialog.busy ? "disabled" : ""} />Skip this reminder for 30 minutes after opening the page</label>
     <p role="status">${escapeHtml(dialog.message || "")}</p>
     <div class="row"><button class="text-btn" id="browser-open-cancel">Cancel</button>
       <button class="outline-btn" id="browser-signin" ${dialog.busy ? "disabled" : ""}>Open Blackboard sign-in</button>
@@ -2731,7 +2736,8 @@ async function continueBrowserOpen(action) {
   const generation = pollGen;
   dialog.busy = true; dialog.message = ""; paintPage();
   try {
-    const result = await api("/api/open", {...dialog.request, browser:dialog.browser, browser_action:action});
+    const result = await api("/api/open", {...dialog.request, browser:dialog.browser, browser_action:action,
+      snooze_notice:action === "page" && !!dialog.snooze});
     if (generation !== pollGen || browserOpenDialog !== dialog) return;
     if (result.browser_notice) {
       browserOpenDialog = {...result, request:dialog.request, busy:false, message:"Browser preference changed. Continue with the selected browser."};

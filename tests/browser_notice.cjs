@@ -12,6 +12,8 @@ api=async(path,body)=>{calls.push({path,body});return notice};
   let html=vm.runInContext('browserOpenModal()',c);
   assert(html.includes('Open Blackboard sign-in'));
   assert(html.includes('id="browser-open-page"'));
+  assert(!html.match(/id="browser-notice-snooze"[^>]*checked/));
+  vm.runInContext(`onChange({target:{id:'browser-notice-snooze',checked:true}})`,c);
   assert(html.includes('student&quot;&lt;test&gt;'));
   assert(!html.includes('Essay <draft>'));
   assert(!html.includes('type="password"'));
@@ -21,6 +23,8 @@ api=async(path,body)=>{calls.push({path,body});return notice};
   assert(vm.runInContext('browserOpenModal()',c).includes('Return here after signing in'));
   assert.equal(vm.runInContext('calls.at(-1).body.browser',c),'chrome');
   assert.equal(vm.runInContext('calls.at(-1).body.browser_action',c),'signin');
+  assert.equal(vm.runInContext('calls.at(-1).body.snooze_notice',c),false);
+  assert(vm.runInContext('browserOpenModal()',c).match(/id="browser-notice-snooze"[^>]*checked/));
   assert.equal(vm.runInContext('calls.at(-1).body.url',c),'https://school.example/work');
   assert(!vm.runInContext('browserOpenModal()',c).includes(' disabled'));
   // Launch failures keep the request available for retry.
@@ -32,6 +36,7 @@ api=async(path,body)=>{calls.push({path,body});return notice};
   assert.equal(vm.runInContext('browserOpenDialog',c),null);
   assert.equal(vm.runInContext('calls.at(-1).body.id',c),'assignment');
   assert.equal(vm.runInContext('calls.at(-1).body.browser_action',c),'page');
+  assert.equal(vm.runInContext('calls.at(-1).body.snooze_notice',c),true);
   // Cancel never opens the requested page.
   vm.runInContext(`browserOpenDialog={...notice,request:{url:'work'}}; beforeCancel=calls.length;
     onClick({target:{closest:selector=>selector==='#browser-open-cancel'?{}:null}});`,c);

@@ -15,6 +15,7 @@ headings below. Packaging and GitHub Releases copy this text.
 - Refresh reuses unchanged course files and checks for added, edited, moved, and removed content. Settings now includes **Full refresh**, and file details are rechecked daily.
 
 ### Bugfixes
+- Pressing Return or Enter in the login form now submits your credentials, just like clicking **Sign in**.
 - Sign-in shows its progress bar even when a saved dashboard exists, including after session expiry and during school sign-in.
 - Signing out clears previous refresh errors and partial dashboard state, so an old session-expired message does not return after signing in again.
 - Dashboard events disappear at their planned start time without a refresh. Past events remain in Calendar, and overdue assignments remain visible.

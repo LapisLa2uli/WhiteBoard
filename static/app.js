@@ -457,10 +457,6 @@ function onClick(event) {
     go("/home");
     return;
   }
-  if (source.closest("#sign-in")) {
-    startLogin();
-    return;
-  }
   if (source.closest("#viewer-home") || source.closest("#viewer-back")) {
     viewer = null;
     render();
@@ -1003,9 +999,9 @@ function loginView() {
     <p class="muted">See your deadlines, grades, and course files together. Your password is sent only to your school and is never saved. For SSO or MFA, choose school sign-in.</p>
     <label for="base-url">School URL</label><input type="url" autocomplete="url" required id="base-url" value="${escapeAttr((state && state.base_url) || "https://shs.blackboardchina.cn")}" />
     <label for="user">Username</label><input type="text" autocomplete="username" required id="user" value="${escapeAttr((state && state.username) || "")}" />
-    <label for="pass">Password</label><input type="password" autocomplete="current-password" id="pass" /><button class="text-btn" id="show-password" type="button">Show password</button>
+    <label for="pass">Password</label><input type="password" autocomplete="current-password" required id="pass" /><button class="text-btn" id="show-password" type="button">Show password</button>
     <div class="row" style="margin-top:14px">
-      <button class="fill-btn" id="sign-in" type="button">Sign in</button>
+      <button class="fill-btn" id="sign-in" type="submit">Sign in</button>
       <button class="outline-btn" id="school-signin" type="button">School sign-in (SSO / MFA)</button>
       ${saved}
     </div>
